@@ -1,0 +1,146 @@
+@import url('https://fonts.googleapis.com/css2?family=Kaushan+Script&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Soft glass palette (exact) - no green */
+    --glass-1: #896C6C;
+    --glass-2: #E5BEB5;
+    --glass-3: #EEE6CA;
+    --glass-4: #F5FAE1;
+    /* Font: Kaushan Script only */
+    --font-brand: 'Kaushan Script', cursive;
+    /* Semantic mapping to palette: backgrounds, cards, buttons, accent, borders */
+    --background: 75 56% 95%;
+    --foreground: 0 15% 28%;
+    --surface: 48 52% 88%;
+    --surface-foreground: 0 15% 28%;
+    --accent: 0 15% 58%;
+    --accent-foreground: 75 56% 95%;
+    --primary: 0 15% 58%;
+    --primary-foreground: 75 56% 95%;
+    --card: 12 35% 80%;
+    --card-foreground: 0 15% 28%;
+    --muted: 48 52% 85%;
+    --muted-foreground: 0 15% 45%;
+    --border: 0 15% 58%;
+    --input: 12 35% 80%;
+    --ring: 0 15% 58%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 0 15% 18%;
+    --foreground: 48 52% 88%;
+    --surface: 0 15% 22%;
+    --surface-foreground: 48 52% 88%;
+    --accent: 12 35% 80%;
+    --accent-foreground: 0 15% 28%;
+    --primary: 12 35% 80%;
+    --primary-foreground: 0 15% 28%;
+    --card: 0 15% 22%;
+    --card-foreground: 48 52% 88%;
+    --muted: 0 15% 26%;
+    --muted-foreground: 48 52% 75%;
+    --border: 0 15% 35%;
+    --input: 0 15% 26%;
+    --ring: 12 35% 80%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
+  }
+}
+
+@layer utilities {
+  .glass-soft {
+    backdrop-filter: blur(20px);
+    background: rgba(255, 255, 255, 0.3);
+  }
+  /* Partner panel: subtle card hover lift (2px), soft shadow, 150ms */
+  .partner-card-hover {
+    transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
+  }
+  .partner-card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.04);
+  }
+  /* Panel table row: smooth hover tint, no abrupt flash */
+  .panel-table-row {
+    transition: background-color 0.15s ease-out;
+  }
+  .panel-table-row:hover {
+    background-color: hsl(var(--muted) / 0.4);
+  }
+  /* Admin: page enter fade + Y lift 250ms */
+  .admin-page-enter {
+    animation: admin-page-enter 0.25s ease-out forwards;
+  }
+  /* Admin: button hover shadow lift 2px */
+  .admin-btn-lift {
+    transition: box-shadow 0.2s ease;
+  }
+  .admin-btn-lift:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+  /* Subtle skeleton shimmer: neutral, 1.2s, no harsh gradient */
+  .skeleton-shimmer {
+    @apply bg-muted/40;
+    background-image: linear-gradient(
+      90deg,
+      hsl(var(--muted) / 0.4) 0%,
+      hsl(var(--muted) / 0.6) 50%,
+      hsl(var(--muted) / 0.4) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.2s ease-in-out infinite;
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes admin-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes assistant-float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+.assistant-float-idle {
+  animation: assistant-float 3.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .assistant-float-idle {
+    animation: none;
+  }
+}

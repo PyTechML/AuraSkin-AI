@@ -1,0 +1,15 @@
+export const STORE_ROUTES = {
+  PROFILE: "/partner/store/profile",
+  INVENTORY: "/partner/store/inventory",
+  INVENTORY_ADD: "/partner/store/inventory/add",
+  INVENTORY_UPDATE: "/partner/store/inventory/update/:id",
+  INVENTORY_DELETE: "/partner/store/inventory/delete/:id",
+  ORDERS: "/partner/store/orders",
+  ORDER_BY_ID: "/partner/store/orders/:id",
+  ORDER_STATUS: "/partner/store/orders/status/:id",
+  ORDER_TRACKING: "/partner/store/orders/:id/tracking",
+  ANALYTICS: "/partner/store/analytics",
+  DASHBOARD: "/partner/store/dashboard",
+  NOTIFICATIONS: "/partner/store/notifications",
+  NOTIFICATION_READ: "/partner/store/notifications/read/:id",
+} as const;

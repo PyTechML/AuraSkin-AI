@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" fill="none">
+  <rect width="400" height="300" fill="#896C6C" opacity="0.15"/>
+  <rect x="50" y="50" width="300" height="200" rx="12" fill="#E5BEB5" opacity="0.4"/>
+  <text x="200" y="140" text-anchor="middle" fill="#896C6C" font-family="sans-serif" font-size="18" font-weight="500">Skin Type</text>
+  <text x="200" y="165" text-anchor="middle" fill="#896C6C" font-family="sans-serif" font-size="14" opacity="0.8">Analysis</text>
+</svg>

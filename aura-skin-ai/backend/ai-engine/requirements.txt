@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+python-dotenv
+opencv-python
+mediapipe
+numpy
+scikit-image
+pydantic
+python-multipart
+redis
+rq
+pillow
+scikit-learn
+httpx
+supabase

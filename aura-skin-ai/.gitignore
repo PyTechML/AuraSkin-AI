@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Frontend build artifacts
+.next/
+**/.next/
+out/
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.*
+*.env
+
+# IDE / OS
+.idea/
+.vscode/
+*.log
+.DS_Store
+Thumbs.db
+
+# Runtime / temp
+*.pid
+*.seed
+*.pid.lock
+*.tmp
+*.temp
+.cache/
+**/.cache/
+
+# Secrets / certificates / keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.asc
+
+# Python backend artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
