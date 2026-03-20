@@ -7,7 +7,7 @@ import {
   getPartnerProductById,
   updatePartnerProduct,
   submitProductForReview,
-  archiveProduct,
+  deleteProduct,
 } from "@/services/apiPartner";
 import { useAuth } from "@/providers/AuthProvider";
 import type { PartnerProduct } from "@/types";
@@ -27,13 +27,24 @@ import {
   BarChart2,
   Send,
   Archive,
+  Trash2,
 } from "lucide-react";
+import { usePanelToast } from "@/components/panel/PanelToast";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export default function StoreEditProductPage() {
   const params = useParams();
   const router = useRouter();
   const productId = params.productId as string;
   const { session } = useAuth();
+  const { addToast } = usePanelToast();
   const partnerId = session?.user?.id ?? "";
   const [product, setProduct] = useState<PartnerProduct | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +55,8 @@ export default function StoreEditProductPage() {
   const [visibility, setVisibility] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
 
   useEffect(() => {
     if (!partnerId || !productId) {
@@ -78,15 +91,17 @@ export default function StoreEditProductPage() {
         visibility,
       });
       if (updated) setProduct(updated);
+      addToast("Product updated successfully.");
     } catch {
       setError("Failed to save. Please try again.");
+      addToast("Failed to save product.", "error");
     } finally {
       setSaving(false);
     }
   };
 
-  const status = product?.approvalStatus ?? "LIVE";
-  const canSubmitForReview = status === "DRAFT" || status === "REJECTED";
+  const status = product?.approvalStatus ?? "PENDING";
+  const canSubmitForReview = status === "DRAFT" || status === "REJECTED" || status === "PENDING";
 
   const handleSubmitForReview = async () => {
     if (!productId || !partnerId) return;
@@ -94,22 +109,43 @@ export default function StoreEditProductPage() {
     try {
       const updated = await submitProductForReview(productId, partnerId);
       if (updated) setProduct(updated);
+      addToast("Product submitted for admin approval.");
+    } catch {
+      addToast("Failed to submit product for approval.", "error");
     } finally {
       setActionLoading(false);
     }
   };
 
-  const handleArchive = async () => {
+  const handleSaveAsDraft = async () => {
     if (!productId || !partnerId) return;
     setActionLoading(true);
     try {
-      const updated = await archiveProduct(productId, partnerId);
-      if (updated) {
-        setProduct(updated);
-        router.push("/store/inventory");
-      }
+      const updated = await updatePartnerProduct(productId, partnerId, {
+        approvalStatus: "DRAFT",
+      });
+      if (updated) setProduct(updated);
+      addToast("Product moved to draft.");
+    } catch {
+      addToast("Failed to save draft.", "error");
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!productId || !partnerId) return;
+    setActionLoading(true);
+    try {
+      await deleteProduct(productId, partnerId);
+      addToast("Product deleted.");
+      router.push("/store/inventory");
+    } catch {
+      addToast("Failed to delete product.", "error");
+    } finally {
+      setActionLoading(false);
+      setDeleteDialogOpen(false);
+      setDeleteStep(1);
     }
   };
 
@@ -177,7 +213,7 @@ export default function StoreEditProductPage() {
                 : "outline"
             }
           >
-            {(product.approvalStatus ?? "LIVE").replace(/_/g, " ")}
+            {status.replace(/_/g, " ")}
           </Badge>
           {canSubmitForReview && (
             <Button
@@ -191,14 +227,77 @@ export default function StoreEditProductPage() {
           )}
           <Button
             size="sm"
-            variant="ghost"
-            onClick={handleArchive}
+            variant="outline"
+            onClick={handleSaveAsDraft}
             disabled={actionLoading}
           >
-            <Archive className="h-4 w-4 mr-1" /> Archive
+            <Archive className="h-4 w-4 mr-1" /> Save as Draft
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setDeleteDialogOpen(true);
+              setDeleteStep(1);
+            }}
+            disabled={actionLoading}
+          >
+            <Trash2 className="h-4 w-4 mr-1" /> Delete
           </Button>
         </div>
       </div>
+      <Dialog
+        open={deleteDialogOpen}
+        onOpenChange={(next) => {
+          setDeleteDialogOpen(next);
+          if (!next) setDeleteStep(1);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {deleteStep === 1 ? "Are you sure?" : "This action cannot be undone"}
+            </DialogTitle>
+            <DialogDescription>
+              {deleteStep === 1
+                ? "Deleting this product will remove it from your inventory."
+                : "This permanently deletes the product. Continue only if you are certain."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setDeleteDialogOpen(false);
+                setDeleteStep(1);
+              }}
+              disabled={actionLoading}
+            >
+              Cancel
+            </Button>
+            {deleteStep === 1 ? (
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => setDeleteStep(2)}
+                disabled={actionLoading}
+              >
+                Continue
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={actionLoading}
+              >
+                {actionLoading ? "Deleting…" : "Delete permanently"}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {product.rejectionReason && (
         <Card className="border-border border-amber-500/30 bg-amber-500/5">

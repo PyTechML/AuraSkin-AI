@@ -7,6 +7,10 @@ import {
   getPartnerNotifications,
   markAllNotificationsRead,
   markNotificationRead,
+  toggleNotificationStar,
+  recycleNotification,
+  restoreNotification,
+  deleteNotification,
 } from "@/services/apiPartner";
 import type { PartnerNotification } from "@/types";
 import { usePanelToast } from "@/components/panel/PanelToast";
@@ -34,7 +38,8 @@ import { Bell, Package, ShoppingBag, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type NotificationGroup = "orders" | "inventory" | "system";
-type TabValue = "all" | "orders" | "inventory" | "system";
+type TabValue = "all" | "orders" | "inventory" | "system" | "recycle";
+const NOTIFICATION_POLL_MS = 20000;
 
 export default function StoreNotificationsPage() {
   const { session } = useAuth();
@@ -51,7 +56,7 @@ export default function StoreNotificationsPage() {
 
   const load = () => {
     if (!partnerId) return;
-    setLoading(true);
+    setLoading((prev) => (notifications.length === 0 ? true : prev));
     setError(null);
     getPartnerNotifications(partnerId)
       .then(setNotifications)
@@ -62,6 +67,14 @@ export default function StoreNotificationsPage() {
   useEffect(() => {
     load();
   }, [partnerId]);
+
+  useEffect(() => {
+    if (!partnerId) return;
+    const id = window.setInterval(() => {
+      load();
+    }, NOTIFICATION_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [partnerId, notifications.length]);
 
   const grouped = useMemo(() => {
     const byCategory: Record<NotificationGroup, PartnerNotification[]> = {
@@ -103,7 +116,12 @@ export default function StoreNotificationsPage() {
           ? grouped.orders
           : tab === "inventory"
             ? grouped.inventory
-            : grouped.system;
+            : tab === "system"
+              ? grouped.system
+              : notifications.filter((n) => n.recycled);
+    if (tab !== "recycle") {
+      list = list.filter((n) => !n.recycled);
+    }
     list = filterByUnread(list);
     return filterBySearch(list);
   };
@@ -129,6 +147,32 @@ export default function StoreNotificationsPage() {
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     );
     setLastAction("Marked one as read");
+  };
+
+  const handleToggleStar = async (id: string) => {
+    await toggleNotificationStar(id);
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, starred: !n.starred } : n))
+    );
+  };
+
+  const handleRecycle = async (id: string) => {
+    await recycleNotification(id);
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, recycled: true } : n))
+    );
+  };
+
+  const handleRestore = async (id: string) => {
+    await restoreNotification(id);
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, recycled: false } : n))
+    );
+  };
+
+  const handleDelete = async (id: string) => {
+    await deleteNotification(id);
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
   };
 
   const lastOrderNotification = grouped.orders[0] ?? null;
@@ -271,13 +315,14 @@ export default function StoreNotificationsPage() {
           </CardHeader>
           <CardContent>
             <Tabs defaultValue="all" className="w-full">
-              <TabsList className="grid w-full grid-cols-4">
+              <TabsList className="grid w-full grid-cols-5">
                 <TabsTrigger value="all">All</TabsTrigger>
                 <TabsTrigger value="orders">Orders</TabsTrigger>
                 <TabsTrigger value="inventory">Inventory</TabsTrigger>
                 <TabsTrigger value="system">System</TabsTrigger>
+                <TabsTrigger value="recycle">Recycle Bin</TabsTrigger>
               </TabsList>
-              {(["all", "orders", "inventory", "system"] as const).map((tab) => (
+              {(["all", "orders", "inventory", "system", "recycle"] as const).map((tab) => (
                 <TabsContent key={tab} value={tab} className="mt-4">
                   <div
                     className={cn(
@@ -297,6 +342,11 @@ export default function StoreNotificationsPage() {
                           key={n.id}
                           notification={n}
                           onMarkRead={handleMarkSingle}
+                          onToggleStar={handleToggleStar}
+                          onRecycle={handleRecycle}
+                          onRestore={handleRestore}
+                          onDelete={handleDelete}
+                          recycleView={tab === "recycle"}
                         />
                       ))
                     )}
@@ -382,9 +432,19 @@ export default function StoreNotificationsPage() {
 function NotificationRow({
   notification,
   onMarkRead,
+  onToggleStar,
+  onRecycle,
+  onRestore,
+  onDelete,
+  recycleView,
 }: {
   notification: PartnerNotification;
   onMarkRead: (id: string) => void;
+  onToggleStar: (id: string) => void;
+  onRecycle: (id: string) => void;
+  onRestore: (id: string) => void;
+  onDelete: (id: string) => void;
+  recycleView: boolean;
 }) {
   return (
     <li className="rounded-lg border border-border/60 px-3 py-2 text-sm flex flex-col gap-1">
@@ -402,6 +462,13 @@ function NotificationRow({
           {new Date(notification.createdAt).toLocaleString()}
         </span>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onToggleStar(notification.id)}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {notification.starred ? "Unstar" : "Star"}
+          </button>
           {notification.link && (
             <Link
               href={notification.link}
@@ -417,6 +484,32 @@ function NotificationRow({
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               Mark read
+            </button>
+          )}
+          {recycleView ? (
+            <>
+              <button
+                type="button"
+                onClick={() => onRestore(notification.id)}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Restore
+              </button>
+              <button
+                type="button"
+                onClick={() => onDelete(notification.id)}
+                className="text-xs text-destructive hover:opacity-80 transition-colors"
+              >
+                Delete
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onRecycle(notification.id)}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Recycle
             </button>
           )}
         </div>

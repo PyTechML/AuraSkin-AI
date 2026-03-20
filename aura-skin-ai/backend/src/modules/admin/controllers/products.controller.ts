@@ -1,4 +1,4 @@
-import { Controller, Get, Put, UseGuards, Req, Param, Body, Post } from "@nestjs/common";
+import { Controller, Get, Put, UseGuards, Req, Param, Body, Post, Query } from "@nestjs/common";
 import { Request } from "express";
 import { AuthGuard, AuthenticatedUser } from "../../../shared/guards/auth.guard";
 import { RoleGuard, ROLES_KEY } from "../../../shared/guards/role.guard";
@@ -19,9 +19,12 @@ export class AdminProductsController {
   constructor(private readonly productsService: AdminProductsService) {}
 
   @Get("products")
-  async getProducts() {
-    // Return all statuses (pending/approved/rejected); UI can filter client-side.
-    const data = await this.productsService.getAll();
+  async getProducts(@Query("status") status?: string) {
+    const normalizedStatus = (status ?? "").toLowerCase();
+    const data =
+      normalizedStatus === "pending"
+        ? await this.productsService.getPending()
+        : await this.productsService.getAll();
     return formatSuccess(data);
   }
 

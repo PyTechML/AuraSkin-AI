@@ -1,16 +1,18 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, InternalServerErrorException } from "@nestjs/common";
 import { getSupabaseClient } from "../../../../database/supabase.client";
 import type { DbInventory, DbProduct } from "../../../../database/models";
 import { InventoryRepository } from "../repositories/inventory.repository";
 import type { AddInventoryDto, UpdateInventoryDto } from "../dto/inventory.dto";
 import { AnalyticsService } from "../../../analytics/analytics.service";
 import type { CreateStoreProductDto } from "../dto/product.dto";
+import { NotificationsService } from "../../../notifications/services/notifications.service";
 
 @Injectable()
 export class InventoryService {
   constructor(
     private readonly inventoryRepository: InventoryRepository,
-    private readonly analytics: AnalyticsService
+    private readonly analytics: AnalyticsService,
+    private readonly notificationsService: NotificationsService
   ) {}
 
   async getInventory(storeId: string): Promise<(DbInventory & { product?: DbProduct })[]> {
@@ -64,6 +66,7 @@ export class InventoryService {
   ): Promise<(DbInventory & { product?: DbProduct }) | null> {
     const supabase = getSupabaseClient();
 
+    const requestedStatus = dto.approvalStatus === "DRAFT" ? "DRAFT" : "PENDING";
     const { data: createdProduct, error: productError } = await supabase
       .from("products")
       .insert({
@@ -80,7 +83,7 @@ export class InventoryService {
         key_ingredients: dto.keyIngredients && dto.keyIngredients.length ? dto.keyIngredients : null,
         usage: dto.usage ?? null,
         safety_notes: dto.safetyNotes ?? null,
-        approval_status: "PENDING",
+        approval_status: requestedStatus,
       })
       .select()
       .single();
@@ -94,10 +97,18 @@ export class InventoryService {
       product_id: (createdProduct as DbProduct).id,
       stock_quantity: dto.stockQuantity,
       price_override: null,
+      status: requestedStatus === "DRAFT" ? "draft" : "pending",
     });
 
     if (!createdInventory) {
-      return null;
+      await supabase
+        .from("products")
+        .delete()
+        .eq("id", (createdProduct as DbProduct).id)
+        .eq("store_id", storeId);
+      throw new InternalServerErrorException(
+        "Failed to create inventory item for this product."
+      );
     }
 
     this.analytics
@@ -111,6 +122,17 @@ export class InventoryService {
         },
       })
       .catch(() => {});
+
+    if (requestedStatus === "PENDING") {
+      await this.notificationsService.createNotification({
+        recipientId: storeId,
+        recipientRole: "store",
+        type: "product_submitted",
+        title: "Product submitted",
+        message: "Product request sent to admin for approval.",
+        metadata: { product_id: (createdProduct as DbProduct).id },
+      });
+    }
 
     return {
       ...(createdInventory as DbInventory),
@@ -131,5 +153,98 @@ export class InventoryService {
     const existing = await this.inventoryRepository.findByIdAndStoreId(id, storeId);
     if (!existing) return false;
     return this.inventoryRepository.delete(id, storeId);
+  }
+
+  async updateStoreProduct(
+    storeId: string,
+    productId: string,
+    payload: {
+      price?: number;
+      stockQuantity?: number;
+      description?: string;
+      imageUrl?: string;
+      approvalStatus?: "DRAFT" | "PENDING" | "LIVE";
+      visibility?: boolean;
+    }
+  ): Promise<{ product: DbProduct; inventory: DbInventory | null } | null> {
+    const supabase = getSupabaseClient();
+    const { data: currentProduct } = await supabase
+      .from("products")
+      .select("*")
+      .eq("id", productId)
+      .eq("store_id", storeId)
+      .single();
+    if (!currentProduct) return null;
+
+    const productUpdate: Record<string, unknown> = {};
+    if (payload.price !== undefined) productUpdate.price = payload.price;
+    if (payload.description !== undefined) productUpdate.description = payload.description;
+    if (payload.imageUrl !== undefined) productUpdate.image_url = payload.imageUrl;
+    if (payload.approvalStatus) productUpdate.approval_status = payload.approvalStatus;
+
+    let product = currentProduct as DbProduct;
+    if (Object.keys(productUpdate).length > 0) {
+      const { data: updated } = await supabase
+        .from("products")
+        .update(productUpdate)
+        .eq("id", productId)
+        .eq("store_id", storeId)
+        .select("*")
+        .single();
+      if (updated) product = updated as DbProduct;
+    }
+
+    let inventory = await this.inventoryRepository.findByStoreId(storeId).then((rows) =>
+      rows.find((row) => row.product_id === productId) ?? null
+    );
+    if (!inventory) {
+      inventory = await this.inventoryRepository.create({
+        store_id: storeId,
+        product_id: productId,
+        stock_quantity: payload.stockQuantity ?? 0,
+        price_override: null,
+        status: payload.approvalStatus === "DRAFT" ? "draft" : "pending",
+      });
+    } else {
+      inventory = await this.inventoryRepository.update(inventory.id, storeId, {
+        stock_quantity: payload.stockQuantity,
+      });
+      if (payload.approvalStatus) {
+        const inventoryStatus = payload.approvalStatus === "DRAFT" ? "draft" : payload.approvalStatus === "PENDING" ? "pending" : "approved";
+        await getSupabaseClient()
+          .from("inventory")
+          .update({ status: inventoryStatus })
+          .eq("id", inventory.id)
+          .eq("store_id", storeId);
+        inventory = await this.inventoryRepository.findByIdAndStoreId(inventory.id, storeId);
+      }
+    }
+    const previousStatus = (currentProduct as DbProduct).approval_status ?? null;
+    if (payload.approvalStatus === "PENDING" && previousStatus !== "PENDING") {
+      await this.notificationsService.createNotification({
+        recipientId: storeId,
+        recipientRole: "store",
+        type: "product_submitted",
+        title: "Product submitted",
+        message: "You submitted a product for approval.",
+        metadata: {
+          product_id: productId,
+          inventory_id: inventory?.id,
+          link: `/store/inventory/${productId}`,
+        },
+      });
+    }
+
+    return { product, inventory };
+  }
+
+  async deleteStoreProduct(storeId: string, productId: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from("products")
+      .delete()
+      .eq("id", productId)
+      .eq("store_id", storeId);
+    return !error;
   }
 }

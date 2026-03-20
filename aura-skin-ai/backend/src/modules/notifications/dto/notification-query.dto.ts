@@ -19,4 +19,9 @@ export class NotificationQueryDto {
   @Type(() => Boolean)
   @IsBoolean()
   unread_only?: boolean;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  recycled_only?: boolean;
 }

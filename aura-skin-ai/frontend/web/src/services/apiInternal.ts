@@ -1,4 +1,4 @@
-import { useAuthStore } from "@/store/authStore";
+import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import { API_BASE } from "./apiBase";
 
 /** Returns Authorization: Bearer <accessToken> when token is present; used for user-facing API calls. */
@@ -9,12 +9,7 @@ export function getAuthHeaders(): Record<string, string> {
   // Read directly from the persisted storage if the in-memory store is empty.
   if (!token && typeof window !== "undefined") {
     try {
-      const raw = window.localStorage.getItem("auraskin-auth");
-      if (raw) {
-        const parsed = JSON.parse(raw) as { state?: { accessToken?: string | null } } | null;
-        const persisted = parsed?.state?.accessToken ?? null;
-        if (persisted) token = persisted;
-      }
+      token = getPersistedAccessToken();
     } catch {
       // ignore
     }

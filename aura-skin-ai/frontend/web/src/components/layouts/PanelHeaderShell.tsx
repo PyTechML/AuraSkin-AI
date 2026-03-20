@@ -9,7 +9,7 @@ interface PanelHeaderShellProps {
 
 export function PanelHeaderShell({ nav }: PanelHeaderShellProps) {
   return (
-    <header className="sticky top-0 z-40 w-full pt-3 pb-2 px-4 bg-transparent">
+    <header className="sticky top-0 z-50 w-full pt-3 pb-2 px-4 bg-background/80 backdrop-blur-[12px]">
       <div className="mx-auto w-full max-w-5xl rounded-full border shadow-md transition-shadow backdrop-blur-[20px] bg-white/30 border border-border/60">
         {nav}
       </div>

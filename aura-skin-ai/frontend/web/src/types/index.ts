@@ -228,6 +228,8 @@ export interface PartnerNotification {
   title: string;
   message: string;
   read: boolean;
+  starred?: boolean;
+  recycled?: boolean;
   createdAt: string;
   link?: string;
 }
@@ -248,13 +250,9 @@ export interface SupportTicket {
 /** Product lifecycle / approval status for partner panel. */
 export type ProductApprovalStatus =
   | "DRAFT"
-  | "SUBMITTED_FOR_REVIEW"
-  | "APPROVED"
+  | "PENDING"
   | "REJECTED"
   | "LIVE"
-  | "OUT_OF_STOCK"
-  | "ARCHIVED"
-  | "DELETED";
 
 export interface PartnerProduct extends Product {
   stock?: number;

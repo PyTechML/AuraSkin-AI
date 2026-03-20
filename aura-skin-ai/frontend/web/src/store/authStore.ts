@@ -55,7 +55,7 @@ export const useAuthStore = create<AuthState>()(
       setSession: (accessToken: string, user: User, role: UserRole, sessionToken?: string | null) =>
         set({
           accessToken,
-          user,
+          user: { ...user, role },
           role,
           isAuthenticated: true,
           sessionToken: sessionToken ?? null,
@@ -96,21 +96,16 @@ export const useAuthStore = create<AuthState>()(
     {
       name: "auraskin-auth",
       partialize: (state) => ({
-        user: state.user,
-        role: state.role,
-        isAuthenticated: state.isAuthenticated,
         accessToken: state.accessToken,
         sessionToken: state.sessionToken,
-        profileMeta: state.profileMeta,
       }),
       onRehydrateStorage: () => (_persistedState, err) => {
-        // Normalize after hydration completes to prevent account flipping or stale sessions.
+        // Normalize after hydration completes so user/role is always validated via /auth/me.
         try {
           const current = useAuthStore.getState();
           const token = current.accessToken;
           if (!err) {
             if (!token || typeof token !== "string" || token.trim() === "") {
-              // If there's no valid token, clear any user/role/session and mark unauthenticated.
               useAuthStore.setState({
                 user: null,
                 role: null,
@@ -120,10 +115,12 @@ export const useAuthStore = create<AuthState>()(
                 profileMeta: undefined,
               });
             } else {
-              // Ensure authenticated flag aligns with presence of token.
-              if (!current.isAuthenticated) {
-                useAuthStore.setState({ isAuthenticated: true });
-              }
+              // Token exists but user/role stays unresolved until provider calls /auth/me.
+              useAuthStore.setState({
+                user: null,
+                role: null,
+                isAuthenticated: false,
+              });
             }
           }
         } finally {
@@ -133,6 +130,20 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
+
+export function getPersistedAccessToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem("auraskin-auth");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { state?: { accessToken?: string | null } } | null;
+    const token = parsed?.state?.accessToken ?? null;
+    if (!token || typeof token !== "string" || token.trim() === "") return null;
+    return token;
+  } catch {
+    return null;
+  }
+}
 
 export function getRedirectPathForRole(role: UserRole): string {
   switch (role) {

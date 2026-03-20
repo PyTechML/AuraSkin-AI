@@ -1,4 +1,4 @@
-import { Controller, Get, Put, Post, Body, Param, Req, UseGuards } from "@nestjs/common";
+import { Controller, Get, Put, Post, Delete, Body, Param, Req, UseGuards } from "@nestjs/common";
 import { Request } from "express";
 import { AuthGuard, AuthenticatedUser } from "../../../shared/guards/auth.guard";
 import { RoleGuard, ROLES_KEY } from "../../../shared/guards/role.guard";
@@ -51,6 +51,62 @@ export class StoreController {
     const storeId = user?.id ?? "";
     const data = await this.inventoryService.createProductWithInventory(storeId, dto);
     return formatSuccess(data);
+  }
+
+  @Put("products/:id")
+  async updateProduct(
+    @Param("id") id: string,
+    @Req() req: Request,
+    @Body()
+    body: {
+      price?: number;
+      stockQuantity?: number;
+      description?: string;
+      imageUrl?: string;
+      approvalStatus?: "DRAFT" | "PENDING" | "LIVE";
+      visibility?: boolean;
+    }
+  ) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const storeId = user?.id ?? "";
+    const data = await this.inventoryService.updateStoreProduct(storeId, id, body);
+    return formatSuccess(data);
+  }
+
+  @Put("products/:id/submit")
+  async submitProduct(@Param("id") id: string, @Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const storeId = user?.id ?? "";
+    const data = await this.inventoryService.updateStoreProduct(storeId, id, {
+      approvalStatus: "PENDING",
+    });
+    return formatSuccess(data);
+  }
+
+  @Put("products/:id/draft")
+  async saveDraft(@Param("id") id: string, @Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const storeId = user?.id ?? "";
+    const data = await this.inventoryService.updateStoreProduct(storeId, id, {
+      approvalStatus: "DRAFT",
+    });
+    return formatSuccess(data);
+  }
+
+  @Post("products/:id/delete")
+  async deleteProduct(@Param("id") id: string, @Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const storeId = user?.id ?? "";
+    const success = await this.inventoryService.deleteStoreProduct(storeId, id);
+    return formatSuccess({ success });
+  }
+
+  @Delete("products/:id")
+  async deleteProductDirect(@Param("id") id: string, @Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const storeId = user?.id ?? "";
+    const success = await this.inventoryService.deleteStoreProduct(storeId, id);
+    return formatSuccess({ success });
   }
 
   @Get("notifications")

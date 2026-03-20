@@ -24,6 +24,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { ArrowLeft, Check, ImageIcon, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePanelToast } from "@/components/panel/PanelToast";
 
 const DESCRIPTION_MAX = 300;
 
@@ -72,6 +73,7 @@ function slugFromName(name: string): string {
 export default function StoreAddProductPage() {
   const router = useRouter();
   const { session } = useAuth();
+  const { addToast } = usePanelToast();
   const partnerId = session?.user?.id ?? "";
   const [activeTab, setActiveTab] = useState("basic");
   const [name, setName] = useState("");
@@ -177,20 +179,51 @@ export default function StoreAddProductPage() {
     visibility,
   });
 
+  const resetForm = () => {
+    setName("");
+    setCategory("");
+    setPrice("");
+    setShowDiscount(false);
+    setDiscount("");
+    setTaxIncluded(false);
+    setStock("");
+    setDescription("");
+    setIngredients("");
+    setUsage("");
+    setVisibility(true);
+    setSku("");
+    setLowStockThreshold("10");
+    setAutoOutOfStock(false);
+    setMetaTitle("");
+    setMetaDescription("");
+    setCostPerItem("");
+    setActiveTab("basic");
+    setVisitedTabs(new Set(["basic"]));
+    setValidationErrors({});
+  };
+
   const handleSaveDraft = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateAll() || !partnerId) return;
     setSubmitting(true);
     setValidationErrors({});
     try {
-      await createPartnerProduct(partnerId, buildPayload());
+      await createPartnerProduct(partnerId, {
+        ...buildPayload(),
+        approvalStatus: "DRAFT",
+      });
       setLastSavedAt(new Date());
       setSuccessBanner(true);
-      setTimeout(() => router.push("/store/inventory"), 2000);
-    } catch {
+      addToast("Draft saved successfully.");
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to save draft. Please try again.";
       setValidationErrors({
-        form: "Failed to save draft. Please try again.",
+        form: message,
       });
+      addToast(message, "error");
     } finally {
       setSubmitting(false);
     }
@@ -202,12 +235,33 @@ export default function StoreAddProductPage() {
     setSubmitting(true);
     setValidationErrors({});
     try {
-      await createPartnerProduct(partnerId, buildPayload());
+      const created = await createPartnerProduct(partnerId, {
+        ...buildPayload(),
+        approvalStatus: "PENDING",
+      });
       setLastSavedAt(new Date());
       setSuccessBanner(true);
-      setTimeout(() => router.push("/store/inventory"), 2000);
-    } catch {
-      setValidationErrors({ form: "Failed to submit. Please try again." });
+      addToast("Product submitted for admin approval");
+      if (typeof window !== "undefined") {
+        try {
+          const key = "store-inventory-new-products";
+          const prev = window.sessionStorage.getItem(key);
+          const parsed = prev ? (JSON.parse(prev) as unknown) : [];
+          const safeList = Array.isArray(parsed) ? parsed : [];
+          window.sessionStorage.setItem(key, JSON.stringify([created, ...safeList]));
+        } catch {
+          // Non-critical cache write should never fail product submission UX.
+        }
+      }
+      resetForm();
+      router.push("/store/inventory");
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to submit product. Please try again.";
+      setValidationErrors({ form: message });
+      addToast(message, "error");
     } finally {
       setSubmitting(false);
     }
@@ -286,7 +340,7 @@ export default function StoreAddProductPage() {
 
           {successBanner && (
             <div className="rounded-xl border border-border/60 bg-green-500/10 text-green-800 dark:text-green-200 px-4 py-3 text-sm font-label">
-              Product created. Redirecting to inventory…
+              Product saved successfully.
             </div>
           )}
 

@@ -7,6 +7,7 @@ export interface CreateInventoryRow {
   product_id: string;
   stock_quantity: number;
   price_override?: number | null;
+  status?: "draft" | "pending" | "approved" | "rejected";
 }
 
 export interface UpdateInventoryRow {
@@ -48,7 +49,7 @@ export class InventoryRepository {
         product_id: row.product_id,
         stock_quantity: row.stock_quantity ?? 0,
         price_override: row.price_override ?? null,
-        status: "pending",
+        status: row.status ?? "pending",
       })
       .select()
       .single();

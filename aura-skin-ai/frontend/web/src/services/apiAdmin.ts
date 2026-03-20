@@ -1,8 +1,8 @@
 import { API_BASE } from "./apiBase";
-import { useAuthStore } from "@/store/authStore";
+import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 
 function getAuthHeaders(): Record<string, string> {
-  const token = useAuthStore.getState().accessToken ?? null;
+  const token = useAuthStore.getState().accessToken ?? getPersistedAccessToken();
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }

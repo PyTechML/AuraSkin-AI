@@ -1,4 +1,4 @@
-import { IsArray, IsNumber, IsOptional, IsString, IsUUID, Min, ArrayNotEmpty } from "class-validator";
+import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, Min } from "class-validator";
 
 export class CreateStoreProductDto {
   @IsString()
@@ -54,5 +54,13 @@ export class CreateStoreProductDto {
   @IsOptional()
   @IsString()
   safetyNotes?: string;
+
+  @IsOptional()
+  @IsIn(["DRAFT", "PENDING"])
+  approvalStatus?: "DRAFT" | "PENDING";
+
+  @IsOptional()
+  @IsBoolean()
+  visibility?: boolean;
 }
 

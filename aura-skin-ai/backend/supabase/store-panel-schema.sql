@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS inventory (
   product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   stock_quantity integer NOT NULL DEFAULT 0,
   price_override numeric,
-  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('draft', 'pending', 'approved', 'rejected')),
   created_at timestamptz DEFAULT now(),
   UNIQUE(store_id, product_id)
 );

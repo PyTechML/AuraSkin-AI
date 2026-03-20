@@ -69,6 +69,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const setSession = useAuthStore((s) => s.setSession);
+  const logout = useAuthStore((s) => s.logout);
   const redirect = searchParams.get("redirect");
   const [apiError, setApiError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -131,15 +132,36 @@ function LoginForm() {
         return;
       }
 
-      if (payload?.accessToken && payload?.user) {
-        const u = payload.user;
-        const frontendRole: UserRole = BACKEND_TO_FRONTEND_ROLE[u.role] ?? "USER";
+      if (payload?.accessToken) {
+        useAuthStore.setState({
+          accessToken: payload.accessToken,
+          sessionToken: payload.sessionToken ?? null,
+          user: null,
+          role: null,
+          isAuthenticated: false,
+        });
+
+        const meRes = await fetch(`${API_BASE}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${payload.accessToken}` },
+          cache: "no-store",
+        });
+        const meJson = await meRes.json().catch(() => ({}));
+        const me = (meJson as {
+          data?: { id?: string; email?: string; fullName?: string | null; role?: string };
+        })?.data;
+        const frontendRole: UserRole =
+          me?.role ? BACKEND_TO_FRONTEND_ROLE[me.role.toLowerCase()] ?? "USER" : "USER";
+        if (!meRes.ok || !me?.id || !me?.email) {
+          logout();
+          setApiError("Unable to restore your session. Please try signing in again.");
+          return;
+        }
         setSession(
           payload.accessToken,
           {
-            id: u.id,
-            email: u.email ?? "",
-            name: u.fullName ?? u.email ?? "",
+            id: me.id,
+            email: me.email,
+            name: me.fullName ?? me.email,
             role: frontendRole,
           },
           frontendRole,

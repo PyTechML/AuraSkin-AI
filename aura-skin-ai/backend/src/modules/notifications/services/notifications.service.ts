@@ -41,13 +41,14 @@ export class NotificationsService {
 
   async listForRecipient(
     recipientId: string,
-    options: { limit?: number; offset?: number; unreadOnly?: boolean }
+    options: { limit?: number; offset?: number; unreadOnly?: boolean; recycledOnly?: boolean }
   ): Promise<DbNotification[]> {
     return this.notificationsRepository.listByRecipient({
       recipientId,
       limit: options.limit,
       offset: options.offset,
       unreadOnly: options.unreadOnly,
+      recycledOnly: options.recycledOnly,
     });
   }
 
@@ -57,6 +58,22 @@ export class NotificationsService {
 
   async markAllRead(recipientId: string): Promise<boolean> {
     return this.notificationsRepository.markAllReadByRecipient(recipientId);
+  }
+
+  async toggleStar(id: string, recipientId: string): Promise<DbNotification | null> {
+    return this.notificationsRepository.toggleStar(id, recipientId);
+  }
+
+  async recycle(id: string, recipientId: string): Promise<DbNotification | null> {
+    return this.notificationsRepository.recycle(id, recipientId);
+  }
+
+  async restore(id: string, recipientId: string): Promise<DbNotification | null> {
+    return this.notificationsRepository.restore(id, recipientId);
+  }
+
+  async deleteForever(id: string, recipientId: string): Promise<boolean> {
+    return this.notificationsRepository.deleteForever(id, recipientId);
   }
 
   async broadcastSystemAlert(

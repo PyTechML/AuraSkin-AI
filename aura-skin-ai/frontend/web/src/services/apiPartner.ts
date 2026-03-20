@@ -13,7 +13,7 @@ import type {
   AssignedUserDetail,
 } from "@/types";
 import { API_BASE } from "./apiBase";
-import { useAuthStore } from "@/store/authStore";
+import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import {
   getOrdersForPartner as apiGetOrdersForPartner,
   getOrderByIdForPartner as apiGetOrderByIdForPartner,
@@ -26,7 +26,8 @@ import {
 } from "./api";
 
 function getAuthHeaders(): Record<string, string> {
-  const token = useAuthStore.getState().accessToken ?? null;
+  let token = useAuthStore.getState().accessToken ?? null;
+  if (!token) token = getPersistedAccessToken();
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }
@@ -47,7 +48,7 @@ async function apiGet<T>(path: string): Promise<T> {
 
 async function apiSend<T>(
   path: string,
-  options: { method?: "POST" | "PUT"; body?: unknown } = {}
+  options: { method?: "POST" | "PUT" | "DELETE"; body?: unknown } = {}
 ): Promise<T> {
   const { method = "POST", body } = options;
   const headers: Record<string, string> = {
@@ -65,6 +66,24 @@ async function apiSend<T>(
     throw new Error(msg);
   }
   return ((json as any)?.data ?? json) as T;
+}
+
+function normalizeProductStatus(raw?: string | null): ProductApprovalStatus {
+  const value = (raw ?? "").toUpperCase();
+  if (value === "DRAFT") return "DRAFT";
+  if (value === "PENDING" || value === "SUBMITTED_FOR_REVIEW") return "PENDING";
+  if (value === "LIVE" || value === "APPROVED") return "LIVE";
+  if (value === "REJECTED") return "REJECTED";
+  return "DRAFT";
+}
+
+function normalizeInventoryStatus(raw?: string | null): ProductApprovalStatus {
+  const value = (raw ?? "").toLowerCase();
+  if (value === "draft") return "DRAFT";
+  if (value === "pending") return "PENDING";
+  if (value === "approved") return "LIVE";
+  if (value === "rejected") return "REJECTED";
+  return "DRAFT";
 }
 
 // Fallback IDs when real partner context (store/dermatologist profile id from auth) is not yet available. Prefer using authenticated partner id from API.
@@ -271,8 +290,25 @@ export async function getPartnerNotifications(
   partnerId: string
 ): Promise<PartnerNotification[]> {
   try {
-    // Store notifications; backend infers store id from auth context.
-    return await apiGet<PartnerNotification[]>("/partner/store/notifications");
+    const [activeRows, recycledRows] = await Promise.all([
+      apiGet<any[]>("/notifications"),
+      apiGet<any[]>("/notifications?recycled_only=true"),
+    ]);
+    const mergedRows = [...(activeRows ?? []), ...(recycledRows ?? [])].filter(
+      (row, index, arr) => arr.findIndex((item) => item.id === row.id) === index
+    );
+    return mergedRows.map((row) => ({
+      id: row.id,
+      partnerId,
+      category: row.type === "order_update" ? "orders" : row.type.includes("product") ? "inventory" : "system",
+      title: row.title ?? "Notification",
+      message: row.message ?? "",
+      read: Boolean(row.is_read),
+      starred: Boolean(row.metadata?.starred),
+      recycled: Boolean(row.metadata?.recycled),
+      createdAt: row.created_at ?? new Date().toISOString(),
+      link: typeof row.metadata?.link === "string" ? row.metadata.link : undefined,
+    }));
   } catch {
     return [];
   }
@@ -283,7 +319,7 @@ export async function markNotificationRead(
   _partnerId: string
 ): Promise<void> {
   try {
-    await apiSend<void>(`/partner/store/notifications/read/${encodeURIComponent(id)}`, {
+    await apiSend<void>(`/notifications/read/${encodeURIComponent(id)}`, {
       method: "PUT",
     });
   } catch {
@@ -292,8 +328,27 @@ export async function markNotificationRead(
 }
 
 export async function markAllNotificationsRead(partnerId: string): Promise<void> {
-  // TODO: Replace with real notification bulk update endpoint, e.g. apiPost(`/partner/notifications/read-all`, { partnerId })
-  return Promise.resolve();
+  try {
+    await apiSend<void>("/notifications/read-all", { method: "PUT" });
+  } catch {
+    void partnerId;
+  }
+}
+
+export async function toggleNotificationStar(id: string): Promise<void> {
+  await apiSend<void>(`/notifications/star/${encodeURIComponent(id)}`, { method: "PUT" });
+}
+
+export async function recycleNotification(id: string): Promise<void> {
+  await apiSend<void>(`/notifications/recycle/${encodeURIComponent(id)}`, { method: "PUT" });
+}
+
+export async function restoreNotification(id: string): Promise<void> {
+  await apiSend<void>(`/notifications/restore/${encodeURIComponent(id)}`, { method: "PUT" });
+}
+
+export async function deleteNotification(id: string): Promise<void> {
+  await apiSend<void>(`/notifications/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export async function getSupportTickets(partnerId: string): Promise<SupportTicket[]> {
@@ -485,6 +540,7 @@ export async function getPartnerProducts(_partnerId: string): Promise<PartnerPro
       skin_type?: string[] | null;
       concern?: string[] | null;
       approval_status?: string | null;
+      visibility?: boolean | null;
     } | null;
   };
 
@@ -497,7 +553,9 @@ export async function getPartnerProducts(_partnerId: string): Promise<PartnerPro
   return safeRows.map<PartnerProduct>((row) => {
     const p = row.product ?? ({} as any);
     const approvalStatus =
-      ((p?.approval_status as string | undefined)?.toUpperCase() as ProductApprovalStatus) ?? "PENDING";
+      p?.approval_status != null
+        ? normalizeProductStatus(p?.approval_status as string | undefined)
+        : normalizeInventoryStatus(row.status);
     return {
       id: p?.id ?? row.product_id,
       name: p?.name ?? "Unnamed product",
@@ -514,7 +572,7 @@ export async function getPartnerProducts(_partnerId: string): Promise<PartnerPro
       skinType: Array.isArray(p?.skin_type) ? p.skin_type : undefined,
       concern: Array.isArray(p?.concern) ? p.concern : undefined,
       stock: typeof row.stock_quantity === "number" ? row.stock_quantity : 0,
-      visibility: true,
+      visibility: typeof p?.visibility === "boolean" ? p.visibility : true,
       discount: 0,
       salesCount: 0,
       viewsCount: 0,
@@ -527,18 +585,8 @@ export async function getPartnerProductById(
   productId: string,
   _partnerId: string
 ): Promise<PartnerProduct | null> {
-  const p = await getProductById(productId);
-  if (!p) return Promise.resolve(null);
-  const ext = p as Partial<PartnerProduct>;
-  return Promise.resolve({
-    ...p,
-    stock: ext.stock ?? 0,
-    visibility: true,
-    discount: 0,
-    salesCount: ext.salesCount ?? 0,
-    viewsCount: ext.viewsCount ?? 0,
-    approvalStatus: (ext.approvalStatus as ProductApprovalStatus) ?? "LIVE",
-  });
+  const products = await getPartnerProducts(_partnerId);
+  return products.find((p) => p.id === productId) ?? null;
 }
 
 export interface CreatePartnerProductPayload {
@@ -556,7 +604,7 @@ export interface CreatePartnerProductPayload {
 
 export async function createPartnerProduct(
   _partnerId: string,
-  payload: CreatePartnerProductPayload
+  payload: CreatePartnerProductPayload & { approvalStatus?: "DRAFT" | "PENDING" }
 ): Promise<PartnerProduct> {
   const body: Record<string, unknown> = {
     name: payload.name,
@@ -570,6 +618,7 @@ export async function createPartnerProduct(
     safetyNotes: undefined,
     imageUrl: payload.imageUrls?.[0],
     visibility: payload.visibility ?? true,
+    approvalStatus: payload.approvalStatus ?? "PENDING",
   };
 
   const res = await apiSend<any>("/partner/store/products", {
@@ -581,7 +630,7 @@ export async function createPartnerProduct(
   const stockQuantity = (res as any)?.stock_quantity ?? payload.stock;
 
   const partner: PartnerProduct = {
-    id: p.id ?? "",
+    id: p.id ?? (res as any)?.product_id ?? "",
     name: p.name ?? payload.name,
     description: p.description ?? payload.description,
     category: p.category ?? payload.category,
@@ -600,7 +649,7 @@ export async function createPartnerProduct(
     discount: payload.discount,
     salesCount: 0,
     viewsCount: 0,
-    approvalStatus: "SUBMITTED_FOR_REVIEW",
+    approvalStatus: normalizeProductStatus(p.approval_status),
   };
 
   return partner;
@@ -611,33 +660,41 @@ export async function updatePartnerProduct(
   _partnerId: string,
   data: Partial<Pick<PartnerProduct, "price" | "stock" | "description" | "imageUrl" | "visibility" | "approvalStatus">>
 ): Promise<PartnerProduct | null> {
-  const existing = await getPartnerProductById(productId, _partnerId);
-  if (!existing) return Promise.resolve(null);
-  const updated: PartnerProduct = {
-    ...existing,
-    ...data,
-    approvalStatus:
-      data.stock !== undefined && data.stock === 0
-        ? "OUT_OF_STOCK"
-        : (data.approvalStatus as ProductApprovalStatus) ?? existing.approvalStatus,
+  const updated = await apiSend<any>(`/partner/store/products/${encodeURIComponent(productId)}`, {
+    method: "PUT",
+    body: {
+      price: data.price,
+      stockQuantity: data.stock,
+      description: data.description,
+      imageUrl: data.imageUrl,
+      visibility: data.visibility,
+      approvalStatus: data.approvalStatus,
+    },
+  });
+  return {
+    id: updated.product.id,
+    name: updated.product.name,
+    description: updated.product.description ?? "",
+    category: updated.product.category ?? "Uncategorized",
+    imageUrl: updated.product.image_url ?? undefined,
+    price: updated.product.price ?? 0,
+    stock: updated.inventory?.stock_quantity ?? 0,
+    visibility:
+      typeof updated.product.visibility === "boolean"
+        ? updated.product.visibility
+        : true,
+    discount: 0,
+    salesCount: 0,
+    viewsCount: 0,
+    approvalStatus: normalizeProductStatus(updated.product.approval_status),
   };
-  // TODO: Replace with real partner product update endpoint, e.g. apiPost(`/partner/store/products/${productId}`, { partnerId: _partnerId, ...data })
-  return Promise.resolve(updated);
 }
 
 export async function submitProductForReview(
   productId: string,
   _partnerId: string
 ): Promise<PartnerProduct | null> {
-  // TODO: Replace with real submit-for-review endpoint, e.g. apiPost(`/partner/store/products/${productId}/submit`, { partnerId: _partnerId })
-  const existing = await getPartnerProductById(productId, _partnerId);
-  if (!existing) return Promise.resolve(null);
-  const submitted: PartnerProduct = {
-    ...existing,
-    approvalStatus: "SUBMITTED_FOR_REVIEW",
-    submittedAt: new Date().toISOString(),
-  };
-  return Promise.resolve(submitted);
+  return updatePartnerProduct(productId, _partnerId, { approvalStatus: "PENDING" });
 }
 
 export async function archiveProduct(
@@ -656,11 +713,10 @@ export async function deleteProduct(
   productId: string,
   _partnerId: string
 ): Promise<PartnerProduct | null> {
-  // TODO: Replace with real delete endpoint, e.g. apiPost(`/partner/store/products/${productId}/delete`, { partnerId: _partnerId })
-  const existing = await getPartnerProductById(productId, _partnerId);
-  if (!existing) return Promise.resolve(null);
-  const deleted: PartnerProduct = { ...existing, approvalStatus: "DELETED" };
-  return Promise.resolve(deleted);
+  await apiSend<void>(`/partner/store/products/${encodeURIComponent(productId)}`, {
+    method: "DELETE",
+  });
+  return null;
 }
 
 export async function duplicateProduct(

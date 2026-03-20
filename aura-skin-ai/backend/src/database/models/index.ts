@@ -112,7 +112,7 @@ export interface DbInventory {
   product_id: string;
   stock_quantity: number;
   price_override: number | null;
-  status: "pending" | "approved" | "rejected";
+  status: "draft" | "pending" | "approved" | "rejected";
   created_at?: string;
 }
 
@@ -423,6 +423,7 @@ export interface DbNotification {
   message: string | null;
   is_read: boolean;
   metadata: Record<string, unknown> | null;
+  deleted_at?: string | null;
   created_at?: string;
 }
 

@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS products (
 -- Denormalized approval status for marketplace visibility
 ALTER TABLE products
   ADD COLUMN IF NOT EXISTS approval_status text DEFAULT 'LIVE'
-  CHECK (approval_status IN ('PENDING', 'LIVE', 'REJECTED'));
+  CHECK (approval_status IN ('DRAFT', 'PENDING', 'LIVE', 'REJECTED'));
 
 -- Stores (spec + optional frontend fields)
 CREATE TABLE IF NOT EXISTS stores (

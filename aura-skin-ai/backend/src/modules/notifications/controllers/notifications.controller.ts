@@ -1,5 +1,6 @@
 import {
   Controller,
+  Delete,
   Get,
   Put,
   Param,
@@ -39,6 +40,7 @@ export class NotificationsController {
       limit: query.limit,
       offset: query.offset,
       unreadOnly: query.unread_only,
+      recycledOnly: (query as NotificationQueryDto & { recycled_only?: boolean }).recycled_only,
     });
     return formatSuccess(list);
   }
@@ -59,6 +61,38 @@ export class NotificationsController {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const userId = user?.id ?? "";
     const ok = await this.notificationsService.markAllRead(userId);
+    return formatSuccess({ success: ok });
+  }
+
+  @Put("star/:id")
+  async toggleStar(@Param("id") id: string, @Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const notification = await this.notificationsService.toggleStar(id, userId);
+    return formatSuccess(notification ?? { success: false });
+  }
+
+  @Put("recycle/:id")
+  async recycle(@Param("id") id: string, @Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const notification = await this.notificationsService.recycle(id, userId);
+    return formatSuccess(notification ?? { success: false });
+  }
+
+  @Put("restore/:id")
+  async restore(@Param("id") id: string, @Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const notification = await this.notificationsService.restore(id, userId);
+    return formatSuccess(notification ?? { success: false });
+  }
+
+  @Delete(":id")
+  async deleteForever(@Param("id") id: string, @Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const ok = await this.notificationsService.deleteForever(id, userId);
     return formatSuccess({ success: ok });
   }
 }

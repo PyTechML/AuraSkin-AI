@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/providers/AuthProvider";
+import { useAuthStore } from "@/store/authStore";
 import { getPartnerProducts, getPartnerAnalytics } from "@/services/apiPartner";
 import type { PartnerProduct } from "@/types";
 import {
@@ -38,7 +39,7 @@ import { PanelEmptyState } from "@/components/panel/PanelEmptyState";
 import { downloadCsv } from "@/lib/csvExport";
 import { cn } from "@/lib/utils";
 
-type VisibilityFilter = "all" | "live" | "hidden" | "low-stock";
+type VisibilityFilter = "all" | "draft" | "pending" | "live" | "low-stock";
 
 /** Tiny sparkline: stub trend from stock or 5 fake values. */
 function StockSparkline({ stock, productId }: { stock: number; productId: string }) {
@@ -62,7 +63,8 @@ function StockSparkline({ stock, productId }: { stock: number; productId: string
 
 export default function StoreInventoryPage() {
   const { session } = useAuth();
-  const partnerId = session?.user?.id ?? "";
+  const storeUserId = useAuthStore((s) => s.user?.id);
+  const partnerId = session?.user?.id ?? storeUserId ?? "";
   const [products, setProducts] = useState<PartnerProduct[]>([]);
   const [analytics, setAnalytics] = useState<{ topProducts: { productId: string; name: string; sales: number }[] } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,23 +73,45 @@ export default function StoreInventoryPage() {
   const [statusFilter, setStatusFilter] = useState<VisibilityFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
 
-  useEffect(() => {
+  const loadInventory = () => {
     if (!partnerId) {
       setLoading(false);
-      return;
+      return Promise.resolve();
     }
     setLoading(true);
     setError(null);
-    Promise.all([
+    return Promise.all([
       getPartnerProducts(partnerId),
       getPartnerAnalytics(partnerId, 30).catch(() => null),
     ])
       .then(([prods, anal]) => {
-        setProducts(prods);
+        const key = "store-inventory-new-products";
+        const cachedRaw =
+          typeof window !== "undefined" ? window.sessionStorage.getItem(key) : null;
+        let cached: PartnerProduct[] = [];
+        if (cachedRaw) {
+          try {
+            const parsed = JSON.parse(cachedRaw) as unknown;
+            cached = Array.isArray(parsed) ? (parsed as PartnerProduct[]) : [];
+          } catch {
+            cached = [];
+          }
+        }
+        const merged = [...cached, ...prods].filter(
+          (item, index, arr) => arr.findIndex((x) => x.id === item.id) === index
+        );
+        setProducts(merged);
         setAnalytics(anal ?? null);
+        if (typeof window !== "undefined" && cached.length > 0) {
+          window.sessionStorage.removeItem(key);
+        }
       })
       .catch(() => setError("Failed to load inventory."))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    void loadInventory();
   }, [partnerId]);
 
   const lowStockCount = useMemo(
@@ -101,7 +125,7 @@ export default function StoreInventoryPage() {
   const liveCount = useMemo(
     () =>
       products.filter(
-        (p) => (p.approvalStatus ?? "LIVE") === "LIVE" && (p.visibility ?? true)
+        (p) => (p.approvalStatus ?? "PENDING") === "LIVE"
       ).length,
     [products]
   );
@@ -120,14 +144,9 @@ export default function StoreInventoryPage() {
           (p.category?.toLowerCase().includes(q) ?? false)
       );
     }
-    if (statusFilter === "live") {
-      list = list.filter(
-        (p) => (p.approvalStatus ?? "LIVE") === "LIVE" && (p.visibility ?? true)
-      );
-    }
-    if (statusFilter === "hidden") {
-      list = list.filter((p) => !(p.visibility ?? true));
-    }
+    if (statusFilter === "draft") list = list.filter((p) => (p.approvalStatus ?? "PENDING") === "DRAFT");
+    if (statusFilter === "pending") list = list.filter((p) => (p.approvalStatus ?? "PENDING") === "PENDING");
+    if (statusFilter === "live") list = list.filter((p) => (p.approvalStatus ?? "PENDING") === "LIVE");
     if (statusFilter === "low-stock") {
       list = list.filter((p) => (p.stock ?? 0) < 10);
     }
@@ -157,7 +176,7 @@ export default function StoreInventoryPage() {
       p.id,
       (p.price ?? 0).toFixed(2),
       String(p.stock ?? 0),
-      (p.approvalStatus ?? "LIVE").replace(/_/g, " "),
+      (p.approvalStatus ?? "PENDING").replace(/_/g, " "),
     ]);
     downloadCsv(headers, rows, "inventory.csv");
   };
@@ -201,7 +220,7 @@ export default function StoreInventoryPage() {
         <Card className="border-border max-w-md">
           <CardContent className="py-6">
             <p className="text-muted-foreground mb-4">{error}</p>
-            <Button variant="outline" onClick={() => window.location.reload()}>
+            <Button variant="outline" onClick={() => void loadInventory()}>
               Try again
             </Button>
           </CardContent>
@@ -278,8 +297,9 @@ export default function StoreInventoryPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All products</SelectItem>
-            <SelectItem value="live">Live & visible</SelectItem>
-            <SelectItem value="hidden">Hidden</SelectItem>
+            <SelectItem value="draft">Draft</SelectItem>
+            <SelectItem value="pending">Pending approval</SelectItem>
+            <SelectItem value="live">Live</SelectItem>
             <SelectItem value="low-stock">Low stock</SelectItem>
           </SelectContent>
         </Select>
@@ -361,7 +381,7 @@ export default function StoreInventoryPage() {
                 <TableBody>
                   {filtered.map((p) => {
                     const stock = p.stock ?? 0;
-                    const status = p.approvalStatus ?? "LIVE";
+                    const status = p.approvalStatus ?? "PENDING";
                     const isLive = status === "LIVE";
                     const isLowStock = stock > 0 && stock < 10;
                     const isOut = stock === 0;
@@ -371,7 +391,7 @@ export default function StoreInventoryPage() {
                           <div className="flex flex-col gap-0.5">
                             <span className="truncate">{p.name}</span>
                             <span className="text-xs text-muted-foreground">
-                              {(p.visibility ?? true) ? "LIVE" : "Hidden"}
+                              {status}
                             </span>
                           </div>
                         </TableCell>
@@ -396,9 +416,11 @@ export default function StoreInventoryPage() {
                             variant={
                               isLive
                                 ? "success"
-                                : status === "SUBMITTED_FOR_REVIEW"
-                                  ? "outline"
-                                  : "secondary"
+                                : status === "PENDING"
+                                  ? "warning"
+                                  : status === "REJECTED"
+                                    ? "destructive"
+                                    : "secondary"
                             }
                           >
                             {status.replace(/_/g, " ")}

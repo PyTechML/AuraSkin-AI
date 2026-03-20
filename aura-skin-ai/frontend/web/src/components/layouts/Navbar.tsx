@@ -112,10 +112,10 @@ function getLinksForMode(mode: NavMode, role?: UserRole | null, hasDermatologist
 
 function getEffectiveMode(isAuthenticated: boolean, role: UserRole | null): NavMode {
   if (!isAuthenticated) return "public";
-  if (role === "USER") return "user";
   if (role === "ADMIN") return "admin";
   if (role === "DERMATOLOGIST" || role === "STORE") return "partner";
-  return "public";
+  // Keep authenticated users on user navigation even if role hydration lags.
+  return "user";
 }
 
 const userMenuItems: DropdownItem[] = [
@@ -218,7 +218,7 @@ export function Navbar({
 
   if (loading) {
     return (
-      <header className="sticky top-0 z-40 w-full pt-3 pb-2 px-4 bg-transparent">
+      <header className="sticky top-0 z-50 w-full pt-3 pb-2 px-4 bg-transparent">
         <div
           className={cn(
             "mx-auto w-full max-w-5xl rounded-full border shadow-md transition-shadow",
@@ -495,7 +495,7 @@ export function Navbar({
   );
 
   return (
-    <header className="sticky top-0 z-40 w-full pt-3 pb-2 px-4 bg-transparent">
+    <header className="sticky top-0 z-50 w-full pt-3 pb-2 px-4 bg-transparent">
       <div
         className={cn(
           "mx-auto w-full max-w-5xl rounded-full border shadow-md transition-shadow",

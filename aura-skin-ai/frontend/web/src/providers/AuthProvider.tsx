@@ -1,11 +1,18 @@
 "use client";
 
 import { useEffect } from "react";
-import { useAuthStore } from "@/store/authStore";
+import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import { postSessionHeartbeat } from "@/services/sessionApi";
 import type { User, UserRole } from "@/types";
+import { API_BASE } from "@/services/apiBase";
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
+const BACKEND_TO_FRONTEND_ROLE: Record<string, UserRole> = {
+  user: "USER",
+  store: "STORE",
+  admin: "ADMIN",
+  dermatologist: "DERMATOLOGIST",
+};
 
 export interface AuthSession {
   user: User;
@@ -25,11 +32,12 @@ export interface AuthContextValue {
  */
 export function useAuth(): AuthContextValue {
   const { user, role, isAuthenticated, _hasHydrated } = useAuthStore();
+  const effectiveRole = role ?? user?.role ?? null;
   const session: AuthSession | null =
-    user && role ? { user, role } : null;
+    user && effectiveRole ? { user, role: effectiveRole } : null;
   return {
     session,
-    role: role ?? null,
+    role: effectiveRole,
     isAuthenticated,
     loading: !_hasHydrated,
   };
@@ -44,20 +52,118 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const sessionToken = useAuthStore((s) => s.sessionToken);
   const hasHydrated = useAuthStore((s) => s._hasHydrated);
+  const setHasHydrated = useAuthStore((s) => s.setHasHydrated);
+  const setSession = useAuthStore((s) => s.setSession);
+  const logout = useAuthStore((s) => s.logout);
+
+  const reconcileWithMe = async (token: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        if (response.status === 401) {
+          logout();
+        }
+        return;
+      }
+      const payload = (await response.json().catch(() => ({}))) as {
+        data?: { id?: string; email?: string; fullName?: string | null; role?: string };
+      };
+      const me = payload?.data;
+      const frontendRole = me?.role ? BACKEND_TO_FRONTEND_ROLE[me.role.toLowerCase()] : null;
+      if (!me?.id || !me?.email || !frontendRole) {
+        return;
+      }
+      setSession(
+        token,
+        {
+          id: me.id,
+          email: me.email,
+          name: me.fullName ?? me.email,
+          role: frontendRole,
+        },
+        frontendRole,
+        useAuthStore.getState().sessionToken
+      );
+    } catch {
+      // Keep current session on transient network/runtime failures.
+      return;
+    }
+  };
 
   useEffect(() => {
-    // Fallback: if persist hydration never fires (blocked storage, SSR quirks),
-    // don't keep the entire app-shell stuck in "loading" forever.
-    if (!hasHydrated) useAuthStore.getState().setHasHydrated(true);
-  }, [hasHydrated]);
+    if (hasHydrated) return;
+    const token = getPersistedAccessToken();
+    if (!token) {
+      setHasHydrated(true);
+      return;
+    }
+    void (async () => {
+      await reconcileWithMe(token);
+      setHasHydrated(true);
+    })();
+  }, [hasHydrated, setHasHydrated]);
 
   useEffect(() => {
-    if (!isAuthenticated || !sessionToken) return;
+    if (!hasHydrated || !isAuthenticated || !sessionToken) return;
     const tick = () => postSessionHeartbeat(sessionToken).catch(() => {});
     const id = setInterval(tick, HEARTBEAT_INTERVAL_MS);
     tick();
     return () => clearInterval(id);
-  }, [isAuthenticated, sessionToken]);
+  }, [hasHydrated, isAuthenticated, sessionToken]);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== "auraskin-auth") return;
+      if (!event.newValue) {
+        useAuthStore.setState({
+          user: null,
+          role: null,
+          isAuthenticated: false,
+          accessToken: null,
+          sessionToken: null,
+        });
+        return;
+      }
+      try {
+        const parsed = JSON.parse(event.newValue) as {
+          state?: { accessToken?: string | null; sessionToken?: string | null };
+        };
+        const incomingToken = parsed?.state?.accessToken ?? null;
+        if (!incomingToken) {
+          logout();
+          return;
+        }
+        useAuthStore.setState({
+          accessToken: incomingToken,
+          sessionToken: parsed?.state?.sessionToken ?? null,
+          user: null,
+          role: null,
+          isAuthenticated: false,
+        });
+        void reconcileWithMe(incomingToken);
+      } catch {
+        logout();
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      const token = useAuthStore.getState().accessToken;
+      if (token) {
+        void reconcileWithMe(token);
+      }
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
 
   return <>{children}</>;
 }

@@ -4,12 +4,14 @@ import {
   type PendingInventoryItem,
 } from "../repositories/products.repository";
 import { AuditService } from "./audit.service";
+import { NotificationsService } from "../../notifications/services/notifications.service";
 
 @Injectable()
 export class AdminProductsService {
   constructor(
     private readonly productsRepo: AdminProductsRepository,
-    private readonly audit: AuditService
+    private readonly audit: AuditService,
+    private readonly notificationsService: NotificationsService
   ) {}
 
   async getAll(): Promise<PendingInventoryItem[]> {
@@ -42,6 +44,18 @@ export class AdminProductsService {
       product_id: inv.product_id,
       store_id: inv.store_id,
     });
+    await this.notificationsService.createNotification({
+      recipientId: inv.store_id,
+      recipientRole: "store",
+      type: "product_approved",
+      title: "Product approved",
+      message: "Your submitted product has been approved and is now live.",
+      metadata: {
+        inventory_id: inventoryId,
+        product_id: inv.product_id,
+        link: `/store/inventory/${inv.product_id}`,
+      },
+    });
     return { ...inv, status: "approved" } as PendingInventoryItem;
   }
 
@@ -66,6 +80,18 @@ export class AdminProductsService {
     await this.audit.log(adminId, "reject_product", "inventory", inventoryId, {
       product_id: inv.product_id,
       store_id: inv.store_id,
+    });
+    await this.notificationsService.createNotification({
+      recipientId: inv.store_id,
+      recipientRole: "store",
+      type: "product_rejected",
+      title: "Product rejected",
+      message: "Your submitted product was rejected. Please review and resubmit.",
+      metadata: {
+        inventory_id: inventoryId,
+        product_id: inv.product_id,
+        link: `/store/inventory/${inv.product_id}`,
+      },
     });
     return { ...inv, status: "rejected" } as PendingInventoryItem;
   }
