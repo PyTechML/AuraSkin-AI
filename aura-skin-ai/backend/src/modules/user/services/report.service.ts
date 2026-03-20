@@ -10,6 +10,7 @@ import { EventsService } from "../../notifications/services/events.service";
 import { ReportGenerator } from "./report.generator";
 import { generateRoutinePlan } from "../../ai/routine-engine";
 import { AnalyticsService } from "../../analytics/analytics.service";
+import { getSupabaseClient } from "../../../database/supabase.client";
 
 const PRODUCT_RECOMMENDATION_LIMIT = 5;
 const DERMATOLOGIST_RECOMMENDATION_LIMIT = 5;
@@ -204,7 +205,13 @@ export class ReportService {
       .sort((a, b) => b.score - a.score)
       .slice(0, PRODUCT_RECOMMENDATION_LIMIT);
 
+    const supabase = getSupabaseClient();
+    const candidateIds = merged.map((p) => p.id).filter((id) => typeof id === "string" && id.length > 0);
+    const { data: existingProducts } = await supabase.from("products").select("id").in("id", candidateIds);
+    const existingProductIds = new Set((existingProducts ?? []).map((row: { id: string }) => row.id));
+
     for (const p of merged) {
+      if (!existingProductIds.has(p.id)) continue;
       await this.reportRepository.insertRecommendedProduct({
         report_id: report.id,
         product_id: p.id,

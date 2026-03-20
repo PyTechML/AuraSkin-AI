@@ -9,6 +9,8 @@ export interface AiProcessingJobPayload {
   assessmentId: string;
   userId: string;
   imageUrls: string[];
+  captureMode?: "upload" | "live";
+  capturedAt?: string;
   city?: string;
   latitude?: number;
   longitude?: number;
@@ -41,6 +43,8 @@ export async function enqueueAssessmentProcessing(
     assessmentId: job.assessmentId,
     userId: job.userId,
     imageUrls: job.imageUrls,
+    captureMode: job.captureMode ?? "upload",
+    capturedAt: job.capturedAt ?? new Date().toISOString(),
     city: job.city,
     latitude: job.latitude,
     longitude: job.longitude,

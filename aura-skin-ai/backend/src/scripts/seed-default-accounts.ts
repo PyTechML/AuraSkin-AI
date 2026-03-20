@@ -83,6 +83,15 @@ async function main() {
 
     if (userId) {
       console.log(`User ${email} already exists in auth, ensuring profile role ${role}.`);
+      // Keep test credentials stable across restarts/reseeds.
+      const { error: updateError } = await supabase.auth.admin.updateUserById(userId, {
+        password,
+        email_confirm: true,
+      });
+      if (updateError) {
+        console.error(`Failed to refresh password for ${email}:`, updateError.message);
+        process.exit(1);
+      }
     } else {
       const { data: created, error: createError } = await supabase.auth.admin.createUser({
         email,

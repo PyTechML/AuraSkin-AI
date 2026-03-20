@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -117,6 +117,25 @@ interface StepFormProps {
   onBack?: () => void;
 }
 
+type CameraState = "idle" | "starting" | "active" | "denied" | "unsupported" | "error";
+
+function dataUrlToFile(dataUrl: string, fileName: string): File | null {
+  const parts = dataUrl.split(",");
+  if (parts.length < 2) return null;
+  const mimeMatch = parts[0].match(/:(.*?);/);
+  const mime = mimeMatch?.[1] ?? "image/jpeg";
+  try {
+    const binary = atob(parts[1]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new File([bytes], fileName, { type: mime });
+  } catch {
+    return null;
+  }
+}
+
 function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSuccess, onBack }: StepFormProps) {
   type StepValues = z.infer<typeof step.schema>;
   const form = useForm<StepValues>({
@@ -124,6 +143,91 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
     defaultValues: getDefaultValues(step.key, data, fileNames) as StepValues,
   });
   const err = (name: string) => (form.formState.errors as Record<string, { message?: string }>)[name]?.message;
+  const [cameraState, setCameraState] = useState<CameraState>("idle");
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [captureIndex, setCaptureIndex] = useState(0);
+  const streamRef = useRef<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  const startCamera = async () => {
+    if (step.key !== "imageUpload") return;
+    setCameraError(null);
+    setCameraState("starting");
+    try {
+      const stream =
+        (await navigator.mediaDevices?.getUserMedia?.({
+          video: { facingMode: "user" },
+          audio: false,
+        })) ?? null;
+      if (!stream) {
+        setCameraState("unsupported");
+        setCameraError("Camera is not available on this device.");
+        return;
+      }
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => undefined);
+      }
+      setCameraState("active");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const denied = message.toLowerCase().includes("denied") || message.toLowerCase().includes("permission");
+      setCameraState(denied ? "denied" : "error");
+      setCameraError(
+        denied
+          ? "Camera permission was denied. You can allow it in browser settings and try again."
+          : "Unable to start camera. Please retry or use a different browser."
+      );
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraState("idle");
+  };
+
+  const captureCurrentFrame = () => {
+    if (cameraState !== "active") return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const view = IMAGE_VIEWS[captureIndex];
+    if (!video || !canvas || !view) return;
+    const width = video.videoWidth || 1280;
+    const height = video.videoHeight || 720;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    const file = dataUrlToFile(dataUrl, `${view.key}.jpg`);
+    if (!file) return;
+    const next = [...files];
+    next[captureIndex] = file;
+    setFiles(next);
+    const nextNames = [...fileNames];
+    nextNames[captureIndex] = file.name;
+    setFileNames(nextNames);
+    form.setValue("fileNames", nextNames);
+    setCaptureIndex((prev) => Math.min(prev + 1, IMAGE_VIEWS.length - 1));
+  };
 
   return (
     <Card className="border-border">
@@ -289,30 +393,39 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
 
           {step.key === "imageUpload" && (
             <div className="space-y-4">
-              <Label>Upload 5 clear face images (one per angle)</Label>
+              <Label>Start Live Assessment</Label>
               <p className="text-sm text-muted-foreground">
-                Please upload a clear face image for each angle. Only images with a detectable face will be accepted.
+                Use live camera capture for each angle. Only images with a detectable face will be accepted.
               </p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" onClick={startCamera} disabled={cameraState === "starting" || cameraState === "active"}>
+                  {cameraState === "starting" ? "Starting…" : "Start Live Assessment"}
+                </Button>
+                {cameraState === "active" && (
+                  <>
+                    <Button type="button" variant="outline" onClick={captureCurrentFrame}>
+                      Capture {IMAGE_VIEWS[captureIndex]?.label ?? "angle"}
+                    </Button>
+                    <Button type="button" variant="ghost" onClick={stopCamera}>
+                      Stop Camera
+                    </Button>
+                  </>
+                )}
+              </div>
+              {(cameraError || cameraState === "unsupported") && (
+                <p className="text-sm text-destructive">{cameraError ?? "Camera unavailable."}</p>
+              )}
+              <div className="overflow-hidden rounded-md border bg-black/5">
+                <video ref={videoRef} className="aspect-video w-full object-cover" muted playsInline />
+              </div>
+              <canvas ref={canvasRef} className="hidden" />
               <div className="grid gap-3">
                 {IMAGE_VIEWS.map((view, i) => (
                   <div key={view.key} className="space-y-1">
                     <Label className="text-xs">{view.label}</Label>
-                    <Input
-                      type="file"
-                      accept="image/jpeg,image/png,image/jpg"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const next = [...files];
-                          next[i] = file;
-                          setFiles(next);
-                          const nextNames = [...fileNames];
-                          nextNames[i] = file.name;
-                          setFileNames(nextNames);
-                          form.setValue("fileNames", nextNames);
-                        }
-                      }}
-                    />
+                    <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                      {files[i] ? "Captured" : "Pending"} {i === captureIndex && cameraState === "active" ? "· Next" : ""}
+                    </div>
                     {files[i] && <p className="text-xs text-muted-foreground">{files[i].name}</p>}
                   </div>
                 ))}

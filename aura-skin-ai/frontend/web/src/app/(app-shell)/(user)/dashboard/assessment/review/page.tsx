@@ -10,6 +10,7 @@ import {
   uploadAssessmentImages,
   submitAssessment,
   getAssessmentProgress,
+  getAssessmentStatus,
   getReportByAssessmentId,
   type CreateAssessmentPayload,
 } from "@/services/api";
@@ -98,9 +99,11 @@ export default function AssessmentReviewPage() {
         }
 
         attemptsRef.current += 1;
-        const result = await getAssessmentProgress(assessment_id);
+        const result = await getAssessmentStatus(assessment_id).catch(() =>
+          getAssessmentProgress(assessment_id)
+        );
         setProgress(result.progress ?? 0);
-        setStage(result.stage ?? "Processing…");
+        setStage(result.stage ?? "processing");
 
         if (result.error) {
           stopPolling();

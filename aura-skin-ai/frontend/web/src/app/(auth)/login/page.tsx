@@ -71,6 +71,7 @@ function LoginForm() {
   const setSession = useAuthStore((s) => s.setSession);
   const redirect = searchParams.get("redirect");
   const [apiError, setApiError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [roleRequestPending, setRoleRequestPending] = useState(false);
 
@@ -87,8 +88,10 @@ function LoginForm() {
   const requestedRole = watch("requested_role") ?? "USER";
 
   const onSubmit = async (data: FormData) => {
+    if (isSubmitting) return;
     setApiError(null);
     setRoleRequestPending(false);
+    setIsSubmitting(true);
     try {
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: "POST",
@@ -100,6 +103,9 @@ function LoginForm() {
         }),
       });
       const json = await res.json().catch(() => ({}));
+      const backendMessage =
+        (json as { message?: string })?.message ??
+        ((json as { error?: string })?.error ?? "");
       const payload = (json as {
           data?: {
             accessToken?: string;
@@ -111,7 +117,17 @@ function LoginForm() {
         })?.data;
 
       if (!res.ok) {
-        setApiError("Invalid email or password");
+        if (res.status === 401) {
+          setApiError("Invalid email or password");
+        } else if (res.status === 429) {
+          setApiError("Too many login attempts. Please wait a minute and try again.");
+        } else if (res.status >= 500) {
+          setApiError("Server is temporarily unavailable. Please try again.");
+        } else if (backendMessage) {
+          setApiError(backendMessage);
+        } else {
+          setApiError("Unable to sign in right now. Please try again.");
+        }
         return;
       }
 
@@ -145,9 +161,11 @@ function LoginForm() {
         return;
       }
 
-      setApiError("Invalid email or password");
+      setApiError("Unable to sign in right now. Please try again.");
     } catch {
-      setApiError("Network error. Please try again.");
+      setApiError("Network error. Check your internet/server connection and try again.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -205,8 +223,8 @@ function LoginForm() {
               Role change requested. Pending admin approval. You have been signed in with your current role.
             </p>
           )}
-          <Button type="submit" className="w-full">
-            Sign in
+          <Button type="submit" className="w-full" disabled={isSubmitting}>
+            {isSubmitting ? "Signing in..." : "Sign in"}
           </Button>
         </form>
         <p className="mt-4 text-center text-sm text-muted-foreground">

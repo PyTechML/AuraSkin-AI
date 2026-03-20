@@ -54,7 +54,8 @@ export default function RoutinePage() {
   const plan = routine?.plan ?? null;
   const morningRoutine = Array.isArray(plan?.morningRoutine) ? plan.morningRoutine : [];
   const nightRoutine = Array.isArray(plan?.nightRoutine) ? plan.nightRoutine : [];
-  const lifestyle = plan?.lifestyle ?? {};
+  const lifestyle: { foodAdvice?: string[]; hydration?: string[]; sleep?: string[] } =
+    plan?.lifestyle ?? {};
   const foodAdvice = Array.isArray(lifestyle.foodAdvice) ? lifestyle.foodAdvice : [];
   const hydration = Array.isArray(lifestyle.hydration) ? lifestyle.hydration : [];
   const sleep = Array.isArray(lifestyle.sleep) ? lifestyle.sleep : [];

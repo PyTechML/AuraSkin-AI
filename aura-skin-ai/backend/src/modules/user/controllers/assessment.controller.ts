@@ -90,8 +90,26 @@ export class AssessmentController {
     return formatSuccess({ success: true, ...data });
   }
 
+  @Post("assessment/live")
+  @HttpCode(HttpStatus.ACCEPTED)
+  async submitLive(@Req() req: Request, @Body() dto: SubmitAssessmentDto) {
+    // Backward-compatible alias for live-camera flow. Keeps submit contract unchanged.
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const data = await this.assessmentService.submit(dto.assessmentId, userId, dto);
+    return formatSuccess({ success: true, ...data });
+  }
+
   @Get("assessment/progress/:id")
   async getProgress(@Req() req: Request, @Param("id") assessmentId: string) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const data = await this.assessmentProgressService.getProgress(assessmentId, userId);
+    return formatSuccess({ progress: data.progress, stage: data.stage, report_id: data.report_id, error: data.error });
+  }
+
+  @Get("assessment/status/:id")
+  async getStatus(@Req() req: Request, @Param("id") assessmentId: string) {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const userId = user?.id ?? "";
     const data = await this.assessmentProgressService.getProgress(assessmentId, userId);

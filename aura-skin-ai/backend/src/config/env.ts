@@ -16,6 +16,14 @@ function getEnvOptional(key: string, defaultValue: string): string {
   return value === undefined || value === "" ? defaultValue : value;
 }
 
+function getEnvFirst(keys: string[]): string {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value !== undefined && value !== "") return value;
+  }
+  throw new Error(`Missing required env: one of ${keys.join(", ")}`);
+}
+
 export interface EnvConfig {
   port: number;
   nodeEnv: string;
@@ -43,7 +51,7 @@ export function loadEnv(): EnvConfig {
     supabaseUrl: getEnv("SUPABASE_URL"),
     supabaseAnonKey: getEnv("SUPABASE_ANON_KEY"),
     supabaseServiceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY"),
-    openaiApiKey: getEnv("OPENAI_API_KEY"),
+    openaiApiKey: getEnvFirst(["AI_API_KEY", "OPENAI_API_KEY"]),
     openaiModel: getEnvOptional("OPENAI_MODEL", "gpt-4o-mini"),
     redisUrl: process.env.REDIS_URL && process.env.REDIS_URL !== "" ? process.env.REDIS_URL : undefined,
     aiEngineUrl: process.env.AI_ENGINE_URL && process.env.AI_ENGINE_URL !== "" ? process.env.AI_ENGINE_URL : undefined,

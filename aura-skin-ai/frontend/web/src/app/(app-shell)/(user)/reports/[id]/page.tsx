@@ -12,13 +12,19 @@ import { sortReportsNewestFirst } from "@/lib/reportInsights";
 
 export default function ReportDetailPage() {
   const params = useParams();
-  const reportId = params.id as string;
+  const reportIdRaw = params?.id;
+  const reportId = Array.isArray(reportIdRaw) ? reportIdRaw[0] : reportIdRaw;
   const [report, setReport] = useState<Report | null>(null);
   const [previousReport, setPreviousReport] = useState<Report | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!reportId || typeof reportId !== "string") {
+      setLoaded(true);
+      setLoadError("Invalid report id");
+      return;
+    }
     let alive = true;
     setLoaded(false);
     setLoadError(null);

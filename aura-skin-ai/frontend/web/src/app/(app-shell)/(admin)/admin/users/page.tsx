@@ -189,7 +189,7 @@ export default function AdminUsersPage() {
     if (selectedIds.size === 0) return;
     setActionError(null);
     try {
-      for (const id of selectedIds) {
+      for (const id of Array.from(selectedIds)) {
         await apiBlockUser(id);
       }
       setSelectedIds(new Set());
@@ -664,7 +664,7 @@ export default function AdminUsersPage() {
                 </Button>
               )}
               <Button
-                variant="destructive"
+                variant="secondary"
                 size="sm"
                 className="w-full"
                 disabled={isMasterAdmin(selectedUser.email)}

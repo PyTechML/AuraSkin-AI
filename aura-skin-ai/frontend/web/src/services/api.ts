@@ -351,6 +351,33 @@ export async function getAssessmentProgress(
   };
 }
 
+export async function getAssessmentStatus(assessmentId: string): Promise<AssessmentProgressResult> {
+  try {
+    const raw = await apiGet<
+      | AssessmentProgressResult
+      | { data?: AssessmentProgressResult }
+      | { progress?: number; stage?: string; report_id?: string | null; error?: string | null }
+    >(`/user/assessment/status/${assessmentId}`);
+    const payload: any = (raw as any)?.data ?? raw ?? {};
+    const progress = Number(payload.progress ?? 0);
+    const stage = typeof payload.stage === "string" ? payload.stage : "processing";
+    const reportId =
+      (payload.report_id as string | null | undefined) ??
+      (payload.reportId as string | null | undefined) ??
+      null;
+    const error =
+      (payload.error as string | null | undefined) != null ? (payload.error as string) : null;
+    return {
+      progress: Number.isFinite(progress) ? progress : 0,
+      stage,
+      report_id: reportId,
+      error,
+    };
+  } catch {
+    return getAssessmentProgress(assessmentId);
+  }
+}
+
 export async function getReportByAssessmentId(
   assessmentId: string
 ): Promise<ReportWithRecommendations | null> {

@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useUserLocation } from "@/hooks/useUserLocation";
 import { getDermatologistsNearby, getDermatologists } from "@/services/api";
-import type { Dermatologist } from "@/types";
+import type { Dermatologist, Store } from "@/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { User, Star, MapPin } from "lucide-react";
+import { StoresMap } from "@/components/stores/StoresMap";
 
 export default function DermatologistsPage() {
   const { lat, lng, loading: locLoading, allowed } = useUserLocation();
@@ -43,6 +44,31 @@ export default function DermatologistsPage() {
       <p className="text-muted-foreground">
         Find board-certified dermatologists who partner with AuraSkin AI.
       </p>
+
+      <div className="max-w-4xl rounded-2xl border border-border/60 overflow-hidden">
+        <div className="p-0">
+          <StoresMap
+            stores={
+              (Array.isArray(dermatologists) ? dermatologists : []).map((d) => ({
+                id: d.id,
+                name: d.name ?? "Dermatologist",
+                address: d.clinicAddress ?? "",
+                city: "",
+                lat: d.clinicLat ?? 37.785,
+                lng: d.clinicLng ?? -122.42,
+                image: "",
+                phone: "",
+                rating: d.rating ?? 0,
+                open: true,
+                specialties: [],
+                schedule: [],
+              })) as unknown as Store[]
+            }
+            userLat={allowed ? lat : undefined}
+            userLng={allowed ? lng : undefined}
+          />
+        </div>
+      </div>
 
       {loadError && (
         <Card className="border-border">

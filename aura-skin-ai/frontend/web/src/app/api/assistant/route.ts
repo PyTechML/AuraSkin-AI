@@ -787,7 +787,6 @@ export async function POST(req: Request) {
     rateLimits: {
       maxPerMinute: state.settings.maxPerMinute ?? 10,
       maxPerHour: state.settings.maxPerHour ?? 100,
-      maxPerDay: state.settings.maxPerDay ?? 50,
     },
   });
   if (proxied) {

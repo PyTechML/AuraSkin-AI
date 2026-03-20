@@ -16,6 +16,31 @@ from vision.acne_detector import detect_acne
 from vision.redness_detector import detect_redness
 from classifiers.skin_classifier import classify
 
+
+def _estimate_oil_level(face_bgr: np.ndarray) -> float:
+    gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
+    # Brighter highlights often correlate with oiliness in uncontrolled lighting.
+    highlights = float(np.mean(gray > 210))
+    variance = float(np.var(gray) / (255.0 * 255.0))
+    return float(max(0.0, min(1.0, 0.6 * highlights + 0.4 * variance)))
+
+
+def _estimate_pigmentation(face_bgr: np.ndarray) -> tuple[float, dict]:
+    lab = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)
+    l_channel = lab[:, :, 0].astype(np.float32)
+    h, w = l_channel.shape[:2]
+    half_h = max(1, h // 2)
+    half_w = max(1, w // 2)
+    zones = {
+        "upper_left": float(np.std(l_channel[:half_h, :half_w]) / 64.0),
+        "upper_right": float(np.std(l_channel[:half_h, half_w:]) / 64.0),
+        "lower_left": float(np.std(l_channel[half_h:, :half_w]) / 64.0),
+        "lower_right": float(np.std(l_channel[half_h:, half_w:]) / 64.0),
+    }
+    normalized_zones = {k: float(max(0.0, min(1.0, v))) for k, v in zones.items()}
+    pigmentation = float(sum(normalized_zones.values()) / max(1, len(normalized_zones)))
+    return pigmentation, normalized_zones
+
 def run(
     image_urls: list[str],
     progress_callback: callable = None,
@@ -59,6 +84,8 @@ def run(
     progress("feature_extraction", 45)
     acne_out = detect_acne(primary_bgr, face_roi)
     redness_out = detect_redness(primary_bgr, face_roi)
+    oil_level = _estimate_oil_level(face_roi)
+    pigmentation, zones = _estimate_pigmentation(face_roi)
     progress("skin_classification", 65)
     class_out = classify(
         acne_score=acne_out["acne_score"],
@@ -71,11 +98,15 @@ def run(
         "skin_condition": class_out["skin_condition"],
         "recommended_routine": class_out["recommended_routine"],
         "acne_score": acne_out["acne_score"],
+        "oil_level": oil_level,
+        "pigmentation": pigmentation,
         "acne_severity": acne_out["acne_severity"],
         "redness_score": redness_out["redness_score"],
         "inflammation_level": redness_out["inflammation_level"],
-        "pigmentation_score": 0.3,
+        "pigmentation_score": pigmentation,
         "hydration_score": 0.5,
+        "confidence": float(max(0.0, min(1.0, 1.0 - (acne_out["acne_score"] * 0.35 + pigmentation * 0.35 + redness_out["redness_score"] * 0.3)))),
+        "zones": zones,
     }
     # Placeholder; worker will fill from DB
     recommendations = {"product_ids": [], "dermatologist_ids": []}

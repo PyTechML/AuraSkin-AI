@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/providers/AuthProvider";
@@ -55,6 +55,13 @@ function useRoleRedirect({
   const { role, isAuthenticated, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const lastRedirectRef = useRef<string | null>(null);
+
+  const safeReplace = (target: string) => {
+    if (!target || target === pathname || lastRedirectRef.current === target) return;
+    lastRedirectRef.current = target;
+    router.replace(target);
+  };
 
   useEffect(() => {
     if (loading) return;
@@ -63,32 +70,32 @@ function useRoleRedirect({
       const redirect = encodeURIComponent(
         pathname || (allowedRole === "STORE" ? "/store/dashboard" : "/dermatologist/dashboard")
       );
-      router.replace(`/login?redirect=${redirect}`);
+      safeReplace(`/login?redirect=${redirect}`);
       return;
     }
 
     if (allowedRole === "STORE") {
       if (role === "DERMATOLOGIST") {
-        router.replace(redirectIfDermatologist);
+        safeReplace(redirectIfDermatologist);
         return;
       }
       if (role !== "STORE") {
         // Non-partner roles back to their main panels.
-        if (role === "USER") router.replace("/dashboard");
-        else if (role === "ADMIN") router.replace("/admin");
-        else router.replace("/");
+        if (role === "USER") safeReplace("/dashboard");
+        else if (role === "ADMIN") safeReplace("/admin");
+        else safeReplace("/");
       }
     }
 
     if (allowedRole === "DERMATOLOGIST") {
       if (role === "STORE") {
-        router.replace(redirectIfStore);
+        safeReplace(redirectIfStore);
         return;
       }
       if (role !== "DERMATOLOGIST") {
-        if (role === "USER") router.replace("/dashboard");
-        else if (role === "ADMIN") router.replace("/admin");
-        else router.replace("/");
+        if (role === "USER") safeReplace("/dashboard");
+        else if (role === "ADMIN") safeReplace("/admin");
+        else safeReplace("/");
       }
     }
   }, [

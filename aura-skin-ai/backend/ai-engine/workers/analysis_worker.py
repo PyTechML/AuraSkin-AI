@@ -86,6 +86,10 @@ def run_job(payload: dict, redis_client, supabase):
         skin_condition = predictions.get("skin_condition") or "Unknown"
         recommended_routine = predictions.get("recommended_routine") or ""
         acne_score = predictions.get("acne_score")
+        oil_level = predictions.get("oil_level")
+        pigmentation = predictions.get("pigmentation")
+        confidence = predictions.get("confidence")
+        zones = predictions.get("zones")
         pigmentation_score = predictions.get("pigmentation_score")
         hydration_score = predictions.get("hydration_score")
         redness_score = predictions.get("redness_score")
@@ -131,6 +135,18 @@ def run_job(payload: dict, redis_client, supabase):
             "redness_score": float(redness_score) if redness_score is not None else None,
             "inflammation_level": inflammation_level,
         }
+        # Keep extended analysis fields for observability without schema change.
+        logger.info(
+            "Extended analysis metrics",
+            extra={
+                "event_type": "ai_processing",
+                "assessment_id": assessment_id,
+                "oil_level": oil_level,
+                "pigmentation": pigmentation,
+                "confidence": confidence,
+                "zones": zones if isinstance(zones, dict) else {},
+            },
+        )
         r = supabase.table("reports").insert(report_data).execute()
         if not r.data or len(r.data) == 0:
             set_progress(redis_client, assessment_id, 0, "failed", error="Failed to create report.")

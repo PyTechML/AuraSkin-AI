@@ -26,6 +26,7 @@ import { AiEngineAnalysisService } from "../../../ai/analysis/ai-engine-analysis
 import { generateRoutinePlan } from "../../ai/routine-engine";
 import { ReportRepository } from "../repositories/report.repository";
 import { RoutineRepository } from "../repositories/routine.repository";
+import { AiReportService } from "./ai-report.service";
 
 /** Multer-style file from multipart upload (fieldname optional; we key by view). */
 export interface AssessmentUploadFile {
@@ -49,7 +50,8 @@ export class AssessmentService {
     private readonly analytics: AnalyticsService,
     private readonly aiEngine: AiEngineAnalysisService,
     private readonly reportRepository: ReportRepository,
-    private readonly routineRepository: RoutineRepository
+    private readonly routineRepository: RoutineRepository,
+    private readonly aiReportService: AiReportService
   ) {}
 
   async create(userId: string, dto: CreateAssessmentDto): Promise<{ assessment_id: string }> {
@@ -210,6 +212,22 @@ export class AssessmentService {
         const inflammation_level = typeof p.inflammation_level === "string" ? p.inflammation_level : null;
         const skin_condition = typeof p.skin_condition === "string" ? p.skin_condition : null;
         const recommended_routine = typeof p.recommended_routine === "string" ? p.recommended_routine : null;
+        const oil_level = typeof p.oil_level === "number" ? p.oil_level : null;
+        const pigmentation = typeof p.pigmentation === "number" ? p.pigmentation : null;
+        const confidence = typeof p.confidence === "number" ? p.confidence : 0;
+        const zones =
+          p.zones && typeof p.zones === "object" ? (p.zones as Record<string, number>) : null;
+
+        const generated = await this.aiReportService.generate(
+          userId,
+          {
+            skinType: assessment.skin_type,
+            concerns: [assessment.primary_concern, assessment.secondary_concern].filter(
+              (c): c is string => typeof c === "string" && c.length > 0
+            ),
+          },
+          { acne_score, oil_level, pigmentation, confidence, zones }
+        );
 
         const ac = typeof acne_score === "number" ? acne_score : 0;
         const pig = typeof pigmentation_score === "number" ? pigmentation_score : 0;
@@ -227,7 +245,7 @@ export class AssessmentService {
           hydration_score,
           redness_score,
           inflammation_level,
-          recommended_routine,
+          recommended_routine: generated.routine || recommended_routine,
         });
         if (!report) {
           // Might be a uniqueness race; attempt to fetch and return.

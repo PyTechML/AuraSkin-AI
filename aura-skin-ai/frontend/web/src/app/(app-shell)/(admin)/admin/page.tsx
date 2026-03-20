@@ -71,7 +71,7 @@ export default function AdminDashboardPage() {
     { title: "Total Users", value: userCount, icon: Users, href: "/admin/users" },
     { title: "Active Users", value: activeUsers, icon: Users, href: "/admin/users" },
     { title: "Suspended Users", value: suspendedUsers, icon: Users, href: "/admin/users" },
-    { title: "Role Requests", value: pendingRoleRequests, icon: Clock, href: "/admin/role-requests", variant: (pendingRoleRequests > 0 ? "warning" : "default") as const },
+    { title: "Role Requests", value: pendingRoleRequests, icon: Clock, href: "/admin/role-requests", variant: pendingRoleRequests > 0 ? ("warning" as const) : ("default" as const) },
   ];
   const metricCardsRow1b = [
     { title: "Active Stores", value: storeCount, icon: Store, href: "/admin/stores" },

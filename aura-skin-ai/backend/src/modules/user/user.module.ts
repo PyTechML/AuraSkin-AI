@@ -20,6 +20,7 @@ import { AiProductRecommendationService } from "../ai/product-recommendation.ser
 import { AiDermatologistRecommendationService } from "../ai/dermatologist-recommendation.service";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { AiEngineAnalysisService } from "../../ai/analysis/ai-engine-analysis.service";
+import { AiReportService } from "./services/ai-report.service";
 
 @Module({
   imports: [NotificationsModule],
@@ -41,6 +42,7 @@ import { AiEngineAnalysisService } from "../../ai/analysis/ai-engine-analysis.se
     AiProductRecommendationService,
     AiDermatologistRecommendationService,
     AiEngineAnalysisService,
+    AiReportService,
   ],
   exports: [UserService],
 })
