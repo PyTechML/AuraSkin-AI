@@ -19,6 +19,7 @@ import type {
   SlotStatus,
   UpdateDermatologistSlotPayload,
 } from "@/types/availability";
+import type { NormalizedDermatologistProfile } from "@/types/profile";
 import { API_BASE } from "./apiBase";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import {
@@ -396,6 +397,81 @@ type BackendConsultationRow = {
   patient_id?: string | null;
   created_at?: string | null;
 };
+
+type BackendDermatologistProfileRow = {
+  id?: string | null;
+  name?: string | null;
+  email?: string | null;
+  specialization?: string | null;
+  years_experience?: number | null;
+  consultation_fee?: number | null;
+  clinic_name?: string | null;
+  clinic_address?: string | null;
+  bio?: string | null;
+  phone?: string | null;
+  profile_image?: string | null;
+};
+
+function normalizeDermatologistProfile(
+  data: BackendDermatologistProfileRow | null | undefined
+): NormalizedDermatologistProfile {
+  const safe = data ?? {};
+  return {
+    id: safe.id ?? "",
+    name: safe.name ?? "",
+    email: safe.email ?? "",
+    specialization: safe.specialization ?? "",
+    yearsExperience:
+      typeof safe.years_experience === "number" && Number.isFinite(safe.years_experience)
+        ? safe.years_experience
+        : 0,
+    consultationFee:
+      typeof safe.consultation_fee === "number" && Number.isFinite(safe.consultation_fee)
+        ? safe.consultation_fee
+        : 0,
+    clinicName: safe.clinic_name ?? "",
+    clinicAddress: safe.clinic_address ?? "",
+    bio: safe.bio ?? "",
+    phone: safe.phone ?? "",
+    profileImage: safe.profile_image ?? "",
+  };
+}
+
+function toBackendDermatologistProfilePayload(profile: NormalizedDermatologistProfile) {
+  return {
+    id: profile.id,
+    name: profile.name,
+    email: profile.email,
+    specialization: profile.specialization,
+    years_experience: profile.yearsExperience,
+    consultation_fee: profile.consultationFee,
+    clinic_name: profile.clinicName,
+    clinic_address: profile.clinicAddress,
+    bio: profile.bio,
+    phone: profile.phone,
+    profile_image: profile.profileImage,
+  };
+}
+
+export async function getDermatologistProfile(): Promise<NormalizedDermatologistProfile> {
+  const response = await apiGet<BackendDermatologistProfileRow | unknown>(
+    "/partner/dermatologist/profile"
+  );
+  return normalizeDermatologistProfile(response as BackendDermatologistProfileRow);
+}
+
+export async function updateDermatologistProfile(
+  profile: NormalizedDermatologistProfile
+): Promise<NormalizedDermatologistProfile> {
+  const response = await apiSend<BackendDermatologistProfileRow | unknown>(
+    "/partner/dermatologist/profile",
+    {
+      method: "PUT",
+      body: toBackendDermatologistProfilePayload(profile),
+    }
+  );
+  return normalizeDermatologistProfile(response as BackendDermatologistProfileRow);
+}
 
 type BackendSlotRow = {
   id: string;

@@ -2,8 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/providers/AuthProvider";
-import { getDermatologistById } from "@/services/api";
-import type { Dermatologist } from "@/types";
+import {
+  getDermatologistProfile,
+  updateDermatologistProfile,
+} from "@/services/apiPartner";
+import { usePanelToast } from "@/components/panel/PanelToast";
+import type { NormalizedDermatologistProfile } from "@/types/profile";
 import {
   Card,
   CardContent,
@@ -20,8 +24,22 @@ import { PanelSectionReveal } from "@/components/panel/PanelReveal";
 
 export default function DermatologistProfilePage() {
   const { session } = useAuth();
-  const dermatologistId = session?.user?.id ?? "derm-1";
-  const [profile, setProfile] = useState<Dermatologist | null>(null);
+  const { addToast } = usePanelToast();
+  const dermatologistId = session?.user?.id ?? "";
+  const defaultProfile: NormalizedDermatologistProfile = {
+    id: "",
+    name: "",
+    email: "",
+    specialization: "",
+    yearsExperience: 0,
+    consultationFee: 0,
+    clinicName: "",
+    clinicAddress: "",
+    bio: "",
+    phone: "",
+    profileImage: "",
+  };
+  const [profile, setProfile] = useState<NormalizedDermatologistProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,22 +55,26 @@ export default function DermatologistProfilePage() {
   });
 
   useEffect(() => {
+    if (!dermatologistId) {
+      setError("Unable to load profile.");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
-    getDermatologistById(dermatologistId)
+    getDermatologistProfile()
       .then((d) => {
-        setProfile(d);
-        if (d) {
-          setForm({
-            name: d.name ?? "",
-            specialty: d.specialty ?? "",
-            yearsExperience: d.yearsExperience?.toString() ?? "",
-            certifications: (d.certifications ?? []).join(", "),
-            bio: d.bio ?? "",
-            consultationFee: d.consultationFee?.toString() ?? "",
-            clinicAddress: d.clinicAddress ?? "",
-          });
-        }
+        const safeProfile = d ?? defaultProfile;
+        setProfile(safeProfile);
+        setForm({
+          name: safeProfile.name,
+          specialty: safeProfile.specialization,
+          yearsExperience: safeProfile.yearsExperience.toString(),
+          certifications: "",
+          bio: safeProfile.bio,
+          consultationFee: safeProfile.consultationFee.toString(),
+          clinicAddress: safeProfile.clinicAddress,
+        });
       })
       .catch(() => setError("Failed to load profile."))
       .finally(() => setLoading(false));
@@ -64,27 +86,49 @@ export default function DermatologistProfilePage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile) return;
+    if (!dermatologistId) {
+      addToast("Unable to update profile. Please try again.", "error");
+      return;
+    }
     setSaving(true);
-    // In this demo, we only update local state; a real app would persist via API.
-    const updated: Dermatologist = {
-      ...profile,
-      name: form.name,
-      specialty: form.specialty,
-      yearsExperience: form.yearsExperience
-        ? parseInt(form.yearsExperience, 10)
-        : profile.yearsExperience,
-      certifications: form.certifications
-        ? form.certifications.split(",").map((c) => c.trim())
-        : profile.certifications,
-      bio: form.bio,
-      consultationFee: form.consultationFee
-        ? parseFloat(form.consultationFee)
-        : profile.consultationFee,
-      clinicAddress: form.clinicAddress,
+    setError(null);
+    const baseProfile = profile ?? defaultProfile;
+    const yearsExperienceRaw = Number.parseInt(form.yearsExperience, 10);
+    const consultationFeeRaw = Number.parseFloat(form.consultationFee);
+    const payload: NormalizedDermatologistProfile = {
+      ...baseProfile,
+      id: baseProfile.id || dermatologistId,
+      name: form.name.trim(),
+      specialization: form.specialty.trim(),
+      yearsExperience: Number.isFinite(yearsExperienceRaw)
+        ? yearsExperienceRaw
+        : baseProfile.yearsExperience,
+      consultationFee: Number.isFinite(consultationFeeRaw)
+        ? consultationFeeRaw
+        : baseProfile.consultationFee,
+      clinicAddress: form.clinicAddress.trim(),
+      bio: form.bio.trim(),
     };
-    setProfile(updated);
-    setSaving(false);
+    try {
+      const updated = await updateDermatologistProfile(payload);
+      const safeUpdated = updated ?? defaultProfile;
+      setProfile(safeUpdated);
+      setForm((prev) => ({
+        ...prev,
+        name: safeUpdated.name,
+        specialty: safeUpdated.specialization,
+        yearsExperience: safeUpdated.yearsExperience.toString(),
+        consultationFee: safeUpdated.consultationFee.toString(),
+        clinicAddress: safeUpdated.clinicAddress,
+        bio: safeUpdated.bio,
+      }));
+      addToast("Profile updated successfully.", "success");
+    } catch {
+      setError("Unable to update profile. Please try again.");
+      addToast("Unable to update profile. Please try again.", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading && !profile) {
