@@ -22,6 +22,7 @@ import type {
 import type { NormalizedPatient } from "@/types/patient";
 import type { NormalizedDermatologistProfile } from "@/types/profile";
 import type { DermatologistEarnings } from "@/types/earnings";
+import type { DermatologistNotification } from "@/types/notification";
 import { API_BASE } from "./apiBase";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import {
@@ -391,22 +392,76 @@ export async function getPartnerNotifications(
   }
 }
 
+type BackendDermatologistNotificationRow = {
+  id?: string | null;
+  type?: string | null;
+  message?: string | null;
+  created_at?: string | null;
+  read_status?: boolean | null;
+  is_read?: boolean | null;
+};
+
+export async function getDermatologistNotifications(): Promise<DermatologistNotification[]> {
+  try {
+    const response = await apiGet<BackendDermatologistNotificationRow[] | unknown>(
+      "/partner/dermatologist/notifications"
+    );
+    const safeRows = Array.isArray(response) ? response : [];
+    return safeRows
+      .map((row) => {
+        const safeRow = row ?? {};
+        const id = String((safeRow as BackendDermatologistNotificationRow).id ?? "").trim();
+        if (!id) return null;
+        return {
+          id,
+          type: String((safeRow as BackendDermatologistNotificationRow).type ?? "system"),
+          message: String((safeRow as BackendDermatologistNotificationRow).message ?? ""),
+          createdAt: String(
+            (safeRow as BackendDermatologistNotificationRow).created_at ?? new Date().toISOString()
+          ),
+          isRead: Boolean(
+            (safeRow as BackendDermatologistNotificationRow).read_status ??
+              (safeRow as BackendDermatologistNotificationRow).is_read
+          ),
+        } satisfies DermatologistNotification;
+      })
+      .filter((item): item is DermatologistNotification => item !== null)
+      .filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index)
+      .sort((a, b) => {
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        return (Number(dateB) || 0) - (Number(dateA) || 0);
+      });
+  } catch {
+    return [];
+  }
+}
+
 export async function markNotificationRead(
   id: string,
-  _partnerId: string
+  _partnerId?: string
 ): Promise<void> {
   try {
-    await apiSend<void>(`/notifications/read/${encodeURIComponent(id)}`, {
-      method: "PUT",
-    });
+    const path = _partnerId
+      ? `/notifications/read/${encodeURIComponent(id)}`
+      : `/partner/dermatologist/notifications/read/${encodeURIComponent(id)}`;
+    await apiSend<void>(path, { method: "PUT" });
   } catch {
     // best-effort
   }
 }
 
-export async function markAllNotificationsRead(partnerId: string): Promise<void> {
+export async function markAllNotificationsRead(partnerId?: string): Promise<void> {
   try {
-    await apiSend<void>("/notifications/read-all", { method: "PUT" });
+    if (partnerId) {
+      await apiSend<void>("/notifications/read-all", { method: "PUT" });
+      return;
+    }
+
+    const notifications = await getDermatologistNotifications();
+    const unread = notifications.filter((item) => !item.isRead);
+    if (unread.length === 0) return;
+    await Promise.allSettled(unread.map((item) => markNotificationRead(item.id)));
   } catch {
     void partnerId;
   }
