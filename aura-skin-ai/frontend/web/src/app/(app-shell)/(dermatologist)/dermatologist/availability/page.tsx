@@ -104,6 +104,7 @@ export default function DermatologistAvailabilityPage() {
     if (!availability) return;
     setSaving(true);
     setSaveSuccess(false);
+    setError(null);
     try {
       const updated = await updateDermatologistAvailability(
         dermatologistId,
@@ -112,6 +113,12 @@ export default function DermatologistAvailabilityPage() {
       setAvailability(updated);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 4000);
+    } catch (saveError) {
+      const message =
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to update availability.";
+      setError(message);
     } finally {
       setSaving(false);
     }
@@ -288,6 +295,11 @@ export default function DermatologistAvailabilityPage() {
             {saveSuccess && (
               <span className="text-sm text-green-600 dark:text-green-400">
                 Availability updated successfully.
+              </span>
+            )}
+            {error && (
+              <span className="text-sm text-red-600 dark:text-red-400">
+                {error}
               </span>
             )}
           </div>

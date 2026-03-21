@@ -13,6 +13,12 @@ import type {
   AssignedUserDetail,
 } from "@/types";
 import type { NormalizedConsultation, NormalizedConsultationStatus } from "@/types/consultation";
+import type {
+  CreateDermatologistSlotPayload,
+  NormalizedSlot,
+  SlotStatus,
+  UpdateDermatologistSlotPayload,
+} from "@/types/availability";
 import { API_BASE } from "./apiBase";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import {
@@ -23,7 +29,6 @@ import {
   addOrderNote as apiAddOrderNote,
   getProducts,
   getProductById,
-  getBookingsByDermatologist,
 } from "./api";
 
 function getAuthHeaders(): Record<string, string> {
@@ -397,7 +402,37 @@ type BackendSlotRow = {
   slot_date?: string | null;
   start_time?: string | null;
   end_time?: string | null;
+  status?: string | null;
+  consultation_id?: string | null;
+  consultationId?: string | null;
+  is_blocked?: boolean | null;
 };
+
+function normalizeSlotStatus(slot: BackendSlotRow): SlotStatus {
+  if (slot.is_blocked === true || slot.status === "blocked") return "blocked";
+  if (slot.consultation_id || slot.consultationId || slot.status === "booked") return "booked";
+  return "available";
+}
+
+function normalizeSlotRow(slot: BackendSlotRow | null | undefined): NormalizedSlot | null {
+  if (!slot?.id) return null;
+  const date = typeof slot.slot_date === "string" ? slot.slot_date : "";
+  const startTime = typeof slot.start_time === "string" ? slot.start_time.slice(0, 5) : "";
+  const endTime = typeof slot.end_time === "string" ? slot.end_time.slice(0, 5) : "";
+  return {
+    id: slot.id,
+    date,
+    startTime,
+    endTime,
+    status: normalizeSlotStatus(slot),
+    consultationId:
+      typeof slot.consultation_id === "string"
+        ? slot.consultation_id
+        : typeof slot.consultationId === "string"
+        ? slot.consultationId
+        : undefined,
+  };
+}
 
 function mapConsultationStatus(status: string): NormalizedConsultationStatus {
   switch (status) {
@@ -444,12 +479,59 @@ export async function getDermatologistConsultations(): Promise<NormalizedConsult
   });
 }
 
+export async function getDermatologistSlots(): Promise<NormalizedSlot[]> {
+  const response = await apiGet<BackendSlotRow[] | unknown>("/partner/dermatologist/slots");
+  const safeRows = Array.isArray(response) ? response : [];
+  return safeRows
+    .map((slot) => normalizeSlotRow(slot as BackendSlotRow))
+    .filter((slot): slot is NormalizedSlot => slot !== null);
+}
+
+export async function createDermatologistSlot(
+  payload: CreateDermatologistSlotPayload
+): Promise<NormalizedSlot | null> {
+  const response = await apiSend<BackendSlotRow | unknown>("/partner/dermatologist/slots/create", {
+    method: "POST",
+    body: payload,
+  });
+  return normalizeSlotRow(response as BackendSlotRow);
+}
+
+export async function updateDermatologistSlot(
+  id: string,
+  payload: UpdateDermatologistSlotPayload
+): Promise<NormalizedSlot | null> {
+  const response = await apiSend<BackendSlotRow | unknown>(
+    `/partner/dermatologist/slots/update/${encodeURIComponent(id)}`,
+    {
+      method: "PUT",
+      body: payload,
+    }
+  );
+  return normalizeSlotRow(response as BackendSlotRow);
+}
+
+export async function deleteDermatologistSlot(id: string): Promise<boolean> {
+  const response = await apiSend<{ deleted?: boolean } | unknown>(
+    `/partner/dermatologist/slots/delete/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+    }
+  );
+  return Boolean((response as { deleted?: boolean } | null)?.deleted);
+}
+
 /** Bookings for dermatologist (partnerId = dermatologist id). */
 export async function getBookingsForPartner(
   partnerId: string
 ): Promise<ConsultationBooking[]> {
-  const dermId = partnerId === "store-1" ? DEFAULT_DERM_ID : partnerId;
-  return getBookingsByDermatologist(dermId);
+  void partnerId;
+  try {
+    const bookings = await apiGet<ConsultationBooking[]>("/partner/dermatologist/consultations");
+    return Array.isArray(bookings) ? bookings : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function updateBookingStatus(

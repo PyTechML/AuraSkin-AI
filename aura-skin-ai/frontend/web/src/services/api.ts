@@ -10,6 +10,13 @@ import type {
 } from "@/types";
 import { API_BASE } from "./apiBase";
 import { apiPost, apiPostMultipart, getAuthHeaders } from "./apiInternal";
+import {
+  createDermatologistSlot,
+  deleteDermatologistSlot,
+  getDermatologistSlots,
+  updateDermatologistSlot,
+} from "./apiPartner";
+import type { CreateDermatologistSlotPayload, NormalizedSlot } from "@/types/availability";
 
 async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}/api${path}`, {
@@ -725,46 +732,185 @@ export interface DermatologistAvailability {
   autoSave: boolean;
 }
 
-const dermatologistAvailabilityStore: Record<string, DermatologistAvailability> = {};
+const WEEKDAY_LABELS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+] as const;
+
+function normalizeTime(value: string): string {
+  return value.slice(0, 5);
+}
+
+function toWeekdayLabel(dateStr: string): string {
+  const date = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "Monday";
+  return WEEKDAY_LABELS[date.getDay()];
+}
+
+function toDateFromDayLabel(dayLabel: string): string {
+  const normalized = dayLabel.trim().toLowerCase();
+  const targetIndex = WEEKDAY_LABELS.findIndex((day) => day.toLowerCase() === normalized);
+  if (targetIndex < 0) return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const delta = (targetIndex - now.getDay() + 7) % 7;
+  const result = new Date(now);
+  result.setDate(now.getDate() + delta);
+  return result.toISOString().slice(0, 10);
+}
+
+function ensureNoOverlap(slots: Array<{ day: string; start: string; end: string }>) {
+  const byDay = new Map<string, Array<{ start: string; end: string }>>();
+  for (const slot of slots) {
+    const daySlots = byDay.get(slot.day) ?? [];
+    daySlots.push({ start: slot.start, end: slot.end });
+    byDay.set(slot.day, daySlots);
+  }
+  for (const [day, daySlots] of byDay.entries()) {
+    const sorted = daySlots
+      .map((slot) => ({ start: normalizeTime(slot.start), end: normalizeTime(slot.end) }))
+      .sort((a, b) => a.start.localeCompare(b.start));
+    for (let i = 0; i < sorted.length; i += 1) {
+      const current = sorted[i];
+      if (current.start >= current.end) {
+        throw new Error(`Invalid slot range on ${day}.`);
+      }
+      for (let j = i + 1; j < sorted.length; j += 1) {
+        const next = sorted[j];
+        if (next.start >= current.end) break;
+        if (current.start < next.end && current.end > next.start) {
+          throw new Error(`Slot overlap detected on ${day}.`);
+        }
+      }
+    }
+  }
+}
+
+function toAvailabilityFromSlots(
+  dermatologistId: string,
+  slots: NormalizedSlot[]
+): DermatologistAvailability {
+  const safeSlots = Array.isArray(slots) ? slots : [];
+  const daysMap = new Map<string, { day: string; slots: { start: string; end: string }[] }>();
+  for (const slot of safeSlots) {
+    if (slot.status !== "available") continue;
+    const dayLabel = toWeekdayLabel(slot.date);
+    const group = daysMap.get(dayLabel) ?? { day: dayLabel, slots: [] };
+    group.slots.push({
+      start: normalizeTime(slot.startTime),
+      end: normalizeTime(slot.endTime),
+    });
+    daysMap.set(dayLabel, group);
+  }
+  const days = Array.from(daysMap.values()).map((entry) => ({
+    ...entry,
+    slots: entry.slots.sort((a, b) => a.start.localeCompare(b.start)),
+  }));
+  return {
+    dermatologistId,
+    days,
+    holidays: [],
+    autoSave: true,
+  };
+}
 
 export async function getDermatologistAvailability(
   dermatologistId: string
 ): Promise<DermatologistAvailability> {
-  if (!dermatologistAvailabilityStore[dermatologistId]) {
-    dermatologistAvailabilityStore[dermatologistId] = {
-      dermatologistId,
-      days: [
-        {
-          day: "Monday",
-          slots: [
-            { start: "09:00", end: "12:00" },
-            { start: "14:00", end: "17:00" },
-          ],
-        },
-        {
-          day: "Wednesday",
-          slots: [{ start: "10:00", end: "16:00" }],
-        },
-      ],
-      holidays: [],
-      autoSave: true,
-    };
-  }
-  return Promise.resolve(dermatologistAvailabilityStore[dermatologistId]);
+  const slots = await getDermatologistSlots().catch(() => []);
+  return toAvailabilityFromSlots(dermatologistId, slots);
 }
 
 export async function updateDermatologistAvailability(
   dermatologistId: string,
   data: Partial<DermatologistAvailability>
 ): Promise<DermatologistAvailability> {
-  const current = await getDermatologistAvailability(dermatologistId);
-  const updated: DermatologistAvailability = {
-    ...current,
-    ...data,
-    days: data.days ?? current.days,
-    holidays: data.holidays ?? current.holidays,
-    autoSave: data.autoSave ?? current.autoSave,
+  const currentSlots = await getDermatologistSlots();
+  const safeDays = Array.isArray(data.days) ? data.days : [];
+  const desiredSlotInputs: Array<{ day: string; start: string; end: string; date: string }> = [];
+
+  for (const day of safeDays) {
+    const safeSlots = Array.isArray(day?.slots) ? day.slots : [];
+    for (const slot of safeSlots) {
+      desiredSlotInputs.push({
+        day: day.day,
+        start: normalizeTime(slot.start),
+        end: normalizeTime(slot.end),
+        date: toDateFromDayLabel(day.day),
+      });
+    }
+  }
+
+  ensureNoOverlap(desiredSlotInputs);
+
+  const desiredPayloads: CreateDermatologistSlotPayload[] = desiredSlotInputs.map((slot) => ({
+    date: slot.date,
+    startTime: slot.start,
+    endTime: slot.end,
+    status: "available",
+  }));
+
+  const keyOf = (date: string, startTime: string, endTime: string) =>
+    `${date}|${normalizeTime(startTime)}|${normalizeTime(endTime)}`;
+
+  const desiredKeySet = new Set(desiredPayloads.map((slot) => keyOf(slot.date, slot.startTime, slot.endTime)));
+  const currentByKey = new Map(
+    currentSlots.map((slot) => [keyOf(slot.date, slot.startTime, slot.endTime), slot])
+  );
+
+  const toDelete = currentSlots.filter((slot) => !desiredKeySet.has(keyOf(slot.date, slot.startTime, slot.endTime)));
+  const toCreate = desiredPayloads.filter((slot) => !currentByKey.has(keyOf(slot.date, slot.startTime, slot.endTime)));
+
+  if (toDelete.some((slot) => slot.status === "booked")) {
+    throw new Error("Booked slots cannot be edited or deleted.");
+  }
+
+  const createdIds: string[] = [];
+  const deletedSlots: NormalizedSlot[] = [];
+
+  try {
+    for (const slot of toDelete) {
+      const deleted = await deleteDermatologistSlot(slot.id);
+      if (!deleted) throw new Error("Failed to delete one or more slots.");
+      deletedSlots.push(slot);
+    }
+
+    for (const payload of toCreate) {
+      const created = await createDermatologistSlot(payload);
+      if (!created?.id) throw new Error("Failed to create one or more slots.");
+      createdIds.push(created.id);
+    }
+
+    for (const slot of currentSlots) {
+      if (slot.status !== "blocked") continue;
+      const key = keyOf(slot.date, slot.startTime, slot.endTime);
+      if (!desiredKeySet.has(key)) continue;
+      await updateDermatologistSlot(slot.id, { status: "blocked" });
+    }
+  } catch (error) {
+    for (const id of createdIds) {
+      await deleteDermatologistSlot(id).catch(() => false);
+    }
+    for (const slot of deletedSlots) {
+      await createDermatologistSlot({
+        date: slot.date,
+        startTime: normalizeTime(slot.startTime),
+        endTime: normalizeTime(slot.endTime),
+        status: slot.status,
+      }).catch(() => null);
+    }
+    throw error;
+  }
+
+  const refreshedSlots = await getDermatologistSlots().catch(() => []);
+  const updated = toAvailabilityFromSlots(dermatologistId, refreshedSlots);
+  return {
+    ...updated,
+    holidays: Array.isArray(data.holidays) ? data.holidays : updated.holidays,
+    autoSave: typeof data.autoSave === "boolean" ? data.autoSave : updated.autoSave,
   };
-  dermatologistAvailabilityStore[dermatologistId] = updated;
-  return Promise.resolve(updated);
 }
