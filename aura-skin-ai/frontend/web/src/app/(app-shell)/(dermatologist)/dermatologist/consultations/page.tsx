@@ -34,7 +34,11 @@ export default function DermatologistConsultationsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("pending");
 
   const load = () => {
-    if (!partnerId) return;
+    if (!partnerId) {
+      setConsultations([]);
+      setLoading(false);
+      return;
+    }
     getDermatologistConsultations()
       .then((data) => {
         const items = Array.isArray(data) ? data : [];
@@ -45,16 +49,46 @@ export default function DermatologistConsultationsPage() {
   };
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
-    load();
+    if (!partnerId) {
+      setConsultations([]);
+      setLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    getDermatologistConsultations()
+      .then((data) => {
+        if (cancelled) return;
+        const items = Array.isArray(data) ? data : [];
+        setConsultations(items);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setError("Failed to load consultations.");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [partnerId]);
 
   const grouped = useMemo(() => {
-    const pending = consultations.filter((c) => c.status === "pending");
-    const upcoming = consultations.filter((c) => c.status === "confirmed");
-    const completed = consultations.filter((c) => c.status === "completed");
-    const cancelled = consultations.filter((c) => c.status === "cancelled");
+    const safeConsultations = Array.isArray(consultations) ? consultations : [];
+    const sorted = safeConsultations.slice().sort((a, b) => {
+      const aDate = new Date(`${a.date ?? ""}T${a.timeSlot ?? ""}`).getTime();
+      const bDate = new Date(`${b.date ?? ""}T${b.timeSlot ?? ""}`).getTime();
+      return (Number(bDate) || 0) - (Number(aDate) || 0);
+    });
+    const pending = sorted.filter((c) => c.status === "pending");
+    const upcoming = sorted.filter((c) => c.status === "confirmed");
+    const completed = sorted.filter((c) => c.status === "completed");
+    const cancelled = sorted.filter((c) => c.status === "cancelled");
     return { pending, upcoming, completed, cancelled };
   }, [consultations]);
 
@@ -129,7 +163,7 @@ export default function DermatologistConsultationsPage() {
               cancelled: "Requests or appointments that were cancelled.",
             };
             const emptyMessages: Record<TabKey, string> = {
-              pending: "No pending consultations. New patient requests will appear here.",
+              pending: "No consultations yet",
               upcoming: "No upcoming consultations scheduled.",
               completed: "No completed consultations yet.",
               cancelled: "No cancelled consultations.",
@@ -145,17 +179,20 @@ export default function DermatologistConsultationsPage() {
                   </Card>
                 ) : (
                   items.map((b) => (
-                    <Card key={b.id} className="border-border partner-card-hover">
+                    <Card
+                      key={b.id ?? `${b.patientId ?? "patient"}-${b.date ?? ""}-${b.timeSlot ?? ""}`}
+                      className="border-border partner-card-hover"
+                    >
                       <CardContent className="p-4">
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                           <div>
                             <p className="font-medium flex items-center gap-2">
                               <User className="h-4 w-4" />
-                              {`Patient ${b.patientId || "Unknown"}`}
+                              {`Patient ${(b.patientId ?? "").trim() || "Unknown"}`}
                             </p>
                             <p className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
-                              <Calendar className="h-3 w-3" /> {b.date} ·{" "}
-                              <Clock className="h-3 w-3" /> {b.timeSlot}
+                              <Calendar className="h-3 w-3" /> {(b.date ?? "").trim() || "-"} ·{" "}
+                              <Clock className="h-3 w-3" /> {(b.timeSlot ?? "").trim() || "-"}
                             </p>
                           </div>
                           <div className="flex items-center gap-2 flex-wrap">
@@ -168,7 +205,7 @@ export default function DermatologistConsultationsPage() {
                                   : "secondary"
                               }
                             >
-                              {b.status}
+                              {(b.status ?? "").trim() || "pending"}
                             </Badge>
                           </div>
                         </div>

@@ -29,25 +29,67 @@ function formatRange(slot: { start: string; end: string }) {
 
 export default function DermatologistAvailabilityPage() {
   const { session } = useAuth();
-  const dermatologistId = session?.user?.id ?? "derm-1";
+  const dermatologistId = session?.user?.id ?? "";
   const [availability, setAvailability] =
     useState<DermatologistAvailability | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-
-  useEffect(() => {
+  const normalizeAvailability = (
+    raw: DermatologistAvailability | null | undefined
+  ): DermatologistAvailability => {
+    const safeRaw = raw ?? ({} as DermatologistAvailability);
+    const safeDays = Array.isArray(safeRaw.days)
+      ? safeRaw.days.map((day) => ({
+          day: day?.day ?? "",
+          slots: Array.isArray(day?.slots)
+            ? day.slots.map((slot) => ({
+                start: slot?.start ?? "",
+                end: slot?.end ?? "",
+              }))
+            : [],
+        }))
+      : [];
+    const safeHolidays = Array.isArray(safeRaw.holidays)
+      ? safeRaw.holidays.filter((h): h is string => typeof h === "string")
+      : [];
+    return {
+      days: safeDays,
+      holidays: safeHolidays,
+      autoSave: Boolean(safeRaw.autoSave),
+    };
+  };
+  const loadAvailability = () => {
     if (!dermatologistId) {
+      setAvailability(normalizeAvailability(null));
       setLoading(false);
-      return;
+      return () => {};
     }
+    let cancelled = false;
     setLoading(true);
     setError(null);
     getDermatologistAvailability(dermatologistId)
-      .then(setAvailability)
-      .catch(() => setError("Failed to load availability."))
-      .finally(() => setLoading(false));
+      .then((response) => {
+        if (cancelled) return;
+        setAvailability(normalizeAvailability(response));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setError("Failed to load availability.");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  };
+
+  useEffect(() => {
+    const cleanup = loadAvailability();
+    return cleanup;
   }, [dermatologistId]);
 
   const updateDay = (index: number, day: Partial<DermatologistAvailabilityDay>) => {
@@ -110,7 +152,7 @@ export default function DermatologistAvailabilityPage() {
         dermatologistId,
         availability
       );
-      setAvailability(updated);
+      setAvailability(normalizeAvailability(updated));
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 4000);
     } catch (saveError) {
@@ -146,7 +188,7 @@ export default function DermatologistAvailabilityPage() {
         <Card className="border-border max-w-md">
           <CardContent className="py-6">
             <p className="text-muted-foreground mb-4">{error}</p>
-            <Button variant="outline" onClick={() => window.location.reload()}>
+            <Button variant="outline" onClick={loadAvailability}>
               Try again
             </Button>
           </CardContent>
@@ -155,7 +197,7 @@ export default function DermatologistAvailabilityPage() {
     );
   }
 
-  const avail = availability!;
+  const avail = availability ?? normalizeAvailability(null);
 
   return (
     <div className="space-y-6">
@@ -176,9 +218,14 @@ export default function DermatologistAvailabilityPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {avail.days.map((day, dayIndex) => (
+          {avail.days.length === 0 ? (
+            <div className="rounded-xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
+              No slots created
+            </div>
+          ) : (
+            avail.days.map((day, dayIndex) => (
             <div
-              key={day.day}
+              key={(day.day ?? "").trim() || `day-${dayIndex}`}
               className="rounded-xl border border-border/60 bg-muted/20 p-4 space-y-3"
             >
               <div className="flex items-center justify-between gap-4">
@@ -191,7 +238,7 @@ export default function DermatologistAvailabilityPage() {
                     className="w-32"
                   />
                   <span className="text-xs text-muted-foreground">
-                    {day.slots.length} slot(s)
+                    {(Array.isArray(day.slots) ? day.slots : []).length} slot(s)
                   </span>
                 </div>
                 <Button
@@ -203,7 +250,7 @@ export default function DermatologistAvailabilityPage() {
                 </Button>
               </div>
               <div className="space-y-2">
-                {day.slots.map((slot, slotIndex) => (
+                {(Array.isArray(day.slots) ? day.slots : []).map((slot, slotIndex) => (
                   <div
                     key={`${slot.start}-${slot.end}-${slotIndex}`}
                     className="flex flex-wrap items-center gap-2"
@@ -239,7 +286,7 @@ export default function DermatologistAvailabilityPage() {
                 ))}
               </div>
             </div>
-          ))}
+          )))}
         </CardContent>
       </Card>
       </PanelSectionReveal>
@@ -256,7 +303,7 @@ export default function DermatologistAvailabilityPage() {
           <div className="space-y-2">
             <Label className="text-sm">Holidays</Label>
             <div className="flex flex-wrap gap-2">
-              {avail.holidays.map((h) => (
+              {(Array.isArray(avail.holidays) ? avail.holidays : []).map((h) => (
                 <Button
                   key={h}
                   size="sm"
@@ -280,7 +327,7 @@ export default function DermatologistAvailabilityPage() {
           </div>
           <div className="flex items-center gap-2">
             <Switch
-              checked={avail.autoSave}
+              checked={Boolean(avail.autoSave)}
               onCheckedChange={(v) =>
                 setAvailability({ ...avail, autoSave: v })
               }

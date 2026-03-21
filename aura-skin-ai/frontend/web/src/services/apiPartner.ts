@@ -378,7 +378,12 @@ export async function getPartnerNotifications(
     return mergedRows.map((row) => ({
       id: row.id,
       partnerId,
-      category: row.type === "order_update" ? "orders" : row.type.includes("product") ? "inventory" : "system",
+      category:
+        String(row?.type ?? "") === "order_update"
+          ? "orders"
+          : String(row?.type ?? "").toLowerCase().includes("product")
+          ? "inventory"
+          : "system",
       title: row.title ?? "Notification",
       message: row.message ?? "",
       read: Boolean(row.is_read),
@@ -620,8 +625,9 @@ type BackendSlotRow = {
 };
 
 function normalizeSlotStatus(slot: BackendSlotRow): SlotStatus {
-  if (slot.is_blocked === true || slot.status === "blocked") return "blocked";
-  if (slot.consultation_id || slot.consultationId || slot.status === "booked") return "booked";
+  const rawStatus = String(slot.status ?? "").toLowerCase();
+  if (slot.is_blocked === true || rawStatus === "blocked") return "blocked";
+  if (slot.consultation_id || slot.consultationId || rawStatus === "booked") return "booked";
   return "available";
 }
 
@@ -646,13 +652,17 @@ function normalizeSlotRow(slot: BackendSlotRow | null | undefined): NormalizedSl
 }
 
 function mapConsultationStatus(status: string): NormalizedConsultationStatus {
-  switch (status) {
+  const normalized = String(status ?? "").trim().toLowerCase();
+  switch (normalized) {
     case "pending":
       return "pending";
+    case "accepted":
     case "confirmed":
       return "confirmed";
+    case "done":
     case "completed":
       return "completed";
+    case "canceled":
     case "cancelled":
       return "cancelled";
     default:
@@ -1101,22 +1111,25 @@ export async function updatePartnerProduct(
       approvalStatus: data.approvalStatus,
     },
   });
+  const safeProduct = (updated as any)?.product ?? {};
+  const safeInventory = (updated as any)?.inventory ?? {};
+  const safeId = String((safeProduct?.id ?? productId) || productId);
   return {
-    id: updated.product.id,
-    name: updated.product.name,
-    description: updated.product.description ?? "",
-    category: updated.product.category ?? "Uncategorized",
-    imageUrl: updated.product.image_url ?? undefined,
-    price: updated.product.price ?? 0,
-    stock: updated.inventory?.stock_quantity ?? 0,
+    id: safeId,
+    name: String(safeProduct?.name ?? ""),
+    description: String(safeProduct?.description ?? ""),
+    category: String(safeProduct?.category ?? "Uncategorized"),
+    imageUrl: typeof safeProduct?.image_url === "string" ? safeProduct.image_url : undefined,
+    price: Number(safeProduct?.price) || 0,
+    stock: Number(safeInventory?.stock_quantity) || 0,
     visibility:
-      typeof updated.product.visibility === "boolean"
-        ? updated.product.visibility
+      typeof safeProduct?.visibility === "boolean"
+        ? safeProduct.visibility
         : true,
     discount: 0,
     salesCount: 0,
     viewsCount: 0,
-    approvalStatus: normalizeProductStatus(updated.product.approval_status),
+    approvalStatus: normalizeProductStatus(String(safeProduct?.approval_status ?? "")),
   };
 }
 

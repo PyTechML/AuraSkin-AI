@@ -13,6 +13,11 @@ import {
 import type { DermatologistNotification } from "@/types/notification";
 
 const FALLBACK_MESSAGE = "New update available";
+const formatSafeDate = (value: string | null | undefined) => {
+  const timestamp = new Date(value ?? "").getTime();
+  if (!Number.isFinite(timestamp)) return "-";
+  return new Date(timestamp).toLocaleString();
+};
 
 export default function DermatologistNotificationsPage() {
   const [notifications, setNotifications] = useState<DermatologistNotification[]>([]);
@@ -121,19 +126,21 @@ export default function DermatologistNotificationsPage() {
               <div className="h-12 rounded border border-border/60 bg-muted/30 animate-pulse" />
             </div>
           ) : sortedNotifications.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No notifications.</p>
+            <p className="text-sm text-muted-foreground">No notifications</p>
           ) : (
             <ul className="space-y-2">
               {sortedNotifications.map((notification) => {
-                const safeMessage = notification.message || FALLBACK_MESSAGE;
+                const safeMessage = (notification.message ?? "").trim() || FALLBACK_MESSAGE;
+                const safeId = (notification.id ?? "").trim();
+                const safeType = (notification.type ?? "").trim() || "system";
                 return (
                   <li
-                    key={notification.id}
+                    key={safeId || `${safeType}-${notification.createdAt ?? ""}`}
                     className="rounded-lg border border-border/60 px-3 py-2 text-sm"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium capitalize">{notification.type}</span>
+                        <span className="font-medium capitalize">{safeType}</span>
                         {!notification.isRead && (
                           <Badge variant="outline" className="text-xs">
                             New
@@ -141,18 +148,18 @@ export default function DermatologistNotificationsPage() {
                         )}
                       </div>
                       <span className="text-[11px] text-muted-foreground">
-                        {new Date(notification.createdAt).toLocaleString()}
+                        {formatSafeDate(notification.createdAt)}
                       </span>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">{safeMessage}</p>
-                    {!notification.isRead && (
+                    {!notification.isRead && safeId && (
                       <div className="mt-2">
                         <Button
                           variant="ghost"
                           size="sm"
                           className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
                           onClick={() => {
-                            void markOneAsRead(notification.id);
+                            void markOneAsRead(safeId);
                           }}
                         >
                           Mark read

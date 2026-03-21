@@ -44,12 +44,13 @@ export default function DermatologistDashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
+  const loadDashboard = () => {
     if (!partnerId) {
+      setData({ bookings: [], patients: [], earnings: null });
       setLoading(false);
-      return;
+      return () => {};
     }
+    let cancelled = false;
     setLoading(true);
     setError(null);
     Promise.all([
@@ -58,12 +59,27 @@ export default function DermatologistDashboardPage() {
       getDermatologistEarnings(),
     ])
       .then(([bookings, patients, earnings]) => {
+        if (cancelled) return;
         const safeBookings = Array.isArray(bookings) ? bookings : [];
         const safePatients = Array.isArray(patients) ? patients : [];
-        setData({ bookings: safeBookings, patients: safePatients, earnings });
+        setData({ bookings: safeBookings, patients: safePatients, earnings: earnings ?? null });
       })
-      .catch(() => setError("Failed to load dashboard data."))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (cancelled) return;
+        setError("Failed to load dashboard data.");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  };
+
+  useEffect(() => {
+    const cleanup = loadDashboard();
+    return cleanup;
   }, [partnerId]);
 
   const derived = useMemo(() => {
@@ -80,7 +96,13 @@ export default function DermatologistDashboardPage() {
     const upcoming = bookings.filter((b) => b.status === "confirmed");
     const completed = bookings.filter((b) => b.status === "completed");
 
-    const todaysAppointments = upcoming.filter((b) => b.date === todayStr);
+    const todaysAppointments = upcoming
+      .filter((b) => b.date === todayStr)
+      .sort((a, b) => {
+        const dateA = new Date(`${a.date ?? ""}T${a.timeSlot ?? ""}`).getTime();
+        const dateB = new Date(`${b.date ?? ""}T${b.timeSlot ?? ""}`).getTime();
+        return (Number(dateA) || 0) - (Number(dateB) || 0);
+      });
     const weeklyConsultations = bookings.filter(
       (b) =>
         b.date >= weekAgo &&
@@ -88,9 +110,7 @@ export default function DermatologistDashboardPage() {
         (b.status === "confirmed" || b.status === "completed")
     );
 
-    // Simple patient growth proxy: number of patients vs a baseline.
     const totalPatients = patients.length;
-    const lastWeekPatients = Math.max(0, totalPatients - 2);
 
     return {
       pendingCount: pending.length,
@@ -98,7 +118,6 @@ export default function DermatologistDashboardPage() {
       weeklyConsultationsCount: weeklyConsultations.length,
       completedCount: completed.length,
       totalPatients,
-      lastWeekPatients,
     };
   }, [data]);
 
@@ -135,7 +154,7 @@ export default function DermatologistDashboardPage() {
             <p className="text-muted-foreground mb-4">
               {error ?? "Unable to load dashboard."}
             </p>
-            <Button variant="outline" onClick={() => window.location.reload()}>
+            <Button variant="outline" onClick={loadDashboard}>
               Try again
             </Button>
           </CardContent>
@@ -253,13 +272,8 @@ export default function DermatologistDashboardPage() {
                   Total active patients
                 </p>
               </div>
-              <div className="text-right">
-                <p className="text-sm text-muted-foreground">
-                  Last week: {derived.lastWeekPatients}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Demo data for growth trend.
-                </p>
+              <div className="text-right text-sm text-muted-foreground">
+                Updated from current assignments
               </div>
             </div>
           </CardContent>
@@ -302,14 +316,14 @@ export default function DermatologistDashboardPage() {
             <ul className="space-y-2 text-sm">
               {derived.todaysAppointments.map((b) => (
                 <li
-                  key={b.id}
+                  key={b.id ?? `${b.userId ?? "user"}-${b.date ?? ""}-${b.timeSlot ?? ""}`}
                   className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2"
                 >
                   <span className="font-medium">
-                    {b.userName ?? b.userId}
+                    {(b.userName ?? b.userId ?? "").trim() || "Patient"}
                   </span>
                   <span className="text-muted-foreground">
-                    {b.date} · {b.timeSlot}
+                    {(b.date ?? "").trim() || "-"} · {(b.timeSlot ?? "").trim() || "-"}
                   </span>
                 </li>
               ))}

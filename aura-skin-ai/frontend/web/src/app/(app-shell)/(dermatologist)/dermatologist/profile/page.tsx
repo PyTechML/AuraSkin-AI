@@ -48,36 +48,47 @@ export default function DermatologistProfilePage() {
     name: "",
     specialty: "",
     yearsExperience: "",
-    certifications: "",
     bio: "",
     consultationFee: "",
     clinicAddress: "",
   });
 
   useEffect(() => {
+    let cancelled = false;
     if (!dermatologistId) {
       setError("Unable to load profile.");
       setLoading(false);
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
     setLoading(true);
     setError(null);
     getDermatologistProfile()
       .then((d) => {
+        if (cancelled) return;
         const safeProfile = d ?? defaultProfile;
         setProfile(safeProfile);
         setForm({
-          name: safeProfile.name,
-          specialty: safeProfile.specialization,
-          yearsExperience: safeProfile.yearsExperience.toString(),
-          certifications: "",
-          bio: safeProfile.bio,
-          consultationFee: safeProfile.consultationFee.toString(),
-          clinicAddress: safeProfile.clinicAddress,
+          name: safeProfile.name ?? "",
+          specialty: safeProfile.specialization ?? "",
+          yearsExperience: (Number(safeProfile.yearsExperience) || 0).toString(),
+          bio: safeProfile.bio ?? "",
+          consultationFee: (Number(safeProfile.consultationFee) || 0).toString(),
+          clinicAddress: safeProfile.clinicAddress ?? "",
         });
       })
-      .catch(() => setError("Failed to load profile."))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (cancelled) return;
+        setError("Failed to load profile.");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [dermatologistId]);
 
   const handleChange = (field: keyof typeof form, value: string) => {
@@ -115,12 +126,12 @@ export default function DermatologistProfilePage() {
       setProfile(safeUpdated);
       setForm((prev) => ({
         ...prev,
-        name: safeUpdated.name,
-        specialty: safeUpdated.specialization,
-        yearsExperience: safeUpdated.yearsExperience.toString(),
-        consultationFee: safeUpdated.consultationFee.toString(),
-        clinicAddress: safeUpdated.clinicAddress,
-        bio: safeUpdated.bio,
+        name: safeUpdated.name ?? "",
+        specialty: safeUpdated.specialization ?? "",
+        yearsExperience: (Number(safeUpdated.yearsExperience) || 0).toString(),
+        consultationFee: (Number(safeUpdated.consultationFee) || 0).toString(),
+        clinicAddress: safeUpdated.clinicAddress ?? "",
+        bio: safeUpdated.bio ?? "",
       }));
       addToast("Profile updated successfully.", "success");
     } catch {
@@ -153,7 +164,28 @@ export default function DermatologistProfilePage() {
         <Card className="border-border max-w-md">
           <CardContent className="py-6">
             <p className="text-muted-foreground mb-4">{error}</p>
-            <Button variant="outline" onClick={() => window.location.reload()}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setLoading(true);
+                setError(null);
+                getDermatologistProfile()
+                  .then((d) => {
+                    const safeProfile = d ?? defaultProfile;
+                    setProfile(safeProfile);
+                    setForm({
+                      name: safeProfile.name ?? "",
+                      specialty: safeProfile.specialization ?? "",
+                      yearsExperience: (Number(safeProfile.yearsExperience) || 0).toString(),
+                      bio: safeProfile.bio ?? "",
+                      consultationFee: (Number(safeProfile.consultationFee) || 0).toString(),
+                      clinicAddress: safeProfile.clinicAddress ?? "",
+                    });
+                  })
+                  .catch(() => setError("Failed to load profile."))
+                  .finally(() => setLoading(false));
+              }}
+            >
               Try again
             </Button>
           </CardContent>
@@ -226,17 +258,6 @@ export default function DermatologistProfilePage() {
                   }
                 />
               </div>
-            </div>
-            <div>
-              <Label htmlFor="certifications">Certifications</Label>
-              <Input
-                id="certifications"
-                value={form.certifications}
-                onChange={(e) =>
-                  handleChange("certifications", e.target.value)
-                }
-                placeholder="Comma-separated list"
-              />
             </div>
             <div>
               <Label htmlFor="clinicAddress">Clinic address (optional)</Label>

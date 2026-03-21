@@ -43,15 +43,29 @@ export default function DermatologistPatientsPage() {
 
   useEffect(() => {
     if (!partnerId) {
+      setPatients([]);
       setLoading(false);
       return;
     }
+    let cancelled = false;
     setLoading(true);
     setError(null);
     getDermatologistPatients()
-      .then(setPatients)
-      .catch(() => setError("Failed to load patients."))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (cancelled) return;
+        setPatients(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setError("Failed to load patients.");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [partnerId]);
 
   const filtered = useMemo(() => {
@@ -68,7 +82,11 @@ export default function DermatologistPatientsPage() {
     if (statusFilter === "active") list = list.filter((p) => p.status === "active");
     if (statusFilter === "inactive")
       list = list.filter((p) => p.status !== "active");
-    return list;
+    return list.slice().sort((a, b) => {
+      const dateA = new Date(a.lastConsultationDate ?? "").getTime();
+      const dateB = new Date(b.lastConsultationDate ?? "").getTime();
+      return (Number(dateB) || 0) - (Number(dateA) || 0);
+    });
   }, [patients, search, statusFilter]);
 
   if (loading) {
@@ -99,7 +117,17 @@ export default function DermatologistPatientsPage() {
         <Card className="border-border max-w-md">
           <CardContent className="py-6">
             <p className="text-muted-foreground mb-4">{error}</p>
-            <Button variant="outline" onClick={() => window.location.reload()}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setLoading(true);
+                setError(null);
+                getDermatologistPatients()
+                  .then((data) => setPatients(Array.isArray(data) ? data : []))
+                  .catch(() => setError("Failed to load patients."))
+                  .finally(() => setLoading(false));
+              }}
+            >
               Try again
             </Button>
           </CardContent>
@@ -150,7 +178,7 @@ export default function DermatologistPatientsPage() {
             <Users className="h-12 w-12 text-muted-foreground/60 mx-auto mb-4" />
             <p className="font-medium text-muted-foreground mb-1">
               {patients.length === 0
-                ? "No patients assigned yet."
+                ? "No patients yet"
                 : "No patients match your filters."}
             </p>
             <p className="text-sm text-muted-foreground">
@@ -184,10 +212,9 @@ export default function DermatologistPatientsPage() {
                   <TableCell>{p.lastConsultationDate ?? "—"}</TableCell>
                   <TableCell className="max-w-xs">
                     <span className="text-sm text-muted-foreground line-clamp-2">
-                      {/* Demo summary based on notes/assessment */}
                       {p.lastConsultationDate
-                        ? `Last consultation on ${p.lastConsultationDate}. Total consultations: ${p.totalConsultations ?? 0}.`
-                        : "Summary will appear here once assessments are recorded."}
+                        ? `Last consultation on ${p.lastConsultationDate}. Total consultations: ${Number(p.totalConsultations) || 0}.`
+                        : "No consultation summary available yet."}
                     </span>
                   </TableCell>
                   <TableCell>
