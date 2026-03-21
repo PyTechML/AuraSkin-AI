@@ -19,6 +19,7 @@ import type {
   SlotStatus,
   UpdateDermatologistSlotPayload,
 } from "@/types/availability";
+import type { NormalizedPatient } from "@/types/patient";
 import type { NormalizedDermatologistProfile } from "@/types/profile";
 import { API_BASE } from "./apiBase";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
@@ -395,7 +396,17 @@ type BackendConsultationRow = {
   consultation_status?: string | null;
   slot_id?: string | null;
   patient_id?: string | null;
+  consultation_date?: string | null;
+  updated_at?: string | null;
   created_at?: string | null;
+};
+
+type BackendProfileRow = {
+  id?: string | null;
+  full_name?: string | null;
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
 };
 
 type BackendDermatologistProfileRow = {
@@ -553,6 +564,82 @@ export async function getDermatologistConsultations(): Promise<NormalizedConsult
       slotId: item.slot_id ?? "",
     };
   });
+}
+
+export async function getDermatologistPatients(): Promise<NormalizedPatient[]> {
+  try {
+    const consultationsResponse = await apiGet<BackendConsultationRow[]>(
+      "/partner/dermatologist/consultations"
+    );
+    const consultations = Array.isArray(consultationsResponse) ? consultationsResponse : [];
+    const groupedByPatient = new Map<string, BackendConsultationRow[]>();
+
+    for (const consultation of consultations) {
+      const patientId = consultation.patient_id ?? "";
+      if (!patientId) continue;
+      const bucket = groupedByPatient.get(patientId);
+      if (bucket) {
+        bucket.push(consultation);
+      } else {
+        groupedByPatient.set(patientId, [consultation]);
+      }
+    }
+
+    const patientIds = Array.from(groupedByPatient.keys());
+    if (patientIds.length === 0) return [];
+
+    let profileById = new Map<string, BackendProfileRow>();
+    try {
+      const encodedIds = patientIds.map((id) => encodeURIComponent(id)).join(",");
+      const profilesResponse = await apiGet<BackendProfileRow[]>(
+        `/profiles?id=in.(${encodedIds})`
+      );
+      const profiles = Array.isArray(profilesResponse) ? profilesResponse : [];
+      profileById = new Map(
+        profiles
+          .filter((profile) => typeof profile?.id === "string" && profile.id.length > 0)
+          .map((profile) => [profile.id as string, profile])
+      );
+    } catch {
+      profileById = new Map<string, BackendProfileRow>();
+    }
+
+    const now = Date.now();
+    const ninetyDaysInMs = 90 * 24 * 60 * 60 * 1000;
+
+    return patientIds.map((patientId) => {
+      const related = groupedByPatient.get(patientId) ?? [];
+      const lastConsultationDate = related.reduce<string | undefined>((latest, row) => {
+        const candidate =
+          row.consultation_date ?? row.updated_at ?? row.created_at ?? undefined;
+        if (!candidate) return latest;
+        if (!latest) return candidate;
+        return new Date(candidate).getTime() > new Date(latest).getTime() ? candidate : latest;
+      }, undefined);
+
+      const lastConsultationTime = lastConsultationDate
+        ? new Date(lastConsultationDate).getTime()
+        : Number.NaN;
+      const isActive =
+        Number.isFinite(lastConsultationTime) && now - lastConsultationTime <= ninetyDaysInMs;
+
+      const profile = profileById.get(patientId);
+      const safeName =
+        (profile?.full_name ?? profile?.name ?? "").trim() || "Unknown";
+
+      return {
+        id: patientId,
+        name: safeName,
+        email: profile?.email ?? undefined,
+        phone: profile?.phone ?? undefined,
+        totalConsultations: related.length || 0,
+        lastConsultationDate,
+        status: isActive ? "active" : "inactive",
+      };
+    });
+  } catch {
+    return [];
+  }
 }
 
 export async function getDermatologistSlots(): Promise<NormalizedSlot[]> {

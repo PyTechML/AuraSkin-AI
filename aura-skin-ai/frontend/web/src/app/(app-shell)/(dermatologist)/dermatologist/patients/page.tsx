@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/providers/AuthProvider";
-import { getAssignedUsers } from "@/services/apiPartner";
-import type { AssignedUser } from "@/types";
+import { getDermatologistPatients } from "@/services/apiPartner";
+import type { NormalizedPatient } from "@/types/patient";
 import {
   Card,
   CardContent,
@@ -35,7 +35,7 @@ import { PanelSectionReveal } from "@/components/panel/PanelReveal";
 export default function DermatologistPatientsPage() {
   const { session } = useAuth();
   const partnerId = session?.user?.id ?? "";
-  const [patients, setPatients] = useState<AssignedUser[]>([]);
+  const [patients, setPatients] = useState<NormalizedPatient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -48,25 +48,26 @@ export default function DermatologistPatientsPage() {
     }
     setLoading(true);
     setError(null);
-    getAssignedUsers(partnerId)
+    getDermatologistPatients()
       .then(setPatients)
       .catch(() => setError("Failed to load patients."))
       .finally(() => setLoading(false));
   }, [partnerId]);
 
   const filtered = useMemo(() => {
-    let list = patients;
+    const safePatients = Array.isArray(patients) ? patients : [];
+    let list = safePatients;
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter(
         (p) =>
-          p.name.toLowerCase().includes(q) ||
+          (p.name ?? "Unknown").toLowerCase().includes(q) ||
           (p.email?.toLowerCase().includes(q) ?? false)
       );
     }
-    if (statusFilter === "active") list = list.filter((p) => p.status === "Active");
+    if (statusFilter === "active") list = list.filter((p) => p.status === "active");
     if (statusFilter === "inactive")
-      list = list.filter((p) => p.status !== "Active");
+      list = list.filter((p) => p.status !== "active");
     return list;
   }, [patients, search, statusFilter]);
 
@@ -178,19 +179,21 @@ export default function DermatologistPatientsPage() {
             <TableBody>
               {filtered.map((p) => (
                 <TableRow key={p.id} className="panel-table-row">
-                  <TableCell className="font-medium">{p.name}</TableCell>
+                  <TableCell className="font-medium">{p.name || "Unknown"}</TableCell>
                   <TableCell>{p.email ?? "—"}</TableCell>
-                  <TableCell>{p.lastConsultation ?? "—"}</TableCell>
+                  <TableCell>{p.lastConsultationDate ?? "—"}</TableCell>
                   <TableCell className="max-w-xs">
                     <span className="text-sm text-muted-foreground line-clamp-2">
                       {/* Demo summary based on notes/assessment */}
-                      {p.lastAssessment
-                        ? `Last assessed on ${p.lastAssessment}. Focus on routine adherence and barrier support.`
+                      {p.lastConsultationDate
+                        ? `Last consultation on ${p.lastConsultationDate}. Total consultations: ${p.totalConsultations ?? 0}.`
                         : "Summary will appear here once assessments are recorded."}
                     </span>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="secondary">{p.status}</Badge>
+                    <Badge variant="secondary">
+                      {p.status === "active" ? "Active" : "Inactive"}
+                    </Badge>
                   </TableCell>
                   <TableCell>
                     <Button variant="outline" size="sm" asChild>
