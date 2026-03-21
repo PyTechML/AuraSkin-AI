@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   getDermatologistConsultations,
-  getPartnerBalance,
+  getDermatologistEarnings,
   getAssignedUsers,
 } from "@/services/apiPartner";
 import type { AssignedUser } from "@/types";
 import type { NormalizedConsultation } from "@/types/consultation";
+import type { DermatologistEarnings } from "@/types/earnings";
 import {
   Card,
   CardContent,
@@ -34,10 +35,7 @@ import {
 interface DashboardData {
   bookings: NormalizedConsultation[];
   patients: AssignedUser[];
-  earnings: {
-    totalEarnings: number;
-    availableBalance: number;
-  } | null;
+  earnings: DermatologistEarnings | null;
 }
 
 export default function DermatologistDashboardPage() {
@@ -57,7 +55,7 @@ export default function DermatologistDashboardPage() {
     Promise.all([
       getDermatologistConsultations(),
       getAssignedUsers(partnerId),
-      getPartnerBalance(partnerId),
+      getDermatologistEarnings(),
     ])
       .then(([bookings, patients, earnings]) => {
         const safeBookings = Array.isArray(bookings) ? bookings : [];
@@ -198,10 +196,13 @@ export default function DermatologistDashboardPage() {
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-semibold">
-                  ${earnings?.availableBalance.toFixed(2) ?? "0.00"}
+                  ${((Number(earnings?.monthlyRevenue) || 0).toFixed(2))}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Total: ${earnings?.totalEarnings.toFixed(2) ?? "0.00"}
+                  Total: ${((Number(earnings?.totalRevenue) || 0).toFixed(2))}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Pending: ${((Number(earnings?.pendingPayout) || 0).toFixed(2))}
                 </p>
               </CardContent>
             </Card>

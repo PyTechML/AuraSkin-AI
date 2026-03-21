@@ -21,6 +21,7 @@ import type {
 } from "@/types/availability";
 import type { NormalizedPatient } from "@/types/patient";
 import type { NormalizedDermatologistProfile } from "@/types/profile";
+import type { DermatologistEarnings } from "@/types/earnings";
 import { API_BASE } from "./apiBase";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import {
@@ -229,6 +230,74 @@ export async function getPartnerBalance(partnerId: string): Promise<{
     availableBalance: 0,
     pendingSettlement: 0,
   });
+}
+
+type BackendDermatologistEarningsAggregate = {
+  total_consultations?: number | null;
+  total_earnings?: number | null;
+  pending_payout?: number | null;
+  monthly_revenue?: number | null;
+};
+
+export async function getDermatologistEarnings(): Promise<DermatologistEarnings> {
+  const [consultationsResponse, earningsResponse] = await Promise.all([
+    apiGet<BackendConsultationRow[] | unknown>("/partner/dermatologist/consultations").catch(
+      () => []
+    ),
+    apiGet<BackendDermatologistEarningsAggregate | unknown>(
+      "/partner/dermatologist/earnings"
+    ).catch(() => ({})),
+  ]);
+
+  const consultations = Array.isArray(consultationsResponse)
+    ? (consultationsResponse as BackendConsultationRow[])
+    : [];
+  const earnings = (earningsResponse ?? {}) as BackendDermatologistEarningsAggregate;
+
+  const completedConsultationRows = consultations.filter((item) => {
+    const status = String(item?.consultation_status ?? "").toLowerCase();
+    return status === "completed";
+  });
+
+  const completedConsultations = Number(completedConsultationRows.length) || 0;
+  const totalRevenue = Number(earnings.total_earnings) || 0;
+  const monthlyRevenue = Number(earnings.monthly_revenue) || 0;
+  const pendingPayout = Number(earnings.pending_payout) || 0;
+
+  const inferredAmountPerCompleted =
+    completedConsultations > 0 ? totalRevenue / completedConsultations : 0;
+
+  const safeTransactions = Array.isArray(completedConsultationRows)
+    ? completedConsultationRows
+    : [];
+
+  const recentTransactions = safeTransactions
+    .slice()
+    .sort((a, b) => {
+      const dateA = new Date(
+        String(a?.consultation_date ?? a?.updated_at ?? a?.created_at ?? "")
+      ).getTime();
+      const dateB = new Date(
+        String(b?.consultation_date ?? b?.updated_at ?? b?.created_at ?? "")
+      ).getTime();
+      return (Number(dateB) || 0) - (Number(dateA) || 0);
+    })
+    .slice(0, 10)
+    .map((item) => ({
+      id: String(item?.id ?? ""),
+      amount: Number(inferredAmountPerCompleted) || 0,
+      date: String(item?.consultation_date ?? item?.updated_at ?? item?.created_at ?? ""),
+      status: String(item?.consultation_status ?? "completed"),
+    }))
+    .filter((item) => item.id.length > 0);
+
+  return {
+    totalRevenue,
+    monthlyRevenue,
+    completedConsultations,
+    pendingPayout,
+    recentTransactions,
+  };
 }
 
 export interface CommissionBreakdownItem {
