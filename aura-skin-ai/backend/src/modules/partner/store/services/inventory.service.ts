@@ -211,12 +211,14 @@ export class InventoryService {
       });
       if (payload.approvalStatus) {
         const inventoryStatus = payload.approvalStatus === "DRAFT" ? "draft" : payload.approvalStatus === "PENDING" ? "pending" : "approved";
-        await getSupabaseClient()
-          .from("inventory")
-          .update({ status: inventoryStatus })
-          .eq("id", inventory.id)
-          .eq("store_id", storeId);
-        inventory = await this.inventoryRepository.findByIdAndStoreId(inventory.id, storeId);
+        if (inventory) {
+          await getSupabaseClient()
+            .from("inventory")
+            .update({ status: inventoryStatus })
+            .eq("id", inventory.id)
+            .eq("store_id", storeId);
+          inventory = await this.inventoryRepository.findByIdAndStoreId(inventory.id, storeId);
+        }
       }
     }
     const previousStatus = (currentProduct as DbProduct).approval_status ?? null;
