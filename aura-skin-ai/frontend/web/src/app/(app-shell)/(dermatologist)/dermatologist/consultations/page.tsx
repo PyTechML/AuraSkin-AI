@@ -2,12 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/providers/AuthProvider";
-import {
-  getBookingsForPartner,
-  updateBookingStatus,
-  rescheduleBooking,
-} from "@/services/apiPartner";
-import type { ConsultationBooking } from "@/types";
+import { getDermatologistConsultations } from "@/services/apiPartner";
+import type { NormalizedConsultation } from "@/types/consultation";
 import {
   Card,
   CardContent,
@@ -31,16 +27,19 @@ type TabKey = "pending" | "upcoming" | "completed" | "cancelled";
 
 export default function DermatologistConsultationsPage() {
   const { session } = useAuth();
-  const partnerId = session?.user?.id ?? "";
-  const [bookings, setBookings] = useState<ConsultationBooking[]>([]);
+  const partnerId = session?.user?.id;
+  const [consultations, setConsultations] = useState<NormalizedConsultation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("pending");
 
   const load = () => {
     if (!partnerId) return;
-    getBookingsForPartner(partnerId)
-      .then(setBookings)
+    getDermatologistConsultations()
+      .then((data) => {
+        const items = Array.isArray(data) ? data : [];
+        setConsultations(items);
+      })
       .catch(() => setError("Failed to load consultations."))
       .finally(() => setLoading(false));
   };
@@ -52,43 +51,12 @@ export default function DermatologistConsultationsPage() {
   }, [partnerId]);
 
   const grouped = useMemo(() => {
-    const pending = bookings.filter((b) => b.status === "pending");
-    const upcoming = bookings.filter(
-      (b) =>
-        b.status === "accepted" ||
-        b.status === "rescheduled"
-    );
-    const completed = bookings.filter((b) => b.status === "completed");
-    const cancelled = bookings.filter(
-      (b) => b.status === "cancelled" || b.status === "declined"
-    );
+    const pending = consultations.filter((c) => c.status === "pending");
+    const upcoming = consultations.filter((c) => c.status === "confirmed");
+    const completed = consultations.filter((c) => c.status === "completed");
+    const cancelled = consultations.filter((c) => c.status === "cancelled");
     return { pending, upcoming, completed, cancelled };
-  }, [bookings]);
-
-  const handleStatus = async (
-    id: string,
-    status: ConsultationBooking["status"]
-  ) => {
-    try {
-      await updateBookingStatus(id, status);
-      load();
-    } catch {
-      setError("Failed to update consultation.");
-    }
-  };
-
-  const handleReschedule = async (booking: ConsultationBooking) => {
-    // Demo: simple reschedule 1 day later, same time.
-    const nextDate = new Date(booking.date);
-    nextDate.setDate(nextDate.getDate() + 1);
-    const dateStr = nextDate.toISOString().slice(0, 10);
-    try {
-      await rescheduleBooking(booking.id, dateStr, booking.timeSlot);
-      load();
-    } catch {
-      setError("Failed to reschedule consultation.");
-    }
-  };
+  }, [consultations]);
 
   const listForTab = (tab: TabKey) => grouped[tab];
 
@@ -108,7 +76,7 @@ export default function DermatologistConsultationsPage() {
     );
   }
 
-  if (error && bookings.length === 0) {
+  if (error && consultations.length === 0) {
     return (
       <div className="space-y-6">
         <PanelPageHeader
@@ -183,7 +151,7 @@ export default function DermatologistConsultationsPage() {
                           <div>
                             <p className="font-medium flex items-center gap-2">
                               <User className="h-4 w-4" />
-                              {b.userName ?? `User ${b.userId}`}
+                              {`Patient ${b.patientId || "Unknown"}`}
                             </p>
                             <p className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
                               <Calendar className="h-3 w-3" /> {b.date} ·{" "}
@@ -195,55 +163,13 @@ export default function DermatologistConsultationsPage() {
                               variant={
                                 b.status === "pending"
                                   ? "warning"
-                                  : b.status === "accepted" ||
-                                    b.status === "rescheduled"
+                                  : b.status === "confirmed"
                                   ? "default"
                                   : "secondary"
                               }
                             >
                               {b.status}
                             </Badge>
-                            {tab === "pending" && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  onClick={() =>
-                                    handleStatus(b.id, "accepted")
-                                  }
-                                >
-                                  Accept
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    handleStatus(b.id, "declined")
-                                  }
-                                >
-                                  Decline
-                                </Button>
-                              </>
-                            )}
-                            {tab === "upcoming" && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleReschedule(b)}
-                                >
-                                  Reschedule
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    handleStatus(b.id, "completed")
-                                  }
-                                >
-                                  Mark completed
-                                </Button>
-                              </>
-                            )}
                           </div>
                         </div>
                       </CardContent>

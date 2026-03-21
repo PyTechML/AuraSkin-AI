@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import {
-  getBookingsForPartner,
+  getDermatologistConsultations,
   getPartnerBalance,
   getAssignedUsers,
 } from "@/services/apiPartner";
-import type { ConsultationBooking, AssignedUser } from "@/types";
+import type { AssignedUser } from "@/types";
+import type { NormalizedConsultation } from "@/types/consultation";
 import {
   Card,
   CardContent,
@@ -31,7 +32,7 @@ import {
 } from "@/components/panel/PanelReveal";
 
 interface DashboardData {
-  bookings: ConsultationBooking[];
+  bookings: NormalizedConsultation[];
   patients: AssignedUser[];
   earnings: {
     totalEarnings: number;
@@ -54,13 +55,15 @@ export default function DermatologistDashboardPage() {
     setLoading(true);
     setError(null);
     Promise.all([
-      getBookingsForPartner(partnerId),
+      getDermatologistConsultations(),
       getAssignedUsers(partnerId),
       getPartnerBalance(partnerId),
     ])
-      .then(([bookings, patients, earnings]) =>
-        setData({ bookings, patients, earnings })
-      )
+      .then(([bookings, patients, earnings]) => {
+        const safeBookings = Array.isArray(bookings) ? bookings : [];
+        const safePatients = Array.isArray(patients) ? patients : [];
+        setData({ bookings: safeBookings, patients: safePatients, earnings });
+      })
       .catch(() => setError("Failed to load dashboard data."))
       .finally(() => setLoading(false));
   }, [partnerId]);
@@ -73,21 +76,22 @@ export default function DermatologistDashboardPage() {
       now.getTime() - 7 * 24 * 60 * 60 * 1000
     ).toISOString().slice(0, 10);
 
-    const pending = data.bookings.filter((b) => b.status === "pending");
-    const upcoming = data.bookings.filter(
-      (b) => b.status === "accepted" || b.status === "rescheduled"
-    );
-    const completed = data.bookings.filter(
-      (b) => b.status === "completed"
-    );
+    const bookings = Array.isArray(data.bookings) ? data.bookings : [];
+    const patients = Array.isArray(data.patients) ? data.patients : [];
+    const pending = bookings.filter((b) => b.status === "pending");
+    const upcoming = bookings.filter((b) => b.status === "confirmed");
+    const completed = bookings.filter((b) => b.status === "completed");
 
     const todaysAppointments = upcoming.filter((b) => b.date === todayStr);
-    const weeklyConsultations = data.bookings.filter(
-      (b) => b.date >= weekAgo && b.date <= todayStr
+    const weeklyConsultations = bookings.filter(
+      (b) =>
+        b.date >= weekAgo &&
+        b.date <= todayStr &&
+        (b.status === "confirmed" || b.status === "completed")
     );
 
     // Simple patient growth proxy: number of patients vs a baseline.
-    const totalPatients = data.patients.length;
+    const totalPatients = patients.length;
     const lastWeekPatients = Math.max(0, totalPatients - 2);
 
     return {

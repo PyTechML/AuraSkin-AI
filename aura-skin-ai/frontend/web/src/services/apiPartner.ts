@@ -12,6 +12,7 @@ import type {
   AssignedUser,
   AssignedUserDetail,
 } from "@/types";
+import type { NormalizedConsultation, NormalizedConsultationStatus } from "@/types/consultation";
 import { API_BASE } from "./apiBase";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import {
@@ -380,6 +381,66 @@ export async function createSupportTicket(
     messages: [
       { from: "partner", text: payload.message, at: now },
     ],
+  });
+}
+
+type BackendConsultationRow = {
+  id: string;
+  consultation_status?: string | null;
+  slot_id?: string | null;
+  patient_id?: string | null;
+  created_at?: string | null;
+};
+
+type BackendSlotRow = {
+  id: string;
+  slot_date?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+};
+
+function mapConsultationStatus(status: string): NormalizedConsultationStatus {
+  switch (status) {
+    case "pending":
+      return "pending";
+    case "confirmed":
+      return "confirmed";
+    case "completed":
+      return "completed";
+    case "cancelled":
+      return "cancelled";
+    default:
+      return "pending";
+  }
+}
+
+function mapSlotTime(slot?: BackendSlotRow): string {
+  if (!slot) return "TBD";
+  const start = slot.start_time ?? "";
+  const end = slot.end_time ?? "";
+  const value = [start, end].filter(Boolean).join(" - ").trim();
+  return value || "TBD";
+}
+
+export async function getDermatologistConsultations(): Promise<NormalizedConsultation[]> {
+  const [consultationsResponse, slotsResponse] = await Promise.all([
+    apiGet<BackendConsultationRow[]>("/partner/dermatologist/consultations"),
+    apiGet<BackendSlotRow[]>("/partner/dermatologist/slots").catch(() => []),
+  ]);
+  const consultations = Array.isArray(consultationsResponse) ? consultationsResponse : [];
+  const slots = Array.isArray(slotsResponse) ? slotsResponse : [];
+  const slotById = new Map(slots.map((slot) => [slot.id, slot]));
+
+  return consultations.map((item) => {
+    const slot = item.slot_id ? slotById.get(item.slot_id) : undefined;
+    return {
+      id: item.id,
+      status: mapConsultationStatus(item.consultation_status ?? ""),
+      date: slot?.slot_date ?? item.created_at ?? "",
+      timeSlot: mapSlotTime(slot),
+      patientId: item.patient_id ?? "",
+      slotId: item.slot_id ?? "",
+    };
   });
 }
 
