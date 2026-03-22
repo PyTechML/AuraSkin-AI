@@ -5,30 +5,29 @@ import { AdminHeader, AdminPrimaryGrid } from "@/components/admin";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, Users, Store, Package } from "lucide-react";
-import { getAdminAnalytics, type AdminAnalytics } from "@/services/apiAdmin";
+import { getAdminAnalytics, type AdminAnalyticsResult } from "@/services/apiAdmin";
 
 export default function AdminAnalyticsPage() {
-  const [data, setData] = useState<AdminAnalytics | null>(null);
+  const [result, setResult] = useState<AdminAnalyticsResult | null>(null);
 
   useEffect(() => {
-    getAdminAnalytics()
-      .then((d) => setData(d != null && typeof d === "object" ? d : null))
-      .catch(() => setData(null));
+    getAdminAnalytics().then(setResult);
   }, []);
 
-  const metrics = data
-    ? [
-        { label: "Total users", value: String(data.total_users ?? 0), icon: Users },
-        { label: "Active stores", value: String(data.total_stores ?? 0), icon: Store },
-        { label: "Total orders", value: String(data.total_orders ?? 0), icon: TrendingUp },
-        { label: "Total products", value: String(data.total_products ?? 0), icon: Package },
-      ]
-    : [
-        { label: "Total users", value: "—", icon: Users },
-        { label: "Active stores", value: "—", icon: Store },
-        { label: "Total orders", value: "—", icon: TrendingUp },
-        { label: "Total products", value: "—", icon: Package },
-      ];
+  const metrics =
+    result?.ok === true
+      ? [
+          { label: "Total users", value: String(result.totalUsers), icon: Users },
+          { label: "Active stores", value: String(result.totalStores), icon: Store },
+          { label: "Total orders", value: String(result.totalOrders), icon: TrendingUp },
+          { label: "Total products", value: String(result.totalProducts), icon: Package },
+        ]
+      : [
+          { label: "Total users", value: "—", icon: Users },
+          { label: "Active stores", value: "—", icon: Store },
+          { label: "Total orders", value: "—", icon: TrendingUp },
+          { label: "Total products", value: "—", icon: Package },
+        ];
 
   return (
     <>
@@ -64,8 +63,8 @@ export default function AdminAnalyticsPage() {
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-semibold">
-                {data != null && typeof data.total_revenue === "number"
-                  ? `$${data.total_revenue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+                {result?.ok === true
+                  ? `$${result.totalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
                   : "—"}
               </p>
               <p className="text-xs text-muted-foreground mt-2">All time, excluding cancelled orders.</p>

@@ -28,9 +28,15 @@ import {
   UserX,
   ShieldAlert,
   CircleDot,
+  Stethoscope,
 } from "lucide-react";
 
+function displayAnalyticCount(ok: boolean | null, n: number): string | number {
+  return ok === true ? n : "—";
+}
+
 export default function AdminDashboardPage() {
+  const [analyticsOk, setAnalyticsOk] = useState<boolean | null>(null);
   const [userCount, setUserCount] = useState<number>(0);
   const [activeUsers, setActiveUsers] = useState<number>(0);
   const [suspendedUsers, setSuspendedUsers] = useState<number>(0);
@@ -54,23 +60,24 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     getAdminAnalytics().then((data) => {
-      if (data) {
-        setUserCount(data.total_users);
-        setActiveUsers(data.active_users ?? 0);
-        setSuspendedUsers(data.suspended_users ?? 0);
-        setPendingRoleRequests(data.pending_role_requests ?? 0);
-        setStoreCount(data.total_stores);
-        setDermCount(data.total_dermatologists);
-        setProductCount(data.total_products ?? 0);
+      setAnalyticsOk(data.ok);
+      if (data.ok) {
+        setUserCount(data.totalUsers);
+        setActiveUsers(data.activeUsers);
+        setSuspendedUsers(data.suspendedUsers);
+        setPendingRoleRequests(data.pendingRoleRequests);
+        setStoreCount(data.totalStores);
+        setDermCount(data.totalDermatologists);
+        setProductCount(data.totalProducts);
         setRevenue(
-          typeof data.total_revenue === "number"
-            ? `$${data.total_revenue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
-            : "—"
+          `$${data.totalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
         );
-        setActiveSessions(data.active_sessions ?? 0);
-        setInactiveSessions(data.inactive_sessions ?? 0);
-        setSuspiciousSessions(data.suspicious_sessions ?? 0);
-        setOnlineUsers(data.online_users ?? 0);
+        setActiveSessions(data.activeSessions);
+        setInactiveSessions(data.inactiveSessions);
+        setSuspiciousSessions(data.suspiciousSessions);
+        setOnlineUsers(data.onlineUsers);
+      } else {
+        setRevenue("—");
       }
     });
     getPendingInventory().then((list) => setPendingCount(Array.isArray(list) ? list.length : 0));
@@ -78,14 +85,27 @@ export default function AdminDashboardPage() {
   }, []);
 
   const metricCardsRow1 = [
-    { title: "Total Users", value: userCount, icon: Users, href: "/admin/users" },
-    { title: "Active Users", value: activeUsers, icon: Users, href: "/admin/users" },
-    { title: "Suspended Users", value: suspendedUsers, icon: Users, href: "/admin/users" },
-    { title: "Role Requests", value: pendingRoleRequests, icon: Clock, href: "/admin/role-requests", variant: pendingRoleRequests > 0 ? ("warning" as const) : ("default" as const) },
+    { title: "Total Users", value: displayAnalyticCount(analyticsOk, userCount), icon: Users, href: "/admin/users" },
+    { title: "Active Users", value: displayAnalyticCount(analyticsOk, activeUsers), icon: Users, href: "/admin/users" },
+    { title: "Suspended Users", value: displayAnalyticCount(analyticsOk, suspendedUsers), icon: Users, href: "/admin/users" },
+    {
+      title: "Role Requests",
+      value: displayAnalyticCount(analyticsOk, pendingRoleRequests),
+      icon: Clock,
+      href: "/admin/role-requests",
+      variant:
+        analyticsOk === true && pendingRoleRequests > 0 ? ("warning" as const) : ("default" as const),
+    },
   ];
   const metricCardsRow1b = [
-    { title: "Active Stores", value: storeCount, icon: Store, href: "/admin/stores" },
-    { title: "Total Products", value: productCount, icon: Package, href: "/admin/products" },
+    { title: "Active Stores", value: displayAnalyticCount(analyticsOk, storeCount), icon: Store, href: "/admin/stores" },
+    { title: "Total Products", value: displayAnalyticCount(analyticsOk, productCount), icon: Package, href: "/admin/products" },
+    {
+      title: "Total Dermatologists",
+      value: displayAnalyticCount(analyticsOk, dermCount),
+      icon: Stethoscope,
+      href: "/admin/dermatologists",
+    },
     { title: "Pending Approvals", value: pendingCount, icon: Clock, href: "/admin/products?status=pending", variant: "warning" as const },
   ];
 
@@ -156,10 +176,17 @@ export default function AdminDashboardPage() {
   }, [revenue, dashboard]);
 
   const metricCardsRow3 = [
-    { title: "Active Sessions", value: activeSessions, icon: Monitor, href: "/admin/sessions" },
-    { title: "Inactive Sessions", value: inactiveSessions, icon: UserX, href: "/admin/sessions" },
-    { title: "Suspicious Sessions", value: suspiciousSessions, icon: ShieldAlert, href: "/admin/sessions", variant: suspiciousSessions > 0 ? ("warning" as const) : ("default" as const) },
-    { title: "Currently Online", value: onlineUsers, icon: CircleDot, href: "/admin/sessions" },
+    { title: "Active Sessions", value: displayAnalyticCount(analyticsOk, activeSessions), icon: Monitor, href: "/admin/sessions" },
+    { title: "Inactive Sessions", value: displayAnalyticCount(analyticsOk, inactiveSessions), icon: UserX, href: "/admin/sessions" },
+    {
+      title: "Suspicious Sessions",
+      value: displayAnalyticCount(analyticsOk, suspiciousSessions),
+      icon: ShieldAlert,
+      href: "/admin/sessions",
+      variant:
+        analyticsOk === true && suspiciousSessions > 0 ? ("warning" as const) : ("default" as const),
+    },
+    { title: "Currently Online", value: displayAnalyticCount(analyticsOk, onlineUsers), icon: CircleDot, href: "/admin/sessions" },
   ];
 
   return (

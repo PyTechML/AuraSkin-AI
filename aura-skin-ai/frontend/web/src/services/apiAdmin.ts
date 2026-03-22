@@ -5,6 +5,9 @@ import type { AdminDermatologistVerification } from "@/types/dermatologist";
 import type { AdminDashboardResult } from "@/types/admin-dashboard";
 import type { AdminRule, CreateAdminRulePayload } from "@/types/rule";
 import type { AdminAuditLog } from "@/types/governance";
+import type { AdminAnalytics, AdminAnalyticsResult } from "@/types/admin-analytics";
+
+export type { AdminAnalytics, AdminAnalyticsResult } from "@/types/admin-analytics";
 
 function getAuthHeaders(): Record<string, string> {
   const token = useAuthStore.getState().accessToken ?? getPersistedAccessToken();
@@ -294,20 +297,73 @@ export async function rejectInventory(id: string, reviewNotes?: string): Promise
   }
 }
 
-export interface AdminAnalytics {
-  total_users: number;
-  active_users?: number;
-  suspended_users?: number;
-  pending_role_requests?: number;
-  total_stores: number;
-  total_dermatologists: number;
-  total_orders: number;
-  total_revenue: number;
-  total_products: number;
-  active_sessions?: number;
-  inactive_sessions?: number;
-  suspicious_sessions?: number;
-  online_users?: number;
+function num(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function optionalNum(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function pickSnakeOrCamel(
+  r: Record<string, unknown>,
+  snake: string,
+  camel: string
+): unknown {
+  return (r[snake] as unknown) ?? r[camel];
+}
+
+export function normalizeAdminAnalytics(raw: unknown): AdminAnalytics {
+  const empty: AdminAnalytics = {
+    totalUsers: 0,
+    totalStores: 0,
+    totalDermatologists: 0,
+    totalProducts: 0,
+    totalOrders: 0,
+    totalRevenue: 0,
+    activeUsers: 0,
+    suspendedUsers: 0,
+    pendingRoleRequests: 0,
+    activeSessions: 0,
+    inactiveSessions: 0,
+    suspiciousSessions: 0,
+    onlineUsers: 0,
+    dailyActiveUsers: 0,
+    productViews: 0,
+    conversionRate: 0,
+    consultationsBooked: 0,
+    routineEngagementRate: 0,
+  };
+  if (!raw || typeof raw !== "object") return empty;
+  const r = raw as Record<string, unknown>;
+  const p = (s: string, c: string) => pickSnakeOrCamel(r, s, c);
+  const approvalRate = optionalNum(p("approval_rate", "approvalRate"));
+  const recentGrowth = optionalNum(p("recent_growth", "recentGrowth"));
+  return {
+    totalUsers: num(p("total_users", "totalUsers")),
+    totalStores: num(p("total_stores", "totalStores")),
+    totalDermatologists: num(p("total_dermatologists", "totalDermatologists")),
+    totalProducts: num(p("total_products", "totalProducts")),
+    totalOrders: num(p("total_orders", "totalOrders")),
+    totalRevenue: num(p("total_revenue", "totalRevenue")),
+    activeUsers: num(p("active_users", "activeUsers")),
+    suspendedUsers: num(p("suspended_users", "suspendedUsers")),
+    pendingRoleRequests: num(p("pending_role_requests", "pendingRoleRequests")),
+    activeSessions: num(p("active_sessions", "activeSessions")),
+    inactiveSessions: num(p("inactive_sessions", "inactiveSessions")),
+    suspiciousSessions: num(p("suspicious_sessions", "suspiciousSessions")),
+    onlineUsers: num(p("online_users", "onlineUsers")),
+    dailyActiveUsers: num(p("daily_active_users", "dailyActiveUsers")),
+    productViews: num(p("product_views", "productViews")),
+    conversionRate: num(p("conversion_rate", "conversionRate")),
+    consultationsBooked: num(p("consultations_booked", "consultationsBooked")),
+    routineEngagementRate: num(p("routine_engagement_rate", "routineEngagementRate")),
+    ...(approvalRate !== undefined ? { approvalRate } : {}),
+    ...(recentGrowth !== undefined ? { recentGrowth } : {}),
+  };
 }
 
 export interface AdminSessionRow {
@@ -353,11 +409,12 @@ export async function deleteAdminSession(sessionId: string): Promise<void> {
   await apiDelete(`/admin/sessions/${encodeURIComponent(sessionId)}`);
 }
 
-export async function getAdminAnalytics(): Promise<AdminAnalytics | null> {
+export async function getAdminAnalytics(): Promise<AdminAnalyticsResult> {
   try {
-    return await apiGet<AdminAnalytics>("/admin/analytics");
+    const payload = await apiGet<unknown>("/admin/analytics");
+    return { ...normalizeAdminAnalytics(payload), ok: true };
   } catch {
-    return null;
+    return { ...normalizeAdminAnalytics(null), ok: false };
   }
 }
 
