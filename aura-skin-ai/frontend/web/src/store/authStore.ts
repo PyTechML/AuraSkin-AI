@@ -100,31 +100,52 @@ export const useAuthStore = create<AuthState>()(
         sessionToken: state.sessionToken,
       }),
       onRehydrateStorage: () => (_persistedState, err) => {
-        // Normalize after hydration completes so user/role is always validated via /auth/me.
+        // Normalize after merge; user/role validated via /auth/me in AuthProvider after persist finishes.
+        // Do not set _hasHydrated here — AuthProvider runs reconcile then marks bootstrap complete.
         try {
+          if (err) {
+            useAuthStore.setState({
+              user: null,
+              role: null,
+              isAuthenticated: false,
+              accessToken: null,
+              sessionToken: null,
+              profileMeta: undefined,
+            });
+            return;
+          }
           const current = useAuthStore.getState();
           const token = current.accessToken;
-          if (!err) {
-            if (!token || typeof token !== "string" || token.trim() === "") {
-              useAuthStore.setState({
-                user: null,
-                role: null,
-                isAuthenticated: false,
-                accessToken: null,
-                sessionToken: null,
-                profileMeta: undefined,
-              });
-            } else {
-              // Token exists but user/role stays unresolved until provider calls /auth/me.
-              useAuthStore.setState({
-                user: null,
-                role: null,
-                isAuthenticated: false,
-              });
-            }
+          const rawSession = current.sessionToken;
+          const safeSession =
+            typeof rawSession === "string" && rawSession.trim() !== "" ? rawSession : null;
+
+          if (!token || typeof token !== "string" || token.trim() === "") {
+            useAuthStore.setState({
+              user: null,
+              role: null,
+              isAuthenticated: false,
+              accessToken: null,
+              sessionToken: null,
+              profileMeta: undefined,
+            });
+          } else {
+            useAuthStore.setState({
+              user: null,
+              role: null,
+              isAuthenticated: false,
+              sessionToken: safeSession,
+            });
           }
-        } finally {
-          useAuthStore.getState().setHasHydrated(true);
+        } catch {
+          useAuthStore.setState({
+            user: null,
+            role: null,
+            isAuthenticated: false,
+            accessToken: null,
+            sessionToken: null,
+            profileMeta: undefined,
+          });
         }
       },
     }

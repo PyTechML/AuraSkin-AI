@@ -846,10 +846,13 @@ function ensureNoOverlap(slots: Array<{ day: string; start: string; end: string 
     daySlots.push({ start: slot.start, end: slot.end });
     byDay.set(slot.day, daySlots);
   }
-  for (const [day, daySlots] of byDay.entries()) {
+  for (const [day, daySlots] of Array.from(byDay.entries())) {
     const sorted = daySlots
-      .map((slot) => ({ start: normalizeTime(slot.start), end: normalizeTime(slot.end) }))
-      .sort((a, b) => a.start.localeCompare(b.start));
+      .map((slot: { start: string; end: string }) => ({
+        start: normalizeTime(slot.start),
+        end: normalizeTime(slot.end),
+      }))
+      .sort((a: { start: string }, b: { start: string }) => a.start.localeCompare(b.start));
     for (let i = 0; i < sorted.length; i += 1) {
       const current = sorted[i];
       if (current.start >= current.end) {

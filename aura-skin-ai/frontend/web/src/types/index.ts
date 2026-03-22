@@ -265,6 +265,8 @@ export type ProductApprovalStatus =
   | "PENDING"
   | "REJECTED"
   | "LIVE"
+  | "APPROVED"
+  | "ARCHIVED"
 
 export interface PartnerProduct extends Product {
   stock?: number;

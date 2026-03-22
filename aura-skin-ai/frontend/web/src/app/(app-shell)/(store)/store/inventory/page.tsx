@@ -407,9 +407,17 @@ export default function StoreInventoryPage() {
                   {filtered.map((p) => {
                     const stock = p.stock ?? 0;
                     const status = p.approvalStatus ?? "PENDING";
-                    const isLive = status === "LIVE";
+                    const isLive = status === "LIVE" || status === "APPROVED";
                     const isLowStock = stock > 0 && stock < 10;
                     const isOut = stock === 0;
+                    const statusBadgeVariant =
+                      isLive
+                        ? "success"
+                        : status === "PENDING"
+                          ? "warning"
+                          : status === "REJECTED"
+                            ? "outline"
+                            : "secondary";
                     return (
                       <TableRow key={p.id}>
                         <TableCell className="font-medium">
@@ -438,14 +446,11 @@ export default function StoreInventoryPage() {
                         </TableCell>
                         <TableCell>
                           <Badge
-                            variant={
-                              isLive
-                                ? "success"
-                                : status === "PENDING"
-                                  ? "warning"
-                                  : status === "REJECTED"
-                                    ? "destructive"
-                                    : "secondary"
+                            variant={statusBadgeVariant}
+                            className={
+                              status === "REJECTED"
+                                ? "border-destructive/40 bg-destructive/10 text-destructive"
+                                : undefined
                             }
                           >
                             {status.replace(/_/g, " ")}

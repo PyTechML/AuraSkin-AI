@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/providers/AuthProvider";
 import { isRedirectAllowedForRole } from "@/store/authStore";
 import { useAssistantSettingsStore } from "@/store/assistantSettingsStore";
+import type { UserRole } from "@/types";
 import { Navbar } from "./Navbar";
 import { Footer } from "./Footer";
 
@@ -23,6 +24,12 @@ export function AppShellLayout({ children }: { children: React.ReactNode }) {
     enabled: s.enabled,
     enabledForRole: s.enabledForRole,
   }));
+  const safeEnabledForRole: Record<UserRole, boolean> =
+    enabledForRole &&
+    typeof enabledForRole === "object" &&
+    !Array.isArray(enabledForRole)
+      ? enabledForRole
+      : { USER: false, ADMIN: false, STORE: false, DERMATOLOGIST: false };
   const isPanel =
     (pathname === "/store" || pathname.startsWith("/store/")) ||
     (pathname === "/dermatologist" || pathname.startsWith("/dermatologist/"));
@@ -32,7 +39,7 @@ export function AppShellLayout({ children }: { children: React.ReactNode }) {
     isAuthenticated &&
     !!role &&
     enabled &&
-    !!enabledForRole[role] &&
+    !!safeEnabledForRole[role] &&
     isRedirectAllowedForRole(pathname, role);
 
   if (isPanel && loading) {

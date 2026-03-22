@@ -151,6 +151,13 @@ export default function DermatologistDashboardPage() {
 
     const bookings = Array.isArray(data.bookings) ? data.bookings : [];
     const patients = Array.isArray(data.patients) ? data.patients : [];
+    const patientLabel = (patientId: string) => {
+      const id = (patientId ?? "").trim();
+      if (!id) return "Patient";
+      const row = patients.find((u) => (u.id ?? "").trim() === id);
+      const name = (row?.name ?? "").trim();
+      return name || id || "Patient";
+    };
     const pending = bookings.filter((b) => b.status === "pending");
     const upcoming = bookings.filter((b) => b.status === "confirmed");
     const completed = bookings.filter((b) => b.status === "completed");
@@ -177,6 +184,7 @@ export default function DermatologistDashboardPage() {
       weeklyConsultationsCount: weeklyConsultations.length,
       completedCount: completed.length,
       totalPatients,
+      patientLabel,
     };
   }, [data]);
 
@@ -412,11 +420,11 @@ export default function DermatologistDashboardPage() {
             <ul className="space-y-2 text-sm">
               {derived.todaysAppointments.map((b) => (
                 <li
-                  key={b.id ?? `${b.userId ?? "user"}-${b.date ?? ""}-${b.timeSlot ?? ""}`}
+                  key={b.id ?? `${(b.patientId ?? "").trim() || "user"}-${b.date ?? ""}-${b.timeSlot ?? ""}`}
                   className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2"
                 >
                   <span className="font-medium">
-                    {(b.userName ?? b.userId ?? "").trim() || "Patient"}
+                    {derived.patientLabel(b.patientId ?? "")}
                   </span>
                   <span className="text-muted-foreground">
                     {(b.date ?? "").trim() || "-"} · {(b.timeSlot ?? "").trim() || "-"}

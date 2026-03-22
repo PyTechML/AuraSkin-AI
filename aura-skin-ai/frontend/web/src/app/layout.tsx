@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Inter, Space_Grotesk } from "next/font/google";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { RuntimeRecovery } from "@/components/RuntimeRecovery";
 import "@/styles/globals.css";
 
 const playfair = Playfair_Display({
@@ -40,7 +42,8 @@ export default function RootLayout({
         className="min-h-screen font-body bg-background text-foreground"
         style={{ backgroundColor: "hsl(75, 56%, 95%)" }}
       >
-        {children}
+        <RuntimeRecovery />
+        <ErrorBoundary>{children}</ErrorBoundary>
       </body>
     </html>
   );

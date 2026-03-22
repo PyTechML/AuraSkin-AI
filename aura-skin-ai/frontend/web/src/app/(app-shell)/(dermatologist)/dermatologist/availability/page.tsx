@@ -37,9 +37,10 @@ export default function DermatologistAvailabilityPage() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const normalizeAvailability = (
-    raw: DermatologistAvailability | null | undefined
+    raw: DermatologistAvailability | null | undefined,
+    fallbackDermatologistId: string
   ): DermatologistAvailability => {
-    const safeRaw = raw ?? ({} as DermatologistAvailability);
+    const safeRaw = raw ?? ({} as Partial<DermatologistAvailability>);
     const safeDays = Array.isArray(safeRaw.days)
       ? safeRaw.days.map((day) => ({
           day: day?.day ?? "",
@@ -54,7 +55,9 @@ export default function DermatologistAvailabilityPage() {
     const safeHolidays = Array.isArray(safeRaw.holidays)
       ? safeRaw.holidays.filter((h): h is string => typeof h === "string")
       : [];
+    const did = String(safeRaw.dermatologistId ?? fallbackDermatologistId ?? "").trim();
     return {
+      dermatologistId: did,
       days: safeDays,
       holidays: safeHolidays,
       autoSave: Boolean(safeRaw.autoSave),
@@ -62,7 +65,7 @@ export default function DermatologistAvailabilityPage() {
   };
   const loadAvailability = () => {
     if (!dermatologistId) {
-      setAvailability(normalizeAvailability(null));
+      setAvailability(normalizeAvailability(null, ""));
       setLoading(false);
       return () => {};
     }
@@ -72,7 +75,7 @@ export default function DermatologistAvailabilityPage() {
     getDermatologistAvailability(dermatologistId)
       .then((response) => {
         if (cancelled) return;
-        setAvailability(normalizeAvailability(response));
+        setAvailability(normalizeAvailability(response, dermatologistId));
       })
       .catch(() => {
         if (cancelled) return;
@@ -152,7 +155,7 @@ export default function DermatologistAvailabilityPage() {
         dermatologistId,
         availability
       );
-      setAvailability(normalizeAvailability(updated));
+      setAvailability(normalizeAvailability(updated, dermatologistId));
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 4000);
     } catch (saveError) {
@@ -197,7 +200,7 @@ export default function DermatologistAvailabilityPage() {
     );
   }
 
-  const avail = availability ?? normalizeAvailability(null);
+  const avail = availability ?? normalizeAvailability(null, dermatologistId);
 
   return (
     <div className="space-y-6">

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
-import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
+import { useCallback, useEffect } from "react";
+import { useAuthStore } from "@/store/authStore";
 import { postSessionHeartbeat } from "@/services/sessionApi";
 import type { User, UserRole } from "@/types";
 import { API_BASE } from "@/services/apiBase";
@@ -28,7 +28,7 @@ export interface AuthContextValue {
 
 /**
  * useAuth() — session-driven auth for Navbar and AppShellLayout.
- * Returns session, role, isAuthenticated, and loading (true until store has rehydrated).
+ * Returns session, role, isAuthenticated, and loading (true until auth bootstrap completes).
  */
 export function useAuth(): AuthContextValue {
   const { user, role, isAuthenticated, _hasHydrated } = useAuthStore();
@@ -45,7 +45,7 @@ export function useAuth(): AuthContextValue {
 
 /**
  * AuthProvider — client boundary for auth-aware layout.
- * Marks store as hydrated after mount so Navbar (and shell) can show session-driven UI.
+ * After Zustand persist finishes, reconciles session with /api/auth/me when a token exists.
  * Sends session heartbeat every 60s when authenticated and sessionToken is set.
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -56,7 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const setSession = useAuthStore((s) => s.setSession);
   const logout = useAuthStore((s) => s.logout);
 
-  const reconcileWithMe = async (token: string) => {
+  const reconcileWithMe = useCallback(async (token: string) => {
     try {
       const response = await fetch(`${API_BASE}/api/auth/me`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -91,20 +91,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Keep current session on transient network/runtime failures.
       return;
     }
-  };
+  }, [logout, setSession]);
 
   useEffect(() => {
-    if (hasHydrated) return;
-    const token = getPersistedAccessToken();
-    if (!token) {
-      setHasHydrated(true);
-      return;
+    let bootstrapStarted = false;
+
+    const runBootstrap = async () => {
+      if (bootstrapStarted) return;
+      bootstrapStarted = true;
+
+      const token = useAuthStore.getState().accessToken;
+      const safe = typeof token === "string" && token.trim() !== "" ? token : null;
+      if (!safe) {
+        setHasHydrated(true);
+        return;
+      }
+      try {
+        await reconcileWithMe(safe);
+      } finally {
+        setHasHydrated(true);
+      }
+    };
+
+    let unsub: (() => void) | undefined;
+    if (!useAuthStore.persist.hasHydrated()) {
+      unsub = useAuthStore.persist.onFinishHydration(() => {
+        void runBootstrap();
+      });
     }
-    void (async () => {
-      await reconcileWithMe(token);
-      setHasHydrated(true);
-    })();
-  }, [hasHydrated, setHasHydrated]);
+    if (useAuthStore.persist.hasHydrated()) {
+      void runBootstrap();
+    }
+
+    return () => {
+      unsub?.();
+    };
+  }, [reconcileWithMe, setHasHydrated]);
 
   useEffect(() => {
     if (!hasHydrated || !isAuthenticated || !sessionToken) return;
@@ -132,18 +154,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           state?: { accessToken?: string | null; sessionToken?: string | null };
         };
         const incomingToken = parsed?.state?.accessToken ?? null;
-        if (!incomingToken) {
+        const safeToken =
+          typeof incomingToken === "string" && incomingToken.trim() !== "" ? incomingToken : null;
+        if (!safeToken) {
           logout();
           return;
         }
+        const rawSt = parsed?.state?.sessionToken ?? null;
+        const safeSession =
+          typeof rawSt === "string" && rawSt.trim() !== "" ? rawSt : null;
         useAuthStore.setState({
-          accessToken: incomingToken,
-          sessionToken: parsed?.state?.sessionToken ?? null,
+          accessToken: safeToken,
+          sessionToken: safeSession,
           user: null,
           role: null,
           isAuthenticated: false,
         });
-        void reconcileWithMe(incomingToken);
+        void reconcileWithMe(safeToken);
       } catch {
         logout();
       }
@@ -152,7 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const onVisibilityChange = () => {
       if (document.visibilityState !== "visible") return;
       const token = useAuthStore.getState().accessToken;
-      if (token) {
+      if (typeof token === "string" && token.trim() !== "") {
         void reconcileWithMe(token);
       }
     };
@@ -163,7 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, []);
+  }, [logout, reconcileWithMe]);
 
   return <>{children}</>;
 }

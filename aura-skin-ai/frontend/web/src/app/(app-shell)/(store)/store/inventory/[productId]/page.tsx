@@ -279,7 +279,8 @@ export default function StoreEditProductPage() {
             {deleteStep === 1 ? (
               <Button
                 type="button"
-                variant="destructive"
+                variant="outline"
+                className="text-destructive border-destructive/40 hover:bg-destructive/10"
                 onClick={() => setDeleteStep(2)}
                 disabled={actionLoading}
               >
@@ -288,7 +289,8 @@ export default function StoreEditProductPage() {
             ) : (
               <Button
                 type="button"
-                variant="destructive"
+                variant="outline"
+                className="text-destructive border-destructive/40 hover:bg-destructive/10"
                 onClick={handleDelete}
                 disabled={actionLoading}
               >
