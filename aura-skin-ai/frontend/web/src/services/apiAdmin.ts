@@ -1,5 +1,6 @@
 import { API_BASE } from "./apiBase";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
+import type { AdminStore } from "@/types/store";
 
 function getAuthHeaders(): Record<string, string> {
   const token = useAuthStore.getState().accessToken ?? getPersistedAccessToken();
@@ -88,6 +89,76 @@ export interface PendingInventoryItem {
     id: string;
     store_name: string | null;
   } | null;
+}
+
+function normalizeStoreGovernanceStatus(
+  raw: string | null | undefined
+): AdminStore["status"] {
+  const s = String(raw ?? "pending").toLowerCase();
+  if (s === "approved") return "approved";
+  if (s === "rejected") return "rejected";
+  return "pending";
+}
+
+function mapStoreProfileRowToAdminStore(row: Record<string, unknown>): AdminStore {
+  const storeName =
+    row.store_name != null && String(row.store_name).trim() !== ""
+      ? String(row.store_name).trim()
+      : "";
+  const name = storeName || "Unnamed store";
+  const created =
+    typeof row.created_at === "string" && row.created_at ? row.created_at : "";
+  return {
+    id: String(row.id ?? ""),
+    name,
+    email: typeof row.email === "string" && row.email ? row.email : undefined,
+    status: normalizeStoreGovernanceStatus(
+      typeof row.approval_status === "string" ? row.approval_status : undefined
+    ),
+    createdAt: created,
+    updatedAt: typeof row.updated_at === "string" ? row.updated_at : undefined,
+    approvedAt: typeof row.approved_at === "string" ? row.approved_at : undefined,
+    rejectedAt: typeof row.rejected_at === "string" ? row.rejected_at : undefined,
+    city: row.city != null ? String(row.city) : null,
+    address: row.address != null ? String(row.address) : null,
+    storeDescription:
+      row.store_description != null ? String(row.store_description) : null,
+    contact: row.contact_number != null ? String(row.contact_number) : null,
+  };
+}
+
+export async function getAdminStores(): Promise<AdminStore[]> {
+  try {
+    const data = await apiGet<unknown>("/admin/stores");
+    const list = Array.isArray(data) ? data : [];
+    return list
+      .map((row) =>
+        mapStoreProfileRowToAdminStore(
+          row && typeof row === "object" ? (row as Record<string, unknown>) : {}
+        )
+      )
+      .filter((s) => s.id.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+export async function approveAdminStore(id: string): Promise<AdminStore> {
+  const data = await apiPut<unknown>(
+    `/admin/stores/approve/${encodeURIComponent(id)}`
+  );
+  const row =
+    data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  return mapStoreProfileRowToAdminStore(row);
+}
+
+export async function rejectAdminStore(id: string): Promise<AdminStore> {
+  const data = await apiPut<unknown>(
+    `/admin/stores/reject/${encodeURIComponent(id)}`
+  );
+  const row =
+    data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  return mapStoreProfileRowToAdminStore(row);
 }
 
 export async function getAdminUsers(): Promise<AdminUser[]> {

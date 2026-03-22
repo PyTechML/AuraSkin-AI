@@ -1,11 +1,15 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { getStores } from "@/services/api";
-import type { Store } from "@/types";
+import React, { useCallback, useEffect, useState } from "react";
+import {
+  getAdminStores,
+  approveAdminStore,
+  rejectAdminStore,
+} from "@/services/apiAdmin";
+import type { AdminStore } from "@/types/store";
 import { AdminHeader, AdminPrimaryGrid } from "@/components/admin";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -25,65 +29,88 @@ import {
 } from "@/components/ui/dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  PanelToastProvider,
+  usePanelToast,
+} from "@/components/panel/PanelToast";
 
-interface StoreWithMeta extends Store {
-  productCount: number;
-  dermatologistCount: number;
-  approvalHistory: { by: string; at: string; status: string }[];
-  payoutStatus: string;
-  nextPayoutDate: string;
+function statusLabel(status: AdminStore["status"]): string {
+  switch (status) {
+    case "pending":
+      return "Pending Approval";
+    case "approved":
+      return "Approved";
+    case "rejected":
+      return "Rejected";
+    default:
+      return "Pending Approval";
+  }
 }
 
-export default function AdminStoresPage() {
-  const [stores, setStores] = useState<StoreWithMeta[]>([]);
+function locationLabel(store: AdminStore): string {
+  const parts = [store.city, store.address].filter(
+    (p) => p != null && String(p).trim() !== ""
+  ) as string[];
+  return parts.length ? parts.join(", ") : "—";
+}
+
+function AdminStoresPageInner() {
+  const { addToast } = usePanelToast();
+  const [stores, setStores] = useState<AdminStore[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = useState<"approve" | "suspend" | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"approve" | "suspend" | null>(
+    null
+  );
   const [actionStoreId, setActionStoreId] = useState<string | null>(null);
 
-  useEffect(() => {
-    getStores().then((list) => {
-      setStores(
-        list.map((s, i) => ({
-          ...s,
-          productCount: [12, 8][i % 2] ?? 5,
-          dermatologistCount: [1, 0][i % 2] ?? 0,
-          approvalHistory: [
-            { by: "Admin", at: "2025-02-01", status: "Approved" },
-          ],
-          payoutStatus: "Scheduled",
-          nextPayoutDate: "2025-03-15",
-        }))
-      );
-    });
+  const loadStores = useCallback(async () => {
+    const list = await getAdminStores();
+    const safeStores = Array.isArray(list) ? list : [];
+    setStores(safeStores);
   }, []);
+
+  useEffect(() => {
+    void loadStores();
+  }, [loadStores]);
 
   const toggleExpand = (id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
   };
 
-  const handleApprove = (id: string) => {
-    setStores((prev) =>
-      prev.map((s) =>
-        s.id === id ? { ...s, status: "Active" } : s
-      )
-    );
-    setConfirmAction(null);
-    setActionStoreId(null);
-  };
-
-  const handleSuspend = (id: string) => {
-    setStores((prev) =>
-      prev.map((s) =>
-        s.id === id ? { ...s, status: "Suspended" } : s
-      )
-    );
-    setConfirmAction(null);
-    setActionStoreId(null);
-  };
-
   const openConfirm = (action: "approve" | "suspend", id: string) => {
     setConfirmAction(action);
     setActionStoreId(id);
+  };
+
+  const runConfirmedAction = async () => {
+    if (!actionStoreId || !confirmAction) return;
+    const id = actionStoreId;
+    const action = confirmAction;
+    const previousStores = stores;
+    const nextStatus: AdminStore["status"] =
+      action === "approve" ? "approved" : "rejected";
+    setStores((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, status: nextStatus } : s))
+    );
+    setConfirmAction(null);
+    setActionStoreId(null);
+
+    try {
+      if (action === "approve") {
+        await approveAdminStore(id);
+        addToast("Store approved", "success");
+      } else {
+        await rejectAdminStore(id);
+        addToast("Store rejected", "success");
+      }
+      const fresh = await getAdminStores();
+      setStores(Array.isArray(fresh) ? fresh : []);
+    } catch (e) {
+      setStores(previousStores);
+      const msg =
+        e instanceof Error ? e.message : "Something went wrong. Try again.";
+      addToast(msg, "error");
+    }
   };
 
   return (
@@ -111,6 +138,8 @@ export default function AdminStoresPage() {
             <TableBody>
               {stores.map((store) => {
                 const isExpanded = expandedId === store.id;
+                const displayName =
+                  store.name?.trim() ? store.name : "Unnamed store";
                 return (
                   <React.Fragment key={store.id}>
                     <TableRow
@@ -128,18 +157,24 @@ export default function AdminStoresPage() {
                           <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         )}
                       </TableCell>
-                      <TableCell className="font-medium">{store.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{store.location}</TableCell>
+                      <TableCell className="font-medium">{displayName}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {locationLabel(store)}
+                      </TableCell>
                       <TableCell>
-                        <Badge variant={store.status === "Active" ? "default" : "warning"}>
-                          {store.status}
+                        <Badge
+                          variant={
+                            store.status === "approved" ? "default" : "warning"
+                          }
+                        >
+                          {statusLabel(store.status)}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{store.productCount}</TableCell>
-                      <TableCell className="text-muted-foreground">{store.dermatologistCount}</TableCell>
+                      <TableCell className="text-muted-foreground">—</TableCell>
+                      <TableCell className="text-muted-foreground">—</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-1">
-                          {store.status !== "Active" && (
+                          {store.status !== "approved" && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -148,7 +183,7 @@ export default function AdminStoresPage() {
                               Approve
                             </Button>
                           )}
-                          {store.status === "Active" && (
+                          {store.status === "approved" && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -165,32 +200,47 @@ export default function AdminStoresPage() {
                         <TableCell colSpan={7} className="p-0">
                           <div className="px-4 py-4 grid gap-6 sm:grid-cols-2 border-t border-border/60">
                             <div>
-                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Business details</p>
-                              <p className="text-sm">{store.description ?? "—"}</p>
-                              <p className="text-sm text-muted-foreground mt-1">{store.address}</p>
-                              <p className="text-sm text-muted-foreground">{store.contact}</p>
-                              <p className="text-sm text-muted-foreground">{store.openingHours}</p>
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                                Business details
+                              </p>
+                              <p className="text-sm">
+                                {store.storeDescription?.trim()
+                                  ? store.storeDescription
+                                  : "—"}
+                              </p>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                {store.address?.trim() ? store.address : "—"}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                {store.email?.trim() ? store.email : "—"}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                {store.contact?.trim() ? store.contact : "—"}
+                              </p>
+                              <p className="text-sm text-muted-foreground">—</p>
                             </div>
                             <div>
-                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Performance metrics</p>
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                                Performance metrics
+                              </p>
                               <p className="text-sm">Orders (30d): —</p>
-                              <p className="text-sm text-muted-foreground">Revenue (30d): —</p>
-                              <p className="text-sm text-muted-foreground">Rating: {store.rating ?? "—"}</p>
+                              <p className="text-sm text-muted-foreground">
+                                Revenue (30d): —
+                              </p>
+                              <p className="text-sm text-muted-foreground">Rating: —</p>
                             </div>
                             <div>
-                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Approval history</p>
-                              <ul className="text-sm space-y-1">
-                                {store.approvalHistory.map((h, i) => (
-                                  <li key={i} className="text-muted-foreground">
-                                    {h.status} by {h.by} on {h.at}
-                                  </li>
-                                ))}
-                              </ul>
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                                Approval history
+                              </p>
+                              <p className="text-sm text-muted-foreground">—</p>
                             </div>
                             <div>
-                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Payout status</p>
-                              <p className="text-sm text-muted-foreground">{store.payoutStatus}</p>
-                              <p className="text-sm text-muted-foreground">Next: {store.nextPayoutDate}</p>
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                                Payout status
+                              </p>
+                              <p className="text-sm text-muted-foreground">—</p>
+                              <p className="text-sm text-muted-foreground">Next: —</p>
                             </div>
                           </div>
                         </TableCell>
@@ -237,14 +287,8 @@ export default function AdminStoresPage() {
             >
               Cancel
             </Button>
-            {actionStoreId && (
-              <Button
-                onClick={() =>
-                  confirmAction === "approve"
-                    ? handleApprove(actionStoreId)
-                    : handleSuspend(actionStoreId)
-                }
-              >
+            {actionStoreId && confirmAction && (
+              <Button onClick={() => void runConfirmedAction()}>
                 {confirmAction === "approve" ? "Approve" : "Suspend"}
               </Button>
             )}
@@ -252,5 +296,13 @@ export default function AdminStoresPage() {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+export default function AdminStoresPage() {
+  return (
+    <PanelToastProvider>
+      <AdminStoresPageInner />
+    </PanelToastProvider>
   );
 }
