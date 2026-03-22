@@ -7,7 +7,7 @@ import {
   rejectAdminStore,
 } from "@/services/apiAdmin";
 import type { AdminStore } from "@/types/store";
-import { AdminHeader, AdminPrimaryGrid } from "@/components/admin";
+import { AdminHeader, AdminPrimaryGrid, AdminTableCardSkeleton } from "@/components/admin";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -57,17 +57,26 @@ function locationLabel(store: AdminStore): string {
 function AdminStoresPageInner() {
   const { addToast } = usePanelToast();
   const [stores, setStores] = useState<AdminStore[]>([]);
+  const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<"approve" | "suspend" | null>(
     null
   );
   const [actionStoreId, setActionStoreId] = useState<string | null>(null);
 
-  const loadStores = useCallback(async () => {
+  const pullStores = useCallback(async () => {
     const list = await getAdminStores();
-    const safeStores = Array.isArray(list) ? list : [];
-    setStores(safeStores);
+    return Array.isArray(list) ? list : [];
   }, []);
+
+  const loadStores = useCallback(async () => {
+    setLoading(true);
+    try {
+      setStores(await pullStores());
+    } finally {
+      setLoading(false);
+    }
+  }, [pullStores]);
 
   useEffect(() => {
     void loadStores();
@@ -103,8 +112,7 @@ function AdminStoresPageInner() {
         await rejectAdminStore(id);
         addToast("Store rejected", "success");
       }
-      const fresh = await getAdminStores();
-      setStores(Array.isArray(fresh) ? fresh : []);
+      setStores(await pullStores());
     } catch (e) {
       setStores(previousStores);
       const msg =
@@ -123,6 +131,10 @@ function AdminStoresPageInner() {
 
       <AdminPrimaryGrid>
         <Card className="border-border/60 overflow-hidden">
+          {loading ? (
+            <AdminTableCardSkeleton />
+          ) : (
+            <>
           <Table>
             <TableHeader>
               <TableRow>
@@ -253,8 +265,10 @@ function AdminStoresPageInner() {
           </Table>
           {stores.length === 0 && (
             <div className="p-12 text-center text-sm text-muted-foreground">
-              No stores loaded.
+              No stores found
             </div>
+          )}
+            </>
           )}
         </Card>
       </AdminPrimaryGrid>

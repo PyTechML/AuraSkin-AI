@@ -11,7 +11,9 @@ import type { AdminDashboardResult } from "@/types/admin-dashboard";
 import {
   AdminHeader,
   AdminPrimaryGrid,
+  AdminDashboardSkeleton,
 } from "@/components/admin";
+import { safeFormatDateTime, safeFiniteNumber } from "@/lib/dateDisplay";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
@@ -32,7 +34,7 @@ import {
 } from "lucide-react";
 
 function displayAnalyticCount(ok: boolean | null, n: number): string | number {
-  return ok === true ? n : "—";
+  return ok === true ? safeFiniteNumber(n) : "—";
 }
 
 export default function AdminDashboardPage() {
@@ -57,31 +59,60 @@ export default function AdminDashboardPage() {
   const [inactiveSessions, setInactiveSessions] = useState<number>(0);
   const [suspiciousSessions, setSuspiciousSessions] = useState<number>(0);
   const [onlineUsers, setOnlineUsers] = useState<number>(0);
+  const [initialLoad, setInitialLoad] = useState(true);
 
   useEffect(() => {
-    getAdminAnalytics().then((data) => {
-      setAnalyticsOk(data.ok);
-      if (data.ok) {
-        setUserCount(data.totalUsers);
-        setActiveUsers(data.activeUsers);
-        setSuspendedUsers(data.suspendedUsers);
-        setPendingRoleRequests(data.pendingRoleRequests);
-        setStoreCount(data.totalStores);
-        setDermCount(data.totalDermatologists);
-        setProductCount(data.totalProducts);
-        setRevenue(
-          `$${data.totalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
-        );
-        setActiveSessions(data.activeSessions);
-        setInactiveSessions(data.inactiveSessions);
-        setSuspiciousSessions(data.suspiciousSessions);
-        setOnlineUsers(data.onlineUsers);
-      } else {
+    let cancelled = false;
+    void Promise.all([
+      getAdminAnalytics(),
+      getPendingInventory(),
+      getAdminDashboard(),
+    ])
+      .then(([data, list, dash]) => {
+        if (cancelled) return;
+        setAnalyticsOk(data.ok);
+        if (data.ok) {
+          setUserCount(safeFiniteNumber(data.totalUsers));
+          setActiveUsers(safeFiniteNumber(data.activeUsers));
+          setSuspendedUsers(safeFiniteNumber(data.suspendedUsers));
+          setPendingRoleRequests(safeFiniteNumber(data.pendingRoleRequests));
+          setStoreCount(safeFiniteNumber(data.totalStores));
+          setDermCount(safeFiniteNumber(data.totalDermatologists));
+          setProductCount(safeFiniteNumber(data.totalProducts));
+          const rev = safeFiniteNumber(data.totalRevenue);
+          setRevenue(
+            `$${rev.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+          );
+          setActiveSessions(safeFiniteNumber(data.activeSessions));
+          setInactiveSessions(safeFiniteNumber(data.inactiveSessions));
+          setSuspiciousSessions(safeFiniteNumber(data.suspiciousSessions));
+          setOnlineUsers(safeFiniteNumber(data.onlineUsers));
+        } else {
+          setRevenue("—");
+        }
+        const inv = Array.isArray(list) ? list : [];
+        setPendingCount(safeFiniteNumber(inv.length));
+        setDashboard(dash);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAnalyticsOk(false);
         setRevenue("—");
-      }
-    });
-    getPendingInventory().then((list) => setPendingCount(Array.isArray(list) ? list.length : 0));
-    getAdminDashboard().then(setDashboard);
+        setPendingCount(0);
+        setDashboard({
+          recentActivity: [],
+          health: { database: true, redis: true, worker: true },
+          auditAlertCount: 0,
+          healthFromApi: false,
+          auditFromApi: false,
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setInitialLoad(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const metricCardsRow1 = [
@@ -94,7 +125,9 @@ export default function AdminDashboardPage() {
       icon: Clock,
       href: "/admin/role-requests",
       variant:
-        analyticsOk === true && pendingRoleRequests > 0 ? ("warning" as const) : ("default" as const),
+        analyticsOk === true && safeFiniteNumber(pendingRoleRequests) > 0
+          ? ("warning" as const)
+          : ("default" as const),
     },
   ];
   const metricCardsRow1b = [
@@ -106,7 +139,13 @@ export default function AdminDashboardPage() {
       icon: Stethoscope,
       href: "/admin/dermatologists",
     },
-    { title: "Pending Approvals", value: pendingCount, icon: Clock, href: "/admin/products?status=pending", variant: "warning" as const },
+    {
+      title: "Pending Approvals",
+      value: safeFiniteNumber(pendingCount),
+      icon: Clock,
+      href: "/admin/products?status=pending",
+      variant: "warning" as const,
+    },
   ];
 
   const metricCardsRow2 = useMemo(() => {
@@ -136,8 +175,9 @@ export default function AdminDashboardPage() {
     let auditValue: string | number;
     let auditVariant: "default" | "secondary" | "warning";
     if (auditFromApi) {
-      auditValue = auditAlertCount;
-      auditVariant = auditAlertCount > 0 ? "warning" : "default";
+      const ac = safeFiniteNumber(auditAlertCount);
+      auditValue = ac;
+      auditVariant = ac > 0 ? "warning" : "default";
     } else {
       auditValue = "—";
       auditVariant = "secondary";
@@ -184,7 +224,9 @@ export default function AdminDashboardPage() {
       icon: ShieldAlert,
       href: "/admin/sessions",
       variant:
-        analyticsOk === true && suspiciousSessions > 0 ? ("warning" as const) : ("default" as const),
+        analyticsOk === true && safeFiniteNumber(suspiciousSessions) > 0
+          ? ("warning" as const)
+          : ("default" as const),
     },
     { title: "Currently Online", value: displayAnalyticCount(analyticsOk, onlineUsers), icon: CircleDot, href: "/admin/sessions" },
   ];
@@ -198,6 +240,10 @@ export default function AdminDashboardPage() {
       />
 
       <AdminPrimaryGrid className="gap-y-7">
+        {initialLoad ? (
+          <AdminDashboardSkeleton />
+        ) : (
+          <>
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
           {metricCardsRow1.map((m) => {
             const Icon = m.icon;
@@ -309,9 +355,14 @@ export default function AdminDashboardPage() {
           </CardHeader>
           <CardContent>
             {(() => {
-              const activity = Array.isArray(dashboard.recentActivity)
+              const raw = Array.isArray(dashboard.recentActivity)
                 ? dashboard.recentActivity
                 : [];
+              const activity = [...raw].sort((a, b) => {
+                const ta = a.createdAt ?? "";
+                const tb = b.createdAt ?? "";
+                return tb.localeCompare(ta);
+              });
               if (activity.length === 0) {
                 return (
                   <p className="text-sm text-muted-foreground py-4 text-center">
@@ -321,28 +372,33 @@ export default function AdminDashboardPage() {
               }
               return (
                 <ul className="space-y-3 py-1">
-                  {activity.map((item) => (
+                  {activity.map((item) => {
+                    const msg = item.message?.trim() ?? "";
+                    const typeStr = item.type?.trim() ?? "";
+                    const datePart = safeFormatDateTime(item.createdAt);
+                    const meta =
+                      [typeStr, datePart].filter(
+                        (p) => typeof p === "string" && p.trim() !== ""
+                      ).join(" · ") || "—";
+                    return (
                     <li
                       key={`${item.type}-${item.id}`}
                       className="flex flex-col gap-0.5 border-b border-border/40 pb-3 last:border-0 last:pb-0"
                     >
                       <span className="text-sm font-medium text-foreground">
-                        {item.message.trim() !== ""
-                          ? item.message
-                          : item.type || "Event"}
+                        {msg !== "" ? (item.message ?? "").trim() : typeStr || "Event"}
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        {[item.type, item.createdAt ? new Date(item.createdAt).toLocaleString() : ""]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </span>
+                      <span className="text-xs text-muted-foreground">{meta}</span>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               );
             })()}
           </CardContent>
         </Card>
+          </>
+        )}
       </AdminPrimaryGrid>
     </>
   );

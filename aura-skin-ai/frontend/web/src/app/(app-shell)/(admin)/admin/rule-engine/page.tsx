@@ -41,10 +41,24 @@ import {
   type AdminRule,
   type AdminRuleType,
 } from "@/types/rule";
+import { safeFormatDateTime } from "@/lib/dateDisplay";
 
 function listDateLabel(r: AdminRule): string {
   const raw = r.updatedAt ?? r.createdAt ?? "";
-  return raw ? raw.slice(0, 10) : "—";
+  const formatted = safeFormatDateTime(raw);
+  if (formatted) return formatted.split(",")[0]?.trim() ?? "—";
+  if (raw && String(raw).trim() !== "") return String(raw).slice(0, 10);
+  return "—";
+}
+
+function sortRulesByNewest(list: AdminRule[]): AdminRule[] {
+  return [...list].sort((a, b) => {
+    const ta = a.updatedAt ?? a.createdAt ?? "";
+    const tb = b.updatedAt ?? b.createdAt ?? "";
+    const c = tb.localeCompare(ta);
+    if (c !== 0) return c;
+    return b.id.localeCompare(a.id);
+  });
 }
 
 function AdminRuleEnginePageInner() {
@@ -62,24 +76,26 @@ function AdminRuleEnginePageInner() {
   const [addRuleValue, setAddRuleValue] = useState("");
   const [addSubmitting, setAddSubmitting] = useState(false);
 
-  const loadRules = useCallback(async () => {
-    setLoading(true);
+  const loadRules = useCallback(async (opts?: { withSkeleton?: boolean }) => {
+    const showSkeleton = opts?.withSkeleton ?? true;
+    if (showSkeleton) setLoading(true);
     try {
       const list = await getAdminRules();
       const safeRules = Array.isArray(list) ? list : [];
-      setRules(safeRules);
+      const sorted = sortRulesByNewest(safeRules);
+      setRules(sorted);
       setSelectedRuleId((prev) => {
-        if (safeRules.length === 0) return null;
-        if (prev && safeRules.some((r) => r.id === prev)) return prev;
-        return safeRules[0].id;
+        if (sorted.length === 0) return null;
+        if (prev && sorted.some((r) => r.id === prev)) return prev;
+        return sorted[0]?.id ?? null;
       });
     } finally {
-      setLoading(false);
+      if (showSkeleton) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadRules();
+    void loadRules({ withSkeleton: true });
   }, [loadRules]);
 
   const safeRules = Array.isArray(rules) ? rules : [];
@@ -87,7 +103,7 @@ function AdminRuleEnginePageInner() {
 
   const runSandbox = () => {
     setSandboxResult(
-      `Preview: Would match rules for skin type "${sandboxSkinType}", concern "${sandboxConcern}", age ${sandboxAge}. Connect recommendation API for live results.`
+      "Inputs saved for this run. Evaluating rules against profile data requires the recommendation service; the client does not execute the rule list."
     );
   };
 
@@ -105,7 +121,7 @@ function AdminRuleEnginePageInner() {
       await createAdminRule({ rule_type: addRuleType, rule_value: trimmed });
       addToast("Rule created");
       setAddOpen(false);
-      await loadRules();
+      await loadRules({ withSkeleton: false });
     } catch {
       addToast("Unable to update rule", "error");
     } finally {
@@ -126,7 +142,7 @@ function AdminRuleEnginePageInner() {
     try {
       await deleteAdminRule(id);
       addToast("Rule deleted");
-      await loadRules();
+      await loadRules({ withSkeleton: false });
     } catch {
       addToast("Unable to update rule", "error");
     }
@@ -148,7 +164,14 @@ function AdminRuleEnginePageInner() {
             </CardHeader>
             <CardContent className="p-0">
               {loading ? (
-                <div className="p-4 text-sm text-muted-foreground">Loading rules…</div>
+                <div className="p-4 space-y-3">
+                  {[1, 2, 3, 4, 5, 6].map((i) => (
+                    <div
+                      key={i}
+                      className="h-12 rounded-lg border border-border/60 bg-muted/40 animate-pulse"
+                    />
+                  ))}
+                </div>
               ) : (
               <div className="flex flex-col">
                 {safeRules.length === 0 ? (
@@ -170,9 +193,11 @@ function AdminRuleEnginePageInner() {
                   >
                     <GripVertical className="h-4 w-4 text-muted-foreground shrink-0" />
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">{rule.name}</p>
+                      <p className="text-sm font-medium truncate">
+                        {rule.name?.trim() ? rule.name : "—"}
+                      </p>
                       <p className="text-xs text-muted-foreground">
-                        P1 · medium · {listDateLabel(rule)}
+                        {listDateLabel(rule)}
                       </p>
                     </div>
                     <Badge variant={status === "active" ? "default" : "secondary"} className="shrink-0">
@@ -196,13 +221,20 @@ function AdminRuleEnginePageInner() {
           <Card className="border-border/60">
             <CardHeader>
               <CardTitle className="font-heading text-sm">Rule editor</CardTitle>
-              {selectedRule && (
-                <p className="text-sm text-muted-foreground">{selectedRule.name}</p>
-              )}
+              {selectedRule ? (
+                <p className="text-sm text-muted-foreground">
+                  {selectedRule.name?.trim() ? selectedRule.name : "—"}
+                </p>
+              ) : null}
             </CardHeader>
             <CardContent className="space-y-6">
               {selectedRule ? (
                 <>
+                  {selectedRule.description?.trim() ? (
+                    <p className="text-sm text-muted-foreground">
+                      {selectedRule.description}
+                    </p>
+                  ) : null}
                   <div>
                     <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Logic</Label>
                     <div className="flex gap-2 mt-2">
@@ -225,19 +257,19 @@ function AdminRuleEnginePageInner() {
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="rounded-lg border border-border/60 p-3 bg-muted/20 animate-in fade-in duration-200">
                       <p className="text-xs font-medium text-muted-foreground">Skin type condition</p>
-                      <p className="text-sm mt-1">Sensitive, Dry, Combination</p>
+                      <p className="text-sm mt-1">—</p>
                     </div>
                     <div className="rounded-lg border border-border/60 p-3 bg-muted/20 animate-in fade-in duration-200">
                       <p className="text-xs font-medium text-muted-foreground">Product category</p>
-                      <p className="text-sm mt-1">Cleanser, Moisturizer</p>
+                      <p className="text-sm mt-1">—</p>
                     </div>
                     <div className="rounded-lg border border-border/60 p-3 bg-muted/20 animate-in fade-in duration-200">
                       <p className="text-xs font-medium text-muted-foreground">Severity weighting</p>
-                      <p className="text-sm mt-1">High</p>
+                      <p className="text-sm mt-1">—</p>
                     </div>
                     <div className="rounded-lg border border-border/60 p-3 bg-muted/20 animate-in fade-in duration-200">
                       <p className="text-xs font-medium text-muted-foreground">Priority</p>
-                      <p className="text-sm mt-1">1</p>
+                      <p className="text-sm mt-1">—</p>
                     </div>
                   </div>
                   <div className="flex gap-2">
@@ -258,7 +290,7 @@ function AdminRuleEnginePageInner() {
         <Card className="border-border/60">
           <CardHeader>
             <CardTitle className="font-heading text-sm">Test rule sandbox</CardTitle>
-            <p className="text-xs text-muted-foreground">Enter user data to preview recommended products.</p>
+            <p className="text-xs text-muted-foreground">Enter profile fields to stage a sandbox run.</p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -313,7 +345,7 @@ function AdminRuleEnginePageInner() {
                 {sandboxResult}
               </div>
             )}
-            <p className="text-xs text-muted-foreground">Recommended products preview will appear here when connected to API.</p>
+            <p className="text-xs text-muted-foreground">Service-side results will appear here once the recommendation API is integrated.</p>
           </CardContent>
         </Card>
       </AdminPrimaryGrid>

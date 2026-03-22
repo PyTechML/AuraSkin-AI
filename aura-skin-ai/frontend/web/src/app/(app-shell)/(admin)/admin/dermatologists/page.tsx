@@ -11,7 +11,9 @@ import {
   AdminHeader,
   AdminPrimaryGrid,
   AdminDrawer,
+  AdminTableCardSkeleton,
 } from "@/components/admin";
+import { safeFormatDateTime, safeFiniteNumber } from "@/lib/dateDisplay";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -65,6 +67,7 @@ function statusVariant(
 function AdminDermatologistsPageInner() {
   const { addToast } = usePanelToast();
   const [rows, setRows] = useState<AdminDermatologistVerification[]>([]);
+  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [drawerVerificationId, setDrawerVerificationId] = useState<
     string | null
@@ -76,27 +79,47 @@ function AdminDermatologistsPageInner() {
     string | null
   >(null);
 
-  const loadRows = useCallback(async () => {
+  const pullRows = useCallback(async () => {
     const list = await getPendingDermatologistVerifications();
-    const safeDermatologists = Array.isArray(list) ? list : [];
-    setRows(safeDermatologists);
+    return Array.isArray(list) ? list : [];
   }, []);
+
+  const loadRows = useCallback(async () => {
+    setLoading(true);
+    try {
+      setRows(await pullRows());
+    } finally {
+      setLoading(false);
+    }
+  }, [pullRows]);
 
   useEffect(() => {
     void loadRows();
   }, [loadRows]);
 
+  const sortedRows = useMemo(() => {
+    const list = Array.isArray(rows) ? [...rows] : [];
+    list.sort((a, b) => {
+      const ta = a.submittedAt ?? "";
+      const tb = b.submittedAt ?? "";
+      const c = tb.localeCompare(ta);
+      if (c !== 0) return c;
+      return b.verificationId.localeCompare(a.verificationId);
+    });
+    return list;
+  }, [rows]);
+
   const paginated = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
-    return rows.slice(start, start + PAGE_SIZE);
-  }, [rows, page]);
+    return sortedRows.slice(start, start + PAGE_SIZE);
+  }, [sortedRows, page]);
 
   const selectedRow = useMemo(
     () =>
       drawerVerificationId
-        ? rows.find((r) => r.verificationId === drawerVerificationId)
+        ? sortedRows.find((r) => r.verificationId === drawerVerificationId)
         : null,
-    [drawerVerificationId, rows]
+    [drawerVerificationId, sortedRows]
   );
 
   const openConfirm = (action: "verify" | "reject", verificationId: string) => {
@@ -123,8 +146,7 @@ function AdminDermatologistsPageInner() {
         await rejectDermatologist(verificationId);
         addToast("Dermatologist rejected", "success");
       }
-      const fresh = await getPendingDermatologistVerifications();
-      setRows(Array.isArray(fresh) ? fresh : []);
+      setRows(await pullRows());
     } catch (e) {
       setRows(previousRows);
       const msg =
@@ -143,7 +165,9 @@ function AdminDermatologistsPageInner() {
 
       <AdminPrimaryGrid>
         <Card className="border-border/60">
-          {rows.length === 0 ? (
+          {loading ? (
+            <AdminTableCardSkeleton />
+          ) : sortedRows.length === 0 ? (
             <PanelEmptyState
               icon={<Stethoscope className="h-12 w-12" />}
               title="No pending verifications"
@@ -181,7 +205,9 @@ function AdminDermatologistsPageInner() {
                           {statusLabel(d.status)}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">—</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {safeFormatDateTime(d.submittedAt) || "—"}
+                      </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <Button
                           variant="ghost"
@@ -200,7 +226,7 @@ function AdminDermatologistsPageInner() {
               <PanelTablePagination
                 page={page}
                 setPage={setPage}
-                totalItems={rows.length}
+                totalItems={sortedRows.length}
                 pageSize={PAGE_SIZE}
               />
             </>
@@ -240,7 +266,7 @@ function AdminDermatologistsPageInner() {
               </p>
               <p className="text-sm mt-1">
                 {selectedRow.yearsExperience != null
-                  ? `${selectedRow.yearsExperience} years experience`
+                  ? `${safeFiniteNumber(selectedRow.yearsExperience)} years experience`
                   : "—"}
               </p>
               <p className="text-sm text-muted-foreground">—</p>

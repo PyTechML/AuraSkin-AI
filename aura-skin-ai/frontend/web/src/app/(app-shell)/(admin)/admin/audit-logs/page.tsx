@@ -25,6 +25,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Shield } from "lucide-react";
 import { getAdminAuditLogs } from "@/services/apiAdmin";
+import { safeFormatDateTime } from "@/lib/dateDisplay";
+import { AdminTableCardSkeleton } from "@/components/admin";
 import type { AdminAuditLog } from "@/types/governance";
 
 const PAGE_SIZE = 10;
@@ -85,8 +87,12 @@ export default function AdminAuditLogsPage() {
 
   const filtered = useMemo(() => {
     let list = [...entries];
-    if (actionFilter !== "all") list = list.filter((e) => e.action.toLowerCase().includes(actionFilter.toLowerCase()));
-    if (moduleFilter !== "all") list = list.filter((e) => e.module === moduleFilter);
+    if (actionFilter !== "all")
+      list = list.filter((e) =>
+        (e.action ?? "").toLowerCase().includes(actionFilter.toLowerCase())
+      );
+    if (moduleFilter !== "all")
+      list = list.filter((e) => e.module === moduleFilter);
     if (dateFrom) list = list.filter((e) => e.timestamp >= dateFrom);
     if (dateTo) list = list.filter((e) => e.timestamp <= dateTo + "T23:59:59Z");
     return list;
@@ -142,7 +148,9 @@ export default function AdminAuditLogsPage() {
             </Select>
           </div>
           {loading ? (
-            <div className="p-6 text-sm text-muted-foreground">Loading audit logs…</div>
+            <div className="p-0">
+              <AdminTableCardSkeleton />
+            </div>
           ) : filtered.length === 0 ? (
             <PanelEmptyState
               icon={<Shield className="h-12 w-12" />}
@@ -168,9 +176,7 @@ export default function AdminAuditLogsPage() {
                   <TableCell className="font-medium">{entry.action}</TableCell>
                   <TableCell className="text-muted-foreground">{entry.target}</TableCell>
                   <TableCell className="text-muted-foreground">
-                    {entry.timestamp
-                      ? entry.timestamp.replace("T", " ").slice(0, 19)
-                      : "—"}
+                    {safeFormatDateTime(entry.timestamp) || "—"}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{entry.ipAddress}</TableCell>
                 </TableRow>
