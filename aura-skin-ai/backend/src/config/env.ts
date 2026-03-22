@@ -39,15 +39,25 @@ export interface EnvConfig {
   internalEventsSecret: string | undefined;
   sentryDsn: string | undefined;
   logAggregatorUrl: string | undefined;
+  /** Questionnaire-only assessment (no face scan). Default off in production unless explicitly enabled. */
+  enableQuestionnaireOnlyAssessment: boolean;
 }
 
 let cached: EnvConfig | null = null;
 
+function parseQuestionnaireOnlyFlag(nodeEnv: string): boolean {
+  const raw = process.env.ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT;
+  if (raw === "false") return false;
+  if (raw === "true") return true;
+  return nodeEnv !== "production";
+}
+
 export function loadEnv(): EnvConfig {
   if (cached) return cached;
+  const nodeEnv = getEnvOptional("NODE_ENV", "development");
   cached = {
     port: parseInt(getEnvOptional("PORT", "3001"), 10),
-    nodeEnv: getEnvOptional("NODE_ENV", "development"),
+    nodeEnv,
     supabaseUrl: getEnv("SUPABASE_URL"),
     supabaseAnonKey: getEnv("SUPABASE_ANON_KEY"),
     supabaseServiceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY"),
@@ -60,6 +70,7 @@ export function loadEnv(): EnvConfig {
     internalEventsSecret: process.env.INTERNAL_EVENTS_SECRET && process.env.INTERNAL_EVENTS_SECRET !== "" ? process.env.INTERNAL_EVENTS_SECRET : undefined,
     sentryDsn: process.env.SENTRY_DSN && process.env.SENTRY_DSN !== "" ? process.env.SENTRY_DSN : undefined,
     logAggregatorUrl: process.env.LOG_AGGREGATOR_URL && process.env.LOG_AGGREGATOR_URL !== "" ? process.env.LOG_AGGREGATOR_URL : undefined,
+    enableQuestionnaireOnlyAssessment: parseQuestionnaireOnlyFlag(nodeEnv),
   };
   return cached;
 }

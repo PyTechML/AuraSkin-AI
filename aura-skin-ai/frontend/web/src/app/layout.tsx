@@ -1,8 +1,14 @@
 import type { Metadata } from "next";
-import { Playfair_Display, Inter, Space_Grotesk } from "next/font/google";
+import {
+  Playfair_Display,
+  Inter,
+  Space_Grotesk,
+  Kaushan_Script,
+} from "next/font/google";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { RuntimeRecovery } from "@/components/RuntimeRecovery";
 import "@/styles/globals.css";
+import { criticalFallbackCss } from "@/styles/criticalFallbackCss";
 
 const playfair = Playfair_Display({
   subsets: ["latin"],
@@ -22,6 +28,14 @@ const spaceGrotesk = Space_Grotesk({
   display: "swap",
 });
 
+/** Bundled via next/font — avoids top-level CSS @import that can block Tailwind on hard refresh. */
+const kaushanScript = Kaushan_Script({
+  subsets: ["latin"],
+  variable: "--font-kaushan",
+  display: "swap",
+  weight: "400",
+});
+
 export const metadata: Metadata = {
   title: "AuraSkin AI — AI-Powered Skincare Assessment",
   description: "Personalized skin analysis and routine recommendations powered by AI.",
@@ -35,9 +49,15 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${playfair.variable} ${inter.variable} ${spaceGrotesk.variable}`}
+      className={`${playfair.variable} ${inter.variable} ${spaceGrotesk.variable} ${kaushanScript.variable} ${kaushanScript.className}`}
       suppressHydrationWarning
     >
+      <head>
+        <style
+          id="auraskin-critical-fallback"
+          dangerouslySetInnerHTML={{ __html: criticalFallbackCss }}
+        />
+      </head>
       <body
         className="min-h-screen font-body bg-background text-foreground"
         style={{ backgroundColor: "hsl(75, 56%, 95%)" }}

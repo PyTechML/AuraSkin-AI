@@ -16,23 +16,24 @@ const INSIGHTS = [
   "Safe Ingredient Mapping",
 ] as const;
 
-const CARD_WIDTH = 140;
-const CARD_HEIGHT = 48;
 const CURSOR_FACTOR = 0.02;
 const CURSOR_CLAMP = 15;
 
-/** Scattered positions (top/left %) avoiding center ~35–65% x, ~40–60% y */
+/**
+ * Chip centers (top/left %) kept in the periphery so they never sit on the headline or CTA.
+ * Pairs are upper corners, mid sides, lower corners — all outside the central content band.
+ */
 const POSITIONS: { top: string; left: string }[] = [
-  { top: "12%", left: "8%" },
-  { top: "18%", left: "82%" },
-  { top: "42%", left: "5%" },
-  { top: "48%", left: "88%" },
-  { top: "72%", left: "10%" },
-  { top: "78%", left: "85%" },
+  { top: "16%", left: "11%" },
+  { top: "16%", left: "89%" },
+  { top: "50%", left: "6%" },
+  { top: "50%", left: "94%" },
+  { top: "84%", left: "12%" },
+  { top: "84%", left: "88%" },
 ];
 
-/** Per-card rotation (degrees) so they are not all at the same angle */
-const CARD_ANGLES = [-12, 5, -8, 3, -5, 10];
+/** Slight tilt only — large angles read as a layout bug next to centered hero type */
+const CARD_ANGLES = [-4, 3, -3, 4, -2, 3];
 
 export type MouseState = { x: number; y: number } | null;
 
@@ -54,8 +55,8 @@ function useCursorOffset(
     }
     const leftPct = parseFloat(position.left) / 100;
     const topPct = parseFloat(position.top) / 100;
-    const cardCenterX = rect.left + rect.width * leftPct + CARD_WIDTH / 2;
-    const cardCenterY = rect.top + rect.height * topPct + CARD_HEIGHT / 2;
+    const cardCenterX = rect.left + rect.width * leftPct;
+    const cardCenterY = rect.top + rect.height * topPct;
     let dx = (mouse.x - cardCenterX) * CURSOR_FACTOR;
     let dy = (mouse.y - cardCenterY) * CURSOR_FACTOR;
     dx = Math.max(-CURSOR_CLAMP, Math.min(CURSOR_CLAMP, dx));
@@ -87,59 +88,61 @@ function InsightCard({
   const { x, y } = useCursorOffset(mouse, rect, position);
 
   return (
-    <motion.div
-      className="absolute pointer-events-auto"
+    <div
+      className="absolute pointer-events-none"
       style={{
         top: position.top,
         left: position.left,
-        x,
-        y,
-        rotate: rotationDeg,
+        transform: "translate(-50%, -50%)",
       }}
     >
       <motion.div
-        className="px-4 py-2.5 w-[140px] min-h-[48px] flex items-center justify-center border border-white/30"
-        style={{
-          backgroundColor,
-          color: TEXT_COLOR,
-          borderRadius: 16,
-        }}
-        initial={{ opacity: 0 }}
-        animate={{
-          opacity: 1,
-          y: [0, -8, 0],
-          x: [0, 3, 0],
-          boxShadow: [
-            "0 4px 20px rgba(137, 108, 108, 0.12)",
-            "0 6px 24px rgba(137, 108, 108, 0.18)",
-            "0 4px 20px rgba(137, 108, 108, 0.12)",
-          ],
-        }}
-        transition={{
-          opacity: { duration: 0.5, delay: index * 0.08, ease: "easeOut" },
-          y: {
-            duration: 5 + index * 0.4,
-            repeat: Infinity,
-            ease: "easeInOut",
-          },
-          x: {
-            duration: 5 + index * 0.4,
-            repeat: Infinity,
-            ease: "easeInOut",
-          },
-          boxShadow: {
-            duration: 2.5,
-            repeat: Infinity,
-            ease: "easeInOut",
-          },
-        }}
-        whileHover={{ scale: 1.05 }}
+        style={{ x, y, rotate: rotationDeg }}
+        className="will-change-transform"
       >
-        <span className="text-sm font-medium leading-tight text-center">
-          {label}
-        </span>
+        <motion.div
+          className="px-4 py-2.5 max-w-[148px] min-h-[48px] flex items-center justify-center border border-white/30"
+          style={{
+            backgroundColor,
+            color: TEXT_COLOR,
+            borderRadius: 16,
+          }}
+          initial={false}
+          animate={{
+            opacity: 1,
+            y: [0, -5, 0],
+            x: [0, 2, 0],
+            boxShadow: [
+              "0 4px 20px rgba(137, 108, 108, 0.12)",
+              "0 6px 24px rgba(137, 108, 108, 0.18)",
+              "0 4px 20px rgba(137, 108, 108, 0.12)",
+            ],
+          }}
+          transition={{
+            opacity: { duration: 0.5, delay: index * 0.08, ease: "easeOut" },
+            y: {
+              duration: 5 + index * 0.4,
+              repeat: Infinity,
+              ease: "easeInOut",
+            },
+            x: {
+              duration: 5 + index * 0.4,
+              repeat: Infinity,
+              ease: "easeInOut",
+            },
+            boxShadow: {
+              duration: 2.5,
+              repeat: Infinity,
+              ease: "easeInOut",
+            },
+          }}
+        >
+          <span className="text-sm font-medium leading-tight text-center">
+            {label}
+          </span>
+        </motion.div>
       </motion.div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -190,7 +193,7 @@ export function FloatingInsightCards({ mouse: propsMouse, containerRef }: Floati
   return (
     <div
       ref={internalRef}
-      className="absolute inset-0 overflow-hidden pointer-events-none"
+      className="absolute inset-0 z-[1] overflow-hidden pointer-events-none"
       onMouseMove={containerRef == null ? handleMouseMove : undefined}
       onMouseLeave={containerRef == null ? handleMouseLeave : undefined}
       aria-hidden

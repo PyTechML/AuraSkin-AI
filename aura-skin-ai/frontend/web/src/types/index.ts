@@ -43,8 +43,10 @@ export interface AssessmentStepData {
   skinConcerns?: string[];
   lifestyle?: LifestyleInputs;
   medicalBackground?: MedicalBackground;
-  imageUpload?: { fileNames: string[]; files?: File[] };
+  imageUpload?: { fileNames: string[]; files?: File[]; skipped?: boolean };
 }
+
+export type AssessmentSubmissionMode = "vision" | "questionnaire";
 
 export interface PersonalDetails {
   fullName: string;

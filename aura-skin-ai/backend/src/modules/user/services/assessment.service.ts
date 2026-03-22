@@ -27,6 +27,7 @@ import { generateRoutinePlan } from "../../ai/routine-engine";
 import { ReportRepository } from "../repositories/report.repository";
 import { RoutineRepository } from "../repositories/routine.repository";
 import { AiReportService } from "./ai-report.service";
+import { loadEnv } from "../../../config/env";
 
 /** Multer-style file from multipart upload (fieldname optional; we key by view). */
 export interface AssessmentUploadFile {
@@ -35,8 +36,6 @@ export interface AssessmentUploadFile {
   mimetype: string;
   size: number;
 }
-
-const SIGNED_URL_EXPIRY_SEC = 3600; // 1 hour for worker to fetch images
 
 @Injectable()
 export class AssessmentService {
@@ -330,6 +329,63 @@ export class AssessmentService {
     } catch (err) {
       if (err instanceof HttpException) throw err;
       this.logger.log("Assessment submit error", { error: String(err), event_type: "assessment_submit_error" });
+      throw new InternalServerErrorException("Unable to submit assessment. Please try again.");
+    }
+  }
+
+  /**
+   * Questionnaire-only submission: no images, no Redis/Python vision queue.
+   * Rejects if any assessment_images exist (vision flow must use submit).
+   */
+  async submitQuestionnaire(
+    assessmentId: string,
+    userId: string,
+    dto: SubmitAssessmentDto
+  ): Promise<{ assessment_id: string; report_id: string }> {
+    if (!loadEnv().enableQuestionnaireOnlyAssessment) {
+      throw new ForbiddenException("This assessment option is not available.");
+    }
+    try {
+      const assessment = await this.assessmentRepository.findByIdAndUser(assessmentId, userId);
+      if (!assessment) throw new ForbiddenException("Assessment not found or access denied");
+
+      const images = await this.assessmentRepository.getImagesByAssessmentId(assessmentId);
+      if (images.length > 0) {
+        throw new BadRequestException(
+          "This assessment has face images. Use the standard submit flow for scan-based analysis."
+        );
+      }
+
+      const existingReport = await this.reportRepository.findByAssessmentIdAndUser(assessmentId, userId);
+      if (existingReport?.id) {
+        await this.redis.setAssessmentProgress(assessmentId, "completed", 100, { report_id: existingReport.id }).catch(() => {});
+        return { assessment_id: assessmentId, report_id: existingReport.id };
+      }
+
+      const report = await this.reportService.createQuestionnaireReportFromAssessment(assessment, {
+        city: dto.city,
+        userLat: dto.latitude,
+        userLng: dto.longitude,
+      });
+      if (!report?.id) {
+        throw new InternalServerErrorException("Unable to create your report. Please try again.");
+      }
+
+      await this.redis.setAssessmentProgress(assessmentId, "completed", 100, { report_id: report.id }).catch(() => {});
+
+      this.logger.logUserActivity({
+        event: "assessment_submission",
+        user_id: userId,
+        extra: { assessment_id: assessmentId, questionnaire_only: true },
+      });
+
+      return { assessment_id: assessmentId, report_id: report.id };
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      this.logger.log("Assessment questionnaire submit error", {
+        error: String(err),
+        event_type: "assessment_questionnaire_submit_error",
+      });
       throw new InternalServerErrorException("Unable to submit assessment. Please try again.");
     }
   }

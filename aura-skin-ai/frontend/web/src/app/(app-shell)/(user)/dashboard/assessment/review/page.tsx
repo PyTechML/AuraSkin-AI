@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAssessmentStore } from "@/store/assessmentStore";
 import { useAuthStore } from "@/store/authStore";
+import type { AssessmentStepData } from "@/types";
 import {
   createAssessment,
   uploadAssessmentImages,
   submitAssessment,
+  submitQuestionnaireAssessment,
   getAssessmentProgress,
   getAssessmentStatus,
   getReportByAssessmentId,
@@ -21,9 +23,53 @@ import { Progress } from "@/components/ui/progress";
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 180; // ~6 min
 
+function buildCreateAssessmentPayload(data: AssessmentStepData): CreateAssessmentPayload {
+  const skinType = data.skinTypeTone?.skinType;
+  const parts: string[] = [];
+  if (data.personalDetails) {
+    parts.push(`Age: ${data.personalDetails.age}`);
+    if (data.personalDetails.gender?.trim()) {
+      parts.push(`Gender: ${data.personalDetails.gender.trim()}`);
+    }
+  }
+  if (data.skinTypeTone?.skinTone) {
+    parts.push(`Skin tone: ${data.skinTypeTone.skinTone}`);
+  }
+  if (Array.isArray(data.skinConcerns) && data.skinConcerns.length > 0) {
+    parts.push(`Concerns: ${data.skinConcerns.join(", ")}`);
+  }
+  if (data.lifestyle) {
+    parts.push(`Sun: ${data.lifestyle.sunExposure ?? "—"}`);
+    if (data.lifestyle.sleepHours != null && Number.isFinite(Number(data.lifestyle.sleepHours))) {
+      parts.push(`Sleep: ${data.lifestyle.sleepHours}h/night`);
+    }
+    if (data.lifestyle.diet?.trim()) parts.push(`Diet: ${data.lifestyle.diet.trim()}`);
+    if (data.lifestyle.stressLevel?.trim()) parts.push(`Stress: ${data.lifestyle.stressLevel.trim()}`);
+  }
+  if (data.medicalBackground) {
+    const mb = data.medicalBackground;
+    if (Array.isArray(mb.conditions) && mb.conditions.length > 0) {
+      parts.push(`Conditions: ${mb.conditions.join(", ")}`);
+    }
+    if (Array.isArray(mb.medications) && mb.medications.length > 0) {
+      parts.push(`Medications: ${mb.medications.join(", ")}`);
+    }
+    if (mb.allergies?.trim()) parts.push(`Allergies: ${mb.allergies.trim()}`);
+  }
+  const lifestyleFactors = parts.length > 0 ? parts.join(" | ").slice(0, 1950) : undefined;
+  const sensitivityLevel = skinType === "Sensitive" ? "high" : undefined;
+  return {
+    skinType,
+    primaryConcern: Array.isArray(data.skinConcerns) ? data.skinConcerns[0] : undefined,
+    secondaryConcern: Array.isArray(data.skinConcerns) ? data.skinConcerns[1] : undefined,
+    sensitivityLevel,
+    lifestyleFactors,
+  };
+}
+
 export default function AssessmentReviewPage() {
   const router = useRouter();
-  const { data } = useAssessmentStore();
+  const { data, submissionMode } = useAssessmentStore();
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [stage, setStage] = useState<string | null>(null);
@@ -52,9 +98,12 @@ export default function AssessmentReviewPage() {
   }, []);
 
   const handleSubmit = async () => {
-    const files = data.imageUpload?.files ?? [];
-    if (files.length < 5) {
-      setError("Please go back and upload all 5 face images.");
+    const files = Array.isArray(data.imageUpload?.files) ? data.imageUpload!.files! : [];
+    const isQuestionnaire =
+      submissionMode === "questionnaire" || Boolean(data.imageUpload?.skipped);
+
+    if (!isQuestionnaire && files.length < 5) {
+      setError("Please go back and complete the live face capture (all 5 angles).");
       return;
     }
 
@@ -64,13 +113,22 @@ export default function AssessmentReviewPage() {
     setStage("Creating assessment…");
 
     try {
-      const createPayload: CreateAssessmentPayload = {
-        skinType: data.skinTypeTone?.skinType,
-        primaryConcern: data.skinConcerns?.[0],
-        secondaryConcern: data.skinConcerns?.[1],
-      };
+      const createPayload = buildCreateAssessmentPayload(data);
       const { assessment_id } = await createAssessment(createPayload);
       setCurrentAssessmentId(assessment_id);
+
+      if (isQuestionnaire) {
+        setStage("Generating your report…");
+        setProgress(50);
+        const submitResult = await submitQuestionnaireAssessment({ assessmentId: assessment_id });
+        if (submitResult.report_id) {
+          navigateToReport(submitResult.report_id);
+          return;
+        }
+        setError("Report could not be created. Please try again.");
+        return;
+      }
+
       setStage("Uploading images…");
 
       await uploadAssessmentImages(assessment_id, files);
@@ -244,11 +302,13 @@ export default function AssessmentReviewPage() {
           <div>
             <h3 className="font-label text-sm text-muted-foreground">Images</h3>
             <p className="text-sm">
-              {data.imageUpload?.files && data.imageUpload.files.length > 0
-                ? `${data.imageUpload.files.length} file(s) ready for upload.`
-                : Array.isArray(data.imageUpload?.fileNames) && data.imageUpload.fileNames.length > 0
-                  ? `${data.imageUpload.fileNames.length} file(s) selected.`
-                  : "—"}
+              {submissionMode === "questionnaire" || data.imageUpload?.skipped
+                ? "Face scan not provided — your report will be based on your questionnaire answers only."
+                : data.imageUpload?.files && data.imageUpload.files.length > 0
+                  ? `${data.imageUpload.files.length} file(s) ready for upload.`
+                  : Array.isArray(data.imageUpload?.fileNames) && data.imageUpload.fileNames.length > 0
+                    ? `${data.imageUpload.fileNames.length} file(s) selected.`
+                    : "—"}
             </p>
           </div>
         </CardContent>

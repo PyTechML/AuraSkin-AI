@@ -115,6 +115,9 @@ interface StepFormProps {
   setFiles: (f: File[]) => void;
   onSuccess: (values: unknown) => void;
   onBack?: () => void;
+  /** Step 6: skip live capture (questionnaire-only path). */
+  onContinueWithoutScan?: () => void;
+  showQuestionnaireSkip?: boolean;
 }
 
 type CameraState = "idle" | "starting" | "active" | "denied" | "unsupported" | "error";
@@ -136,7 +139,18 @@ function dataUrlToFile(dataUrl: string, fileName: string): File | null {
   }
 }
 
-function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSuccess, onBack }: StepFormProps) {
+function StepForm({
+  step,
+  data,
+  fileNames,
+  setFileNames,
+  files,
+  setFiles,
+  onSuccess,
+  onBack,
+  onContinueWithoutScan,
+  showQuestionnaireSkip,
+}: StepFormProps) {
   type StepValues = z.infer<typeof step.schema>;
   const form = useForm<StepValues>({
     resolver: zodResolver(step.schema),
@@ -441,6 +455,16 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
                   {5 - files.filter(Boolean).length} more image(s) required.
                 </p>
               )}
+              {showQuestionnaireSkip && onContinueWithoutScan && (
+                <div className="pt-2 border-t border-border">
+                  <p className="text-sm text-muted-foreground mb-2">
+                    No camera or prefer not to scan? You can still get a personalized routine from your answers.
+                  </p>
+                  <Button type="button" variant="outline" onClick={onContinueWithoutScan}>
+                    Continue without face scan
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
@@ -466,9 +490,12 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
   );
 }
 
+const showQuestionnaireSkipOption =
+  typeof process !== "undefined" && process.env.NEXT_PUBLIC_ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT !== "false";
+
 export default function AssessmentStartPage() {
   const router = useRouter();
-  const { data, setStepData, setCompleted } = useAssessmentStore();
+  const { data, setStepData, setCompleted, setSubmissionMode } = useAssessmentStore();
   const [stepIndex, setStepIndex] = useState(0);
   const [fileNames, setFileNames] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
@@ -488,6 +515,7 @@ export default function AssessmentStartPage() {
         allergies,
       } as AssessmentStepData["medicalBackground"]);
     } else if (step.key === "imageUpload") {
+      setSubmissionMode("vision");
       setStepData("imageUpload", { fileNames, files });
     } else if (step.key === "personalDetails") {
       const pd = values as AssessmentStepData["personalDetails"];
@@ -536,6 +564,17 @@ export default function AssessmentStartPage() {
         setFiles={setFiles}
         onSuccess={handleSuccess}
         onBack={stepIndex > 0 ? () => setStepIndex((i) => i - 1) : undefined}
+        showQuestionnaireSkip={showQuestionnaireSkipOption && step.key === "imageUpload"}
+        onContinueWithoutScan={
+          step.key === "imageUpload"
+            ? () => {
+                setSubmissionMode("questionnaire");
+                setStepData("imageUpload", { fileNames: [], files: [], skipped: true });
+                setCompleted(true);
+                router.push("/dashboard/assessment/review");
+              }
+            : undefined
+        }
       />
     </div>
   );

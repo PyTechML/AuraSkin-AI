@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Kaushan+Script&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -11,8 +9,8 @@
     --glass-2: #E5BEB5;
     --glass-3: #EEE6CA;
     --glass-4: #F5FAE1;
-    /* Font: Kaushan Script only */
-    --font-brand: 'Kaushan Script', cursive;
+    /* Brand font: next/font sets --font-kaushan on <html> (see root layout) */
+    --font-brand: var(--font-kaushan, "Kaushan Script"), "Brush Script MT", cursive;
     /* Semantic mapping to palette: backgrounds, cards, buttons, accent, borders */
     --background: 75 56% 95%;
     --foreground: 0 15% 28%;

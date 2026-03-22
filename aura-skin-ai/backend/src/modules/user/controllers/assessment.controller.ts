@@ -90,6 +90,16 @@ export class AssessmentController {
     return formatSuccess({ success: true, ...data });
   }
 
+  /** Questionnaire-only: no images, synchronous report + products (feature-flagged). */
+  @Post("assessment/submit-questionnaire")
+  @HttpCode(HttpStatus.OK)
+  async submitQuestionnaire(@Req() req: Request, @Body() dto: SubmitAssessmentDto) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const data = await this.assessmentService.submitQuestionnaire(dto.assessmentId, userId, dto);
+    return formatSuccess({ success: true, ...data });
+  }
+
   @Post("assessment/live")
   @HttpCode(HttpStatus.ACCEPTED)
   async submitLive(@Req() req: Request, @Body() dto: SubmitAssessmentDto) {

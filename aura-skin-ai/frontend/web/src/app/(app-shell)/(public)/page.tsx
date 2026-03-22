@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback } from "react";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { ClientAuthGate } from "@/components/ui/ClientAuthGate";
@@ -19,7 +19,6 @@ import {
 } from "@/components/landing/ScrollReveal";
 import { CTAWithGlow } from "@/components/landing/CTAWithGlow";
 import { HeroShapes, CTAShapes, SectionDividerShapes } from "@/components/landing/AbstractShapes";
-import { HeroPopUps } from "@/components/landing/HeroPopUps";
 import {
   ClipboardList,
   Cpu,
@@ -36,7 +35,6 @@ export default function LandingPage() {
   const trustRef = useRef<HTMLElement>(null);
   const heroRef = useRef<HTMLElement>(null);
   const [heroMouse, setHeroMouse] = useState<MouseState>(null);
-  const [heroAutoActive, setHeroAutoActive] = useState(false);
   const { scrollY } = useScroll();
   const heroBgY = useTransform(scrollY, [0, 600], [0, 120]);
   const heroOpacity = useTransform(scrollY, [0, 300], [1, 0.3]);
@@ -52,11 +50,6 @@ export default function LandingPage() {
   }, []);
   const onHeroMouseLeave = useCallback(() => setHeroMouse(null), []);
 
-  useEffect(() => {
-    const t = setTimeout(() => setHeroAutoActive(true), 250);
-    return () => clearTimeout(t);
-  }, []);
-
   return (
     <div className="bg-background text-foreground">
       {/* Hero */}
@@ -67,7 +60,6 @@ export default function LandingPage() {
         onMouseLeave={onHeroMouseLeave}
       >
         <FloatingInsightCards mouse={heroMouse} containerRef={heroRef} />
-        <HeroPopUps active={heroAutoActive || heroMouse !== null} containerRef={heroRef} />
         <motion.div
           className="absolute inset-0 flex items-center justify-center pointer-events-none"
           style={{ y: heroBgY, opacity: heroOpacity }}
@@ -84,7 +76,7 @@ export default function LandingPage() {
         </motion.div>
         <HeroShapes style={{ y: heroBgY, opacity: heroOpacity }} />
 
-        <div className="relative z-10 w-full max-w-3xl mx-auto px-4 text-center">
+        <div className="relative z-20 w-full max-w-3xl mx-auto px-4 text-center">
           <motion.h1
             className="font-brand text-6xl md:text-8xl font-bold tracking-tight text-foreground"
             initial={{ opacity: 1, y: 0 }}
@@ -231,6 +223,7 @@ export default function LandingPage() {
           <motion.h2
             className="font-heading text-3xl font-semibold text-center mb-16"
             {...slideUp}
+            initial={false}
           >
             How It Works
           </motion.h2>

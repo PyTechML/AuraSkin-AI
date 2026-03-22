@@ -48,6 +48,15 @@ export class ReportRepository {
     return data as DbReport;
   }
 
+  async updateRecommendedRoutine(reportId: string, recommendedRoutine: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from("reports")
+      .update({ recommended_routine: recommendedRoutine })
+      .eq("id", reportId);
+    return !error;
+  }
+
   async findByUserId(userId: string): Promise<DbReport[]> {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase

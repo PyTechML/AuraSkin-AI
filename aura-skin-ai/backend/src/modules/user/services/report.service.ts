@@ -11,6 +11,7 @@ import { ReportGenerator } from "./report.generator";
 import { generateRoutinePlan } from "../../ai/routine-engine";
 import { AnalyticsService } from "../../analytics/analytics.service";
 import { getSupabaseClient } from "../../../database/supabase.client";
+import { AiReportService } from "./ai-report.service";
 
 const PRODUCT_RECOMMENDATION_LIMIT = 5;
 const DERMATOLOGIST_RECOMMENDATION_LIMIT = 5;
@@ -32,7 +33,8 @@ export class ReportService {
     private readonly eventsService: EventsService,
     private readonly reportGenerator: ReportGenerator,
     private readonly aiDermatologistRecommendation: AiDermatologistRecommendationService,
-    private readonly analytics: AnalyticsService
+    private readonly analytics: AnalyticsService,
+    private readonly aiReportService: AiReportService
   ) {}
 
   async list(userId: string): Promise<DbReport[]> {
@@ -251,6 +253,166 @@ export class ReportService {
       entity_id: assessment.id,
       metadata: {
         report_id: report.id,
+      },
+    });
+
+    await this.eventsService.emit("analysis_complete", {
+      user_id: assessment.user_id,
+      report_id: report.id,
+      assessment_id: assessment.id,
+    });
+
+    return report;
+  }
+
+  /**
+   * Questionnaire-only path: rule-based scores + LLM narrative (with fallback), routine_plan, catalog products, dermatologists.
+   */
+  async createQuestionnaireReportFromAssessment(
+    assessment: DbAssessment,
+    options: { city?: string; userLat?: number; userLng?: number } = {}
+  ): Promise<DbReport | null> {
+    const { city, userLat, userLng } = options;
+    const generated = this.reportGenerator.generateFromAssessment(assessment);
+    const concerns = [assessment.primary_concern, assessment.secondary_concern].filter(
+      (c): c is string => typeof c === "string" && c.length > 0
+    );
+
+    const llm = await this.aiReportService.generateForQuestionnaire(
+      assessment.user_id,
+      {
+        skinType: assessment.skin_type,
+        concerns,
+        lifestyleFactors: assessment.lifestyle_factors,
+        sensitivityLevel: assessment.sensitivity_level,
+      },
+      {
+        acne_score: generated.acne_score,
+        pigmentation: generated.pigmentation_score,
+        confidence: 0.55,
+      }
+    );
+
+    const fromLlm = [llm.skinReport?.trim(), llm.routine?.trim()].filter(Boolean).join("\n\n");
+    const recommendedRoutine = fromLlm.length > 0 ? fromLlm : generated.recommended_routine;
+
+    const ac = generated.acne_score;
+    const pig = generated.pigmentation_score;
+    const hyd = generated.hydration_score;
+    let skin_score = Math.round((1 - ac) * 33 + (1 - pig) * 33 + Math.min(1, hyd) * 34);
+    skin_score = Math.max(0, Math.min(100, skin_score));
+
+    const report = await this.reportRepository.create({
+      user_id: assessment.user_id,
+      assessment_id: assessment.id,
+      skin_condition: generated.skin_condition,
+      skin_score,
+      acne_score: generated.acne_score,
+      pigmentation_score: generated.pigmentation_score,
+      hydration_score: generated.hydration_score,
+      recommended_routine: recommendedRoutine,
+    });
+    if (!report) return null;
+
+    const routinePlan = generateRoutinePlan({
+      skin_type: assessment.skin_type,
+      concerns,
+      image_analysis: {
+        acne_score: generated.acne_score,
+        pigmentation_score: generated.pigmentation_score,
+        hydration_score: generated.hydration_score,
+      },
+    });
+    await this.routineRepository.createRoutinePlan({
+      user_id: assessment.user_id,
+      report_id: report.id,
+      morning_routine: routinePlan.morningRoutine,
+      night_routine: routinePlan.nightRoutine,
+      lifestyle_food_advice: routinePlan.lifestyle.foodAdvice,
+      lifestyle_hydration: routinePlan.lifestyle.hydration,
+      lifestyle_sleep: routinePlan.lifestyle.sleep,
+    });
+
+    const skinProfile = {
+      skinType: assessment.skin_type ?? undefined,
+      concerns,
+    };
+
+    const [legacyProducts, aiRanked] = await Promise.all([
+      this.productRecommendation.recommend(skinProfile, PRODUCT_RECOMMENDATION_LIMIT),
+      this.aiProductRecommendation.getTopProducts(
+        {
+          skin_type: assessment.skin_type,
+          concerns: skinProfile.concerns,
+          acne_score: generated.acne_score,
+          pigmentation_score: generated.pigmentation_score,
+          hydration_score: generated.hydration_score,
+          user_city: city,
+        },
+        PRODUCT_RECOMMENDATION_LIMIT
+      ),
+    ]);
+
+    const seen = new Set<string>();
+    const merged = [
+      ...aiRanked.map((p) => ({ id: p.id, score: p.score })),
+      ...legacyProducts.map((p) => ({ id: p.id, score: p.matchPercent ?? 0.8 })),
+    ]
+      .filter((p) => {
+        if (seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, PRODUCT_RECOMMENDATION_LIMIT);
+
+    const supabase = getSupabaseClient();
+    const candidateIds = merged.map((p) => p.id).filter((id) => typeof id === "string" && id.length > 0);
+    const { data: existingProducts } = await supabase.from("products").select("id").in("id", candidateIds);
+    const existingProductIds = new Set((existingProducts ?? []).map((row: { id: string }) => row.id));
+
+    for (const p of merged) {
+      if (!existingProductIds.has(p.id)) continue;
+      await this.reportRepository.insertRecommendedProduct({
+        report_id: report.id,
+        product_id: p.id,
+        confidence_score: p.score,
+      });
+    }
+
+    const dermatologists = await this.aiDermatologistRecommendation.getNearestDermatologists(
+      {
+        user_city: city,
+        latitude: userLat,
+        longitude: userLng,
+      },
+      DERMATOLOGIST_RECOMMENDATION_LIMIT
+    );
+    for (const d of dermatologists) {
+      await this.reportRepository.insertRecommendedDermatologist({
+        report_id: report.id,
+        dermatologist_id: d.id,
+        distance_km: d.distance_km ?? null,
+      });
+    }
+
+    await this.analytics.track("report_generated", {
+      user_id: assessment.user_id,
+      entity_type: "report",
+      entity_id: report.id,
+      metadata: {
+        assessment_id: assessment.id,
+        city,
+        source: "questionnaire_only",
+      },
+    });
+    await this.analytics.track("assessment_completed", {
+      user_id: assessment.user_id,
+      entity_type: "assessment",
+      entity_id: assessment.id,
+      metadata: {
+        report_id: report.id,
+        source: "questionnaire_only",
       },
     });
 

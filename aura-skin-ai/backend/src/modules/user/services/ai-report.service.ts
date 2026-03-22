@@ -15,6 +15,14 @@ interface UserAnswerInput {
   concerns?: string[];
 }
 
+/** Extra fields for questionnaire-only assessments (no vision). */
+export interface QuestionnaireContextInput {
+  skinType?: string | null;
+  concerns?: string[];
+  lifestyleFactors?: string | null;
+  sensitivityLevel?: string | null;
+}
+
 export interface GeneratedAiReport {
   skinReport: string;
   routine: string;
@@ -25,6 +33,7 @@ const minuteMs = 60_000;
 const perUserCalls = new Map<string, number[]>();
 const MAX_CALLS_PER_MINUTE = 10;
 const MIN_CONFIDENCE_FOR_AI = 0.35;
+const QUESTIONNAIRE_LLM_TIMEOUT_MS = 22_000;
 
 function pruneCalls(now: number, calls: number[]): number[] {
   return calls.filter((t) => now - t < minuteMs);
@@ -100,6 +109,77 @@ export class AiReportService {
           ? parsed.productSuggestions.filter((x): x is string => typeof x === "string").slice(0, 5)
           : this.fallback(answers, analysis).productSuggestions,
       };
+    } catch {
+      return this.fallback(answers, analysis);
+    }
+  }
+
+  /**
+   * LLM narrative from questionnaire + rule-based scores. Always returns structured text; uses timeout and fallback on errors.
+   * Caller should pass analysis.confidence >= MIN_CONFIDENCE_FOR_AI so the model runs when OpenAI is configured.
+   */
+  async generateForQuestionnaire(
+    userKey: string,
+    questionnaire: QuestionnaireContextInput,
+    analysis: AiAnalysisInput
+  ): Promise<GeneratedAiReport> {
+    const answers: UserAnswerInput = {
+      skinType: questionnaire.skinType,
+      concerns: questionnaire.concerns,
+    };
+    const now = Date.now();
+    const calls = pruneCalls(now, perUserCalls.get(userKey) ?? []);
+    if (calls.length >= MAX_CALLS_PER_MINUTE) {
+      return this.fallback(answers, analysis);
+    }
+    calls.push(now);
+    perUserCalls.set(userKey, calls);
+
+    if (!this.openai) {
+      return this.fallback(answers, analysis);
+    }
+
+    const ctxLines = [
+      `Skin type: ${questionnaire.skinType ?? "unknown"}`,
+      `Concerns: ${(questionnaire.concerns ?? []).join(", ") || "unknown"}`,
+      questionnaire.sensitivityLevel ? `Sensitivity: ${questionnaire.sensitivityLevel}` : null,
+      questionnaire.lifestyleFactors ? `Lifestyle / questionnaire notes: ${questionnaire.lifestyleFactors}` : null,
+      `Derived scores (0–1): ${JSON.stringify(analysis)}`,
+    ].filter((x): x is string => typeof x === "string" && x.length > 0);
+
+    const runLlm = async (): Promise<GeneratedAiReport> => {
+      const prompt = [
+        "You are a skincare report assistant. The user did not submit face photos; base guidance only on the questionnaire and derived scores.",
+        "Return strict JSON with keys: skinReport, routine, productSuggestions (productSuggestions are generic labels only, not product database IDs).",
+        ...ctxLines,
+      ].join("\n");
+      const completion = await this.openai!.chat.completions.create({
+        model: this.model || "gpt-4o-mini",
+        temperature: 0.2,
+        max_tokens: 450,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "Generate concise, safe skincare guidance. No medical diagnosis." },
+          { role: "user", content: prompt },
+        ],
+      });
+      const content = completion.choices?.[0]?.message?.content ?? "";
+      const parsed = JSON.parse(content) as Partial<GeneratedAiReport>;
+      const fb = this.fallback(answers, analysis);
+      return {
+        skinReport: typeof parsed.skinReport === "string" ? parsed.skinReport : fb.skinReport,
+        routine: typeof parsed.routine === "string" ? parsed.routine : fb.routine,
+        productSuggestions: Array.isArray(parsed.productSuggestions)
+          ? parsed.productSuggestions.filter((x): x is string => typeof x === "string").slice(0, 5)
+          : fb.productSuggestions,
+      };
+    };
+
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("questionnaire_llm_timeout")), QUESTIONNAIRE_LLM_TIMEOUT_MS)
+      );
+      return await Promise.race([runLlm(), timeout]);
     } catch {
       return this.fallback(answers, analysis);
     }

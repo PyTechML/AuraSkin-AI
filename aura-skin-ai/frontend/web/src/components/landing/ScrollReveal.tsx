@@ -68,7 +68,7 @@ export function SectionReveal({
 }) {
   const props = scrollReveal[variant];
   return (
-    <motion.div className={className} {...props}>
+    <motion.div className={className} {...props} initial={false}>
       {children}
     </motion.div>
   );
@@ -90,7 +90,7 @@ export function HeadingReveal({
   return (
     <Component
       className={className}
-      initial={{ opacity: 0, letterSpacing: "0.06em" }}
+      initial={false}
       whileInView={{ opacity: 1, letterSpacing: "0.02em" }}
       viewport={{ once: true, margin: revealConfig.viewportMargin }}
       transition={{ duration: revealConfig.duration, ease: revealConfig.ease }}
@@ -113,9 +113,9 @@ export function SubtextReveal({
   return (
     <motion.p
       className={className}
-      initial={{ opacity: 0 }}
+      initial={false}
       whileInView={{ opacity: 1 }}
-      viewport={{ once: true, margin: revealConfig.viewportMargin }}
+      viewport={{ once: true, margin: revealConfig.viewportMarginFadeOnly }}
       transition={{ delay, duration: 0.6, ease: revealConfig.ease }}
     >
       {children}
@@ -135,7 +135,7 @@ export function StaggerChildren({
   return (
     <motion.div
       className={className}
-      initial="hidden"
+      initial="visible"
       whileInView="visible"
       viewport={{ once: true, margin: "-50px" }}
       variants={{
@@ -166,7 +166,8 @@ export function StaggerItem({
           y: 0,
           transition: { duration: revealConfig.duration, ease: revealConfig.ease },
         },
-        hidden: { opacity: 0, y: 56 },
+        /* SSR + no-JS: never hide content; scroll animation becomes a subtle no-op */
+        hidden: { opacity: 1, y: 0 },
       }}
     >
       {children}

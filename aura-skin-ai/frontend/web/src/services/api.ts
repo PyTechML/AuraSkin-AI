@@ -369,6 +369,16 @@ export async function submitAssessment(payload: { assessmentId: string; city?: s
   return await apiPost<{ assessment_id: string; report_id: string | null }>("/user/assessment/submit", payload);
 }
 
+/** Questionnaire-only assessment (no face images). Requires backend ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT. */
+export async function submitQuestionnaireAssessment(payload: {
+  assessmentId: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
+}): Promise<{ assessment_id: string; report_id: string }> {
+  return await apiPost<{ assessment_id: string; report_id: string }>("/user/assessment/submit-questionnaire", payload);
+}
+
 /** Assessment: poll progress. Returns progress 0-100, stage, report_id when done, or error. */
 export interface AssessmentProgressResult {
   progress: number;
