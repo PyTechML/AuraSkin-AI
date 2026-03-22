@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
-import { useAuthStore } from "@/store/authStore";
+import { useCallback, useEffect, useRef } from "react";
+import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import { postSessionHeartbeat } from "@/services/sessionApi";
 import type { User, UserRole } from "@/types";
 import { API_BASE } from "@/services/apiBase";
@@ -56,6 +56,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const setSession = useAuthStore((s) => s.setSession);
   const logout = useAuthStore((s) => s.logout);
 
+  /** Ensures UI never stays in loading forever if persist never calls onFinishHydration (parse error, Strict Mode race). */
+  const authReadyMarkedRef = useRef(false);
+  const markAuthBootstrapComplete = useCallback(() => {
+    if (authReadyMarkedRef.current) return;
+    authReadyMarkedRef.current = true;
+    setHasHydrated(true);
+  }, [setHasHydrated]);
+
   const reconcileWithMe = useCallback(async (token: string) => {
     try {
       const response = await fetch(`${API_BASE}/api/auth/me`, {
@@ -100,16 +108,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (bootstrapStarted) return;
       bootstrapStarted = true;
 
-      const token = useAuthStore.getState().accessToken;
+      let token = useAuthStore.getState().accessToken;
+      if (typeof token !== "string" || token.trim() === "") {
+        const fromLs = getPersistedAccessToken();
+        if (fromLs) {
+          useAuthStore.setState({ accessToken: fromLs });
+          token = fromLs;
+        }
+      }
       const safe = typeof token === "string" && token.trim() !== "" ? token : null;
       if (!safe) {
-        setHasHydrated(true);
+        markAuthBootstrapComplete();
         return;
       }
       try {
         await reconcileWithMe(safe);
       } finally {
-        setHasHydrated(true);
+        markAuthBootstrapComplete();
       }
     };
 
@@ -126,7 +141,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       unsub?.();
     };
-  }, [reconcileWithMe, setHasHydrated]);
+  }, [markAuthBootstrapComplete, reconcileWithMe]);
+
+  /** If persist hydration fails without notifying listeners, unblock the shell after a short wait. */
+  useEffect(() => {
+    const safetyMs = 2800;
+    const id = window.setTimeout(() => {
+      if (useAuthStore.getState()._hasHydrated) return;
+      void (async () => {
+        try {
+          let token = useAuthStore.getState().accessToken;
+          if (typeof token !== "string" || token.trim() === "") {
+            const fromLs = getPersistedAccessToken();
+            if (fromLs) {
+              useAuthStore.setState({ accessToken: fromLs });
+              token = fromLs;
+            }
+          }
+          const safe = typeof token === "string" && token.trim() !== "" ? token : null;
+          if (safe) {
+            await reconcileWithMe(safe);
+          }
+        } finally {
+          markAuthBootstrapComplete();
+        }
+      })();
+    }, safetyMs);
+    return () => clearTimeout(id);
+  }, [markAuthBootstrapComplete, reconcileWithMe]);
 
   useEffect(() => {
     if (!hasHydrated || !isAuthenticated || !sessionToken) return;

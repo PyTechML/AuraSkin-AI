@@ -185,7 +185,13 @@ function LoginForm() {
 
       setApiError("Unable to sign in right now. Please try again.");
     } catch {
-      setApiError("Network error. Check your internet/server connection and try again.");
+      const devHint =
+        process.env.NODE_ENV === "development"
+          ? ` The app tried to reach ${API_BASE} — start the Nest API (default port 3001) or set NEXT_PUBLIC_API_URL in .env.local.`
+          : "";
+      setApiError(
+        `Network error. Check your internet/server connection and try again.${devHint}`
+      );
     } finally {
       setIsSubmitting(false);
     }
