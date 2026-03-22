@@ -36,10 +36,14 @@ import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { PanelStagger, PanelStaggerItem } from "@/components/panel/PanelReveal";
 import { Bell, Package, ShoppingBag, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+  takeFreshList,
+} from "@/lib/panelPolling";
 
 type NotificationGroup = "orders" | "inventory" | "system";
 type TabValue = "all" | "orders" | "inventory" | "system" | "recycle";
-const NOTIFICATION_POLL_MS = 20000;
 
 export default function StoreNotificationsPage() {
   const { session } = useAuth();
@@ -54,27 +58,37 @@ export default function StoreNotificationsPage() {
   const [markAllFade, setMarkAllFade] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
 
-  const load = () => {
+  const load = (silent = false) => {
     if (!partnerId) return;
-    setLoading((prev) => (notifications.length === 0 ? true : prev));
-    setError(null);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     getPartnerNotifications(partnerId)
-      .then(setNotifications)
-      .catch(() => setError("Failed to load notifications."))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        setNotifications((prev) => takeFreshList(prev, data));
+        if (!silent) setError(null);
+      })
+      .catch(() => {
+        if (!silent) setError("Failed to load notifications.");
+      })
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   };
 
   useEffect(() => {
-    load();
+    load(false);
   }, [partnerId]);
 
   useEffect(() => {
     if (!partnerId) return;
     const id = window.setInterval(() => {
-      load();
-    }, NOTIFICATION_POLL_MS);
+      if (!isDocumentVisible()) return;
+      load(true);
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [partnerId, notifications.length]);
+  }, [partnerId]);
 
   const grouped = useMemo(() => {
     const byCategory: Record<NotificationGroup, PartnerNotification[]> = {

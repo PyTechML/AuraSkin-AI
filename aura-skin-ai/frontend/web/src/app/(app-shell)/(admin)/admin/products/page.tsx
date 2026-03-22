@@ -56,9 +56,22 @@ const PAGE_SIZE = 10;
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "all", label: "All statuses" },
   { value: "approved", label: "Approved" },
-  { value: "pending", label: "Pending" },
+  { value: "pending", label: "Awaiting review" },
   { value: "rejected", label: "Rejected" },
 ];
+
+function productStatusLabel(status: ProductStatus): string {
+  switch (status) {
+    case "pending":
+      return "Awaiting review";
+    case "approved":
+      return "Approved";
+    case "rejected":
+      return "Rejected";
+    default:
+      return status;
+  }
+}
 
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<AdminProduct[]>([]);
@@ -70,6 +83,13 @@ export default function AdminProductsPage() {
   const [confirmAction, setConfirmAction] = useState<"approve" | "reject" | null>(null);
   const [actionTargetId, setActionTargetId] = useState<string | null>(null);
   const [reviewNotes, setReviewNotes] = useState<string>("");
+
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("status");
+    if (q === "pending" || q === "approved" || q === "rejected" || q === "all") {
+      setStatusFilter(q);
+    }
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -238,7 +258,7 @@ export default function AdminProductsPage() {
             <PanelEmptyState
               icon={<Package className="h-12 w-12" />}
               title="No products loaded"
-              description="No products pending approval. When stores submit products, they will appear here."
+              description="Nothing awaiting review right now. When stores submit products, they will appear here."
             />
           ) : (
             <>
@@ -323,7 +343,7 @@ export default function AdminProductsPage() {
               <p className="font-medium">{selectedProduct.name}</p>
               <p className="text-sm text-muted-foreground">{selectedProduct.category}</p>
               <Badge variant={statusVariant(selectedProduct.status)} className="mt-2">
-                {selectedProduct.status}
+                {productStatusLabel(selectedProduct.status)}
               </Badge>
             </div>
             <div>

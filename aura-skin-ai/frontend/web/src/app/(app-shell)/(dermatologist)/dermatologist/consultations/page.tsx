@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import { getDermatologistConsultations } from "@/services/apiPartner";
 import type { NormalizedConsultation } from "@/types/consultation";
@@ -22,6 +22,11 @@ import { Calendar, Clock, User } from "lucide-react";
 import { CardSkeleton } from "@/components/ui/skeleton-primitives";
 import { PanelPageHeader } from "@/components/layouts/PanelPageHeader";
 import { PanelSectionReveal } from "@/components/panel/PanelReveal";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+  takeFreshList,
+} from "@/lib/panelPolling";
 
 type TabKey = "pending" | "upcoming" | "completed" | "cancelled";
 
@@ -33,50 +38,42 @@ export default function DermatologistConsultationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("pending");
 
-  const load = () => {
-    if (!partnerId) {
-      setConsultations([]);
-      setLoading(false);
-      return;
-    }
-    getDermatologistConsultations()
-      .then((data) => {
+  const loadConsultations = useCallback(
+    async (silent: boolean) => {
+      if (!partnerId) {
+        setConsultations([]);
+        if (!silent) setLoading(false);
+        return;
+      }
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+      try {
+        const data = await getDermatologistConsultations();
         const items = Array.isArray(data) ? data : [];
-        setConsultations(items);
-      })
-      .catch(() => setError("Failed to load consultations."))
-      .finally(() => setLoading(false));
-  };
+        setConsultations((prev) => (silent ? takeFreshList(prev, items) : items));
+      } catch {
+        if (!silent) setError("Failed to load consultations.");
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [partnerId]
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    if (!partnerId) {
-      setConsultations([]);
-      setLoading(false);
-      return () => {
-        cancelled = true;
-      };
-    }
-    getDermatologistConsultations()
-      .then((data) => {
-        if (cancelled) return;
-        const items = Array.isArray(data) ? data : [];
-        setConsultations(items);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setError("Failed to load consultations.");
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [partnerId]);
+    void loadConsultations(false);
+  }, [partnerId, loadConsultations]);
+
+  useEffect(() => {
+    if (!partnerId) return;
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      void loadConsultations(true);
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [partnerId, loadConsultations]);
 
   const grouped = useMemo(() => {
     const safeConsultations = Array.isArray(consultations) ? consultations : [];
@@ -123,8 +120,7 @@ export default function DermatologistConsultationsPage() {
             <Button
               variant="outline"
               onClick={() => {
-                setLoading(true);
-                load();
+                void loadConsultations(false);
               }}
             >
               Try again

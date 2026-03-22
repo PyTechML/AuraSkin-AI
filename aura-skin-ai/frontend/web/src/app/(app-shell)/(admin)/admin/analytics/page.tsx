@@ -69,7 +69,7 @@ export default function AdminAnalyticsPage() {
         ) : result?.ok !== true ? (
           <PanelEmptyState
             icon={<BarChart3 className="h-12 w-12" />}
-            title="No analytics data"
+            title="No analytics data yet"
             description="Analytics will appear here when the admin metrics API returns data."
           />
         ) : (

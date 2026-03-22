@@ -26,6 +26,11 @@ import {
 } from "@/components/ui/table";
 import { Package, Eye } from "lucide-react";
 import { CardSkeleton, TableRowSkeleton } from "@/components/ui/skeleton-primitives";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+  takeFreshList,
+} from "@/lib/panelPolling";
 
 const STATUS_OPTIONS = [
   "all",
@@ -79,17 +84,36 @@ export default function StoreOrdersPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
 
-  const load = () => {
+  const load = (silent = false) => {
     if (!partnerId) return;
-    setLoading(true);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     getOrdersForPartner(partnerId)
-      .then(setOrders)
-      .catch(() => setError("Failed to load orders."))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        setOrders((prev) => takeFreshList(prev, data));
+        if (!silent) setError(null);
+      })
+      .catch(() => {
+        if (!silent) setError("Failed to load orders.");
+      })
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   };
 
   useEffect(() => {
-    load();
+    load(false);
+  }, [partnerId]);
+
+  useEffect(() => {
+    if (!partnerId) return;
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      load(true);
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, [partnerId]);
 
   const filtered = useMemo(() => {

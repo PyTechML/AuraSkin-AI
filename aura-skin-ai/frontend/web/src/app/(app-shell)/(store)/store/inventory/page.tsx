@@ -38,6 +38,11 @@ import { PanelStagger, PanelStaggerItem } from "@/components/panel/PanelReveal";
 import { PanelEmptyState } from "@/components/panel/PanelEmptyState";
 import { downloadCsv } from "@/lib/csvExport";
 import { cn } from "@/lib/utils";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+  takeFreshList,
+} from "@/lib/panelPolling";
 
 type VisibilityFilter = "all" | "draft" | "pending" | "live" | "low-stock";
 
@@ -73,18 +78,25 @@ export default function StoreInventoryPage() {
   const [statusFilter, setStatusFilter] = useState<VisibilityFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
 
-  const loadInventory = () => {
+  const loadInventory = (silent = false) => {
     if (!partnerId) {
       setLoading(false);
       return Promise.resolve();
     }
-    setLoading(true);
-    setError(null);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     return Promise.all([
       getPartnerProducts(partnerId),
       getPartnerAnalytics(partnerId, 30).catch(() => null),
     ])
       .then(([prods, anal]) => {
+        if (silent) {
+          setProducts((prev) => takeFreshList(prev, prods));
+          if (anal != null) setAnalytics(anal);
+          return;
+        }
         const key = "store-inventory-new-products";
         const cachedRaw =
           typeof window !== "undefined" ? window.sessionStorage.getItem(key) : null;
@@ -106,12 +118,25 @@ export default function StoreInventoryPage() {
           window.sessionStorage.removeItem(key);
         }
       })
-      .catch(() => setError("Failed to load inventory."))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!silent) setError("Failed to load inventory.");
+      })
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   };
 
   useEffect(() => {
-    void loadInventory();
+    void loadInventory(false);
+  }, [partnerId]);
+
+  useEffect(() => {
+    if (!partnerId) return;
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      void loadInventory(true);
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, [partnerId]);
 
   const lowStockCount = useMemo(

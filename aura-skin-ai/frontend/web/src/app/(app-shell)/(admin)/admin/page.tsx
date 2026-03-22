@@ -1,19 +1,26 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   getAdminAnalytics,
   getAdminDashboard,
   getPendingInventory,
 } from "@/services/apiAdmin";
+import type { AdminAnalyticsResult } from "@/types/admin-analytics";
 import type { AdminDashboardResult } from "@/types/admin-dashboard";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+} from "@/lib/panelPolling";
 import {
   AdminHeader,
   AdminPrimaryGrid,
   AdminDashboardSkeleton,
 } from "@/components/admin";
 import { safeFormatDateTime, safeFiniteNumber } from "@/lib/dateDisplay";
+import { getAdminActivityTimelineTitle } from "@/lib/adminActivityTimelineLabel";
+import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
@@ -33,8 +40,28 @@ import {
   Stethoscope,
 } from "lucide-react";
 
+const NO_ANALYTICS_YET = "No analytics data yet";
+
 function displayAnalyticCount(ok: boolean | null, n: number): string | number {
-  return ok === true ? safeFiniteNumber(n) : "—";
+  return ok === true ? safeFiniteNumber(n) : NO_ANALYTICS_YET;
+}
+
+function isNoAnalyticsValue(v: unknown): boolean {
+  return v === NO_ANALYTICS_YET;
+}
+
+function metricValueClassName(v: unknown): string {
+  return cn(
+    "font-semibold",
+    isNoAnalyticsValue(v) ? "text-sm leading-snug" : "text-2xl"
+  );
+}
+
+function row2ValueClassName(v: string | number): string {
+  if (typeof v === "string" && v.length > 18) {
+    return "text-sm font-semibold leading-snug";
+  }
+  return "text-2xl font-semibold";
 }
 
 export default function AdminDashboardPage() {
@@ -54,12 +81,44 @@ export default function AdminDashboardPage() {
     auditAlertCount: 0,
     healthFromApi: false,
     auditFromApi: false,
+    pendingApprovalCountsFromApi: false,
+    pendingStoreApprovals: undefined,
+    pendingDermatologistApprovals: undefined,
   }));
   const [activeSessions, setActiveSessions] = useState<number>(0);
   const [inactiveSessions, setInactiveSessions] = useState<number>(0);
   const [suspiciousSessions, setSuspiciousSessions] = useState<number>(0);
   const [onlineUsers, setOnlineUsers] = useState<number>(0);
   const [initialLoad, setInitialLoad] = useState(true);
+
+  const applyAdminBundle = useCallback(
+    (data: AdminAnalyticsResult, list: unknown, dash: AdminDashboardResult) => {
+      setAnalyticsOk(data.ok);
+      if (data.ok) {
+        setUserCount(safeFiniteNumber(data.totalUsers));
+        setActiveUsers(safeFiniteNumber(data.activeUsers));
+        setSuspendedUsers(safeFiniteNumber(data.suspendedUsers));
+        setPendingRoleRequests(safeFiniteNumber(data.pendingRoleRequests));
+        setStoreCount(safeFiniteNumber(data.totalStores));
+        setDermCount(safeFiniteNumber(data.totalDermatologists));
+        setProductCount(safeFiniteNumber(data.totalProducts));
+        const rev = safeFiniteNumber(data.totalRevenue);
+        setRevenue(
+          `$${rev.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+        );
+        setActiveSessions(safeFiniteNumber(data.activeSessions));
+        setInactiveSessions(safeFiniteNumber(data.inactiveSessions));
+        setSuspiciousSessions(safeFiniteNumber(data.suspiciousSessions));
+        setOnlineUsers(safeFiniteNumber(data.onlineUsers));
+      } else {
+        setRevenue("—");
+      }
+      const inv = Array.isArray(list) ? list : [];
+      setPendingCount(safeFiniteNumber(inv.length));
+      setDashboard(dash);
+    },
+    []
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -70,29 +129,7 @@ export default function AdminDashboardPage() {
     ])
       .then(([data, list, dash]) => {
         if (cancelled) return;
-        setAnalyticsOk(data.ok);
-        if (data.ok) {
-          setUserCount(safeFiniteNumber(data.totalUsers));
-          setActiveUsers(safeFiniteNumber(data.activeUsers));
-          setSuspendedUsers(safeFiniteNumber(data.suspendedUsers));
-          setPendingRoleRequests(safeFiniteNumber(data.pendingRoleRequests));
-          setStoreCount(safeFiniteNumber(data.totalStores));
-          setDermCount(safeFiniteNumber(data.totalDermatologists));
-          setProductCount(safeFiniteNumber(data.totalProducts));
-          const rev = safeFiniteNumber(data.totalRevenue);
-          setRevenue(
-            `$${rev.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
-          );
-          setActiveSessions(safeFiniteNumber(data.activeSessions));
-          setInactiveSessions(safeFiniteNumber(data.inactiveSessions));
-          setSuspiciousSessions(safeFiniteNumber(data.suspiciousSessions));
-          setOnlineUsers(safeFiniteNumber(data.onlineUsers));
-        } else {
-          setRevenue("—");
-        }
-        const inv = Array.isArray(list) ? list : [];
-        setPendingCount(safeFiniteNumber(inv.length));
-        setDashboard(dash);
+        applyAdminBundle(data, list, dash);
       })
       .catch(() => {
         if (cancelled) return;
@@ -105,6 +142,9 @@ export default function AdminDashboardPage() {
           auditAlertCount: 0,
           healthFromApi: false,
           auditFromApi: false,
+          pendingApprovalCountsFromApi: false,
+          pendingStoreApprovals: undefined,
+          pendingDermatologistApprovals: undefined,
         });
       })
       .finally(() => {
@@ -113,7 +153,23 @@ export default function AdminDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applyAdminBundle]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      void Promise.all([
+        getAdminAnalytics(),
+        getPendingInventory(),
+        getAdminDashboard(),
+      ])
+        .then(([data, list, dash]) => {
+          applyAdminBundle(data, list, dash);
+        })
+        .catch(() => {});
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [applyAdminBundle]);
 
   const metricCardsRow1 = [
     { title: "Total Users", value: displayAnalyticCount(analyticsOk, userCount), icon: Users, href: "/admin/users" },
@@ -139,14 +195,16 @@ export default function AdminDashboardPage() {
       icon: Stethoscope,
       href: "/admin/dermatologists",
     },
-    {
-      title: "Pending Approvals",
-      value: safeFiniteNumber(pendingCount),
-      icon: Clock,
-      href: "/admin/products?status=pending",
-      variant: "warning" as const,
-    },
   ];
+
+  const reviewQueuesWarning = useMemo(() => {
+    const p = safeFiniteNumber(pendingCount);
+    if (p > 0) return true;
+    if (!dashboard.pendingApprovalCountsFromApi) return false;
+    const s = safeFiniteNumber(dashboard.pendingStoreApprovals ?? 0);
+    const d = safeFiniteNumber(dashboard.pendingDermatologistApprovals ?? 0);
+    return s > 0 || d > 0;
+  }, [pendingCount, dashboard]);
 
   const metricCardsRow2 = useMemo(() => {
     const { healthFromApi, auditFromApi, health, auditAlertCount } = dashboard;
@@ -157,7 +215,7 @@ export default function AdminDashboardPage() {
       ruleValue = health.worker ? "Active" : "Issues";
       ruleVariant = health.worker ? "default" : "secondary";
     } else {
-      ruleValue = "—";
+      ruleValue = "Status unavailable";
       ruleVariant = "secondary";
     }
 
@@ -168,7 +226,7 @@ export default function AdminDashboardPage() {
       sysValue = ok ? "Operational" : "Degraded";
       sysVariant = ok ? "default" : "secondary";
     } else {
-      sysValue = "—";
+      sysValue = "System status unavailable";
       sysVariant = "secondary";
     }
 
@@ -176,8 +234,13 @@ export default function AdminDashboardPage() {
     let auditVariant: "default" | "secondary" | "warning";
     if (auditFromApi) {
       const ac = safeFiniteNumber(auditAlertCount);
-      auditValue = ac;
-      auditVariant = ac > 0 ? "warning" : "default";
+      if (ac === 0) {
+        auditValue = "No governance issues detected";
+        auditVariant = "default";
+      } else {
+        auditValue = ac;
+        auditVariant = "warning";
+      }
     } else {
       auditValue = "—";
       auditVariant = "secondary";
@@ -231,6 +294,13 @@ export default function AdminDashboardPage() {
     { title: "Currently Online", value: displayAnalyticCount(analyticsOk, onlineUsers), icon: CircleDot, href: "/admin/sessions" },
   ];
 
+  const storeQueueDisplay = dashboard.pendingApprovalCountsFromApi
+    ? String(safeFiniteNumber(dashboard.pendingStoreApprovals ?? 0))
+    : "—";
+  const dermQueueDisplay = dashboard.pendingApprovalCountsFromApi
+    ? String(safeFiniteNumber(dashboard.pendingDermatologistApprovals ?? 0))
+    : "—";
+
   return (
     <>
       <AdminHeader
@@ -257,10 +327,10 @@ export default function AdminDashboardPage() {
                     <Icon className="h-4 w-4 text-muted-foreground" />
                   </CardHeader>
                   <CardContent>
-                    <p className="text-2xl font-semibold">{m.value}</p>
+                    <p className={metricValueClassName(m.value)}>{m.value}</p>
                     {"variant" in m && (m as { variant?: "default" | "warning" | "secondary" }).variant === "warning" && (
                       <Badge variant="warning" className="mt-1 text-xs">
-                        Review
+                        Awaiting review
                       </Badge>
                     )}
                   </CardContent>
@@ -283,17 +353,65 @@ export default function AdminDashboardPage() {
                     <Icon className="h-4 w-4 text-muted-foreground" />
                   </CardHeader>
                   <CardContent>
-                    <p className="text-2xl font-semibold">{m.value}</p>
-                    {"variant" in m && (m as { variant?: string }).variant === "warning" && (
-                      <Badge variant="warning" className="mt-1 text-xs">
-                        Review
-                      </Badge>
-                    )}
+                    <p className={metricValueClassName(m.value)}>{m.value}</p>
                   </CardContent>
                 </Card>
               </Link>
             );
           })}
+          <Card
+            className={cn(
+              "border-border/60 hover:shadow-md transition-shadow duration-200 h-full",
+              reviewQueuesWarning && "border-amber-500/40"
+            )}
+          >
+            <CardHeader className="pb-2 flex flex-row items-center justify-between">
+              <CardTitle className="font-heading text-sm font-medium text-muted-foreground">
+                Review queues
+              </CardTitle>
+              <Clock className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <Link
+                  href="/admin/products?status=pending"
+                  className="text-foreground hover:underline font-medium truncate min-w-0"
+                >
+                  Products awaiting review
+                </Link>
+                <span className="tabular-nums font-semibold shrink-0">
+                  {safeFiniteNumber(pendingCount)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <Link
+                  href="/admin/stores"
+                  className="text-foreground hover:underline font-medium truncate min-w-0"
+                >
+                  Stores awaiting review
+                </Link>
+                <span className="tabular-nums font-semibold shrink-0">
+                  {storeQueueDisplay}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <Link
+                  href="/admin/dermatologists"
+                  className="text-foreground hover:underline font-medium truncate min-w-0"
+                >
+                  Dermatologists awaiting review
+                </Link>
+                <span className="tabular-nums font-semibold shrink-0">
+                  {dermQueueDisplay}
+                </span>
+              </div>
+              {reviewQueuesWarning && (
+                <Badge variant="warning" className="mt-1 text-xs">
+                  Awaiting review
+                </Badge>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
@@ -309,10 +427,10 @@ export default function AdminDashboardPage() {
                     <Icon className="h-4 w-4 text-muted-foreground" />
                   </CardHeader>
                   <CardContent>
-                    <p className="text-2xl font-semibold">{m.value}</p>
+                    <p className={row2ValueClassName(m.value)}>{m.value}</p>
                     {m.variant && m.variant !== "default" && (
                       <Badge variant={m.variant} className="mt-1 text-xs">
-                        {m.variant === "warning" ? "Review" : "Attention"}
+                        Attention
                       </Badge>
                     )}
                   </CardContent>
@@ -335,10 +453,10 @@ export default function AdminDashboardPage() {
                     <Icon className="h-4 w-4 text-muted-foreground" />
                   </CardHeader>
                   <CardContent>
-                    <p className="text-2xl font-semibold">{m.value}</p>
+                    <p className={metricValueClassName(m.value)}>{m.value}</p>
                     {m.variant && m.variant === "warning" && (
                       <Badge variant="warning" className="mt-1 text-xs">
-                        Review
+                        Awaiting review
                       </Badge>
                     )}
                   </CardContent>
@@ -373,9 +491,12 @@ export default function AdminDashboardPage() {
               return (
                 <ul className="space-y-3 py-1">
                   {activity.map((item) => {
-                    const msg = item.message?.trim() ?? "";
                     const typeStr = item.type?.trim() ?? "";
                     const datePart = safeFormatDateTime(item.createdAt);
+                    const title = getAdminActivityTimelineTitle({
+                      type: item.type ?? "",
+                      message: item.message ?? "",
+                    });
                     const meta =
                       [typeStr, datePart].filter(
                         (p) => typeof p === "string" && p.trim() !== ""
@@ -386,7 +507,7 @@ export default function AdminDashboardPage() {
                       className="flex flex-col gap-0.5 border-b border-border/40 pb-3 last:border-0 last:pb-0"
                     >
                       <span className="text-sm font-medium text-foreground">
-                        {msg !== "" ? (item.message ?? "").trim() : typeStr || "Event"}
+                        {title}
                       </span>
                       <span className="text-xs text-muted-foreground">{meta}</span>
                     </li>

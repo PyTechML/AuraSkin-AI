@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,11 @@ import {
   markNotificationRead,
 } from "@/services/apiPartner";
 import type { DermatologistNotification } from "@/types/notification";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+  takeFreshList,
+} from "@/lib/panelPolling";
 
 const FALLBACK_MESSAGE = "New update available";
 const formatSafeDate = (value: string | null | undefined) => {
@@ -25,22 +30,35 @@ export default function DermatologistNotificationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [markingAll, setMarkingAll] = useState(false);
 
-  const loadNotifications = async () => {
-    setError(null);
+  const loadNotifications = useCallback(async (silent = false) => {
+    if (!silent) {
+      setError(null);
+      setLoading(true);
+    }
     try {
       const data = await getDermatologistNotifications();
-      setNotifications(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setNotifications((prev) => (silent ? takeFreshList(prev, list) : list));
     } catch {
-      setNotifications([]);
-      setError("Failed to load notifications.");
+      if (!silent) {
+        setError("Failed to load notifications.");
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    void loadNotifications();
-  }, []);
+    void loadNotifications(false);
+  }, [loadNotifications]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      void loadNotifications(true);
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [loadNotifications]);
 
   const safeNotifications = Array.isArray(notifications) ? notifications : [];
 

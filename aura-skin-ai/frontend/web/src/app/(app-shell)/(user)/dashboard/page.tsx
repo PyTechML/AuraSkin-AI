@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useAuthStore } from "@/store/authStore";
 import { getReports, getUserDashboardMetrics } from "@/services/api";
 import { useCallback, useEffect, useState } from "react";
+import { isDocumentVisible, PANEL_LIVE_POLL_INTERVAL_MS } from "@/lib/panelPolling";
 import type { Report } from "@/types";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -40,10 +41,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+      if (isDocumentVisible()) {
         refetchDashboard();
       }
-    }, 10000);
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [refetchDashboard]);
 

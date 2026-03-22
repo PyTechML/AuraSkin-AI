@@ -37,13 +37,13 @@ import {
 function statusLabel(status: AdminStore["status"]): string {
   switch (status) {
     case "pending":
-      return "Pending Approval";
+      return "Awaiting review";
     case "approved":
       return "Approved";
     case "rejected":
       return "Rejected";
     default:
-      return "Pending Approval";
+      return "Awaiting review";
   }
 }
 

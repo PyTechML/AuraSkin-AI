@@ -424,7 +424,22 @@ const emptyAdminDashboardResult = (): AdminDashboardResult => ({
   auditAlertCount: 0,
   healthFromApi: false,
   auditFromApi: false,
+  pendingApprovalCountsFromApi: false,
+  pendingStoreApprovals: undefined,
+  pendingDermatologistApprovals: undefined,
 });
+
+function readDashboardPendingCount(
+  rec: Record<string, unknown>,
+  camelKey: string,
+  snakeKey: string
+): number | undefined {
+  const raw = rec[camelKey] ?? rec[snakeKey];
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return Math.max(0, Math.floor(raw));
+  }
+  return undefined;
+}
 
 function mapDashboardActivityItem(
   row: unknown
@@ -497,12 +512,29 @@ function normalizeAdminDashboardPayload(
     }
   }
 
+  const pendingStoreApprovals = readDashboardPendingCount(
+    data,
+    "pendingStoreApprovals",
+    "pending_store_approvals"
+  );
+  const pendingDermatologistApprovals = readDashboardPendingCount(
+    data,
+    "pendingDermatologistApprovals",
+    "pending_dermatologist_approvals"
+  );
+  const pendingApprovalCountsFromApi =
+    pendingStoreApprovals !== undefined &&
+    pendingDermatologistApprovals !== undefined;
+
   return {
     recentActivity,
     health,
     auditAlertCount,
     healthFromApi,
     auditFromApi,
+    pendingApprovalCountsFromApi,
+    pendingStoreApprovals,
+    pendingDermatologistApprovals,
   };
 }
 

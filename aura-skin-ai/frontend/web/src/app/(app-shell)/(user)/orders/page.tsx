@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+} from "@/lib/panelPolling";
 import Link from "next/link";
 import { useOrdersStore } from "@/store/ordersStore";
 import { useAuthStore } from "@/store/authStore";
@@ -14,8 +18,17 @@ export default function OrdersPage() {
   const { orders, loading, fetchError, fetchOrders } = useOrdersStore();
 
   useEffect(() => {
-    fetchOrders();
+    void fetchOrders();
   }, [fetchOrders]);
+
+  useEffect(() => {
+    if (!user) return;
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      void fetchOrders({ silent: true });
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [user?.id, fetchOrders]);
 
   if (!user) {
     return (

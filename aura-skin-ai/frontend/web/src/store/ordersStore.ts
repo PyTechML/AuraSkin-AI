@@ -7,7 +7,7 @@ interface OrdersState {
   orders: Order[];
   loading: boolean;
   fetchError: string | null;
-  fetchOrders: () => Promise<void>;
+  fetchOrders: (options?: { silent?: boolean }) => Promise<void>;
   getOrderById: (id: string) => Promise<Order | null>;
 }
 
@@ -15,17 +15,25 @@ export const useOrdersStore = create<OrdersState>((set) => ({
   orders: [],
   loading: false,
   fetchError: null,
-  fetchOrders: async () => {
+  fetchOrders: async (options) => {
+    const silent = options?.silent === true;
     const user = useAuthStore.getState().user;
     if (!user) return;
-    set({ loading: true, fetchError: null });
+    if (!silent) set({ loading: true, fetchError: null });
     try {
       const orders = await apiGetOrders(user.id);
       set({ orders, fetchError: null });
     } catch {
-      set({ orders: [], fetchError: "Unable to load orders. Please try again." });
+      if (silent) {
+        set({ fetchError: null });
+      } else {
+        set({
+          orders: [],
+          fetchError: "Unable to load orders. Please try again.",
+        });
+      }
     } finally {
-      set({ loading: false });
+      if (!silent) set({ loading: false });
     }
   },
   getOrderById: async (id: string) => {

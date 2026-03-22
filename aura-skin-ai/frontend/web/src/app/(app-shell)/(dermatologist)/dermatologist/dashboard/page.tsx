@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   getDermatologistConsultations,
@@ -31,6 +31,11 @@ import {
   PanelStagger,
   PanelStaggerItem,
 } from "@/components/panel/PanelReveal";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+  takeFreshList,
+} from "@/lib/panelPolling";
 
 interface DashboardData {
   bookings: NormalizedConsultation[];
@@ -44,11 +49,38 @@ export default function DermatologistDashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const loadDashboard = () => {
+
+  const reloadDashboard = useCallback(() => {
     if (!partnerId) {
       setData({ bookings: [], patients: [], earnings: null });
       setLoading(false);
-      return () => {};
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      getDermatologistConsultations(),
+      getAssignedUsers(partnerId),
+      getDermatologistEarnings(),
+    ])
+      .then(([bookings, patients, earnings]) => {
+        const safeBookings = Array.isArray(bookings) ? bookings : [];
+        const safePatients = Array.isArray(patients) ? patients : [];
+        setData({
+          bookings: safeBookings,
+          patients: safePatients,
+          earnings: earnings ?? null,
+        });
+      })
+      .catch(() => setError("Failed to load dashboard data."))
+      .finally(() => setLoading(false));
+  }, [partnerId]);
+
+  useEffect(() => {
+    if (!partnerId) {
+      setData({ bookings: [], patients: [], earnings: null });
+      setLoading(false);
+      return;
     }
     let cancelled = false;
     setLoading(true);
@@ -62,7 +94,11 @@ export default function DermatologistDashboardPage() {
         if (cancelled) return;
         const safeBookings = Array.isArray(bookings) ? bookings : [];
         const safePatients = Array.isArray(patients) ? patients : [];
-        setData({ bookings: safeBookings, patients: safePatients, earnings: earnings ?? null });
+        setData({
+          bookings: safeBookings,
+          patients: safePatients,
+          earnings: earnings ?? null,
+        });
       })
       .catch(() => {
         if (cancelled) return;
@@ -75,11 +111,34 @@ export default function DermatologistDashboardPage() {
     return () => {
       cancelled = true;
     };
-  };
+  }, [partnerId]);
 
   useEffect(() => {
-    const cleanup = loadDashboard();
-    return cleanup;
+    if (!partnerId) return;
+    let cancelled = false;
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      Promise.all([
+        getDermatologistConsultations(),
+        getAssignedUsers(partnerId),
+        getDermatologistEarnings(),
+      ])
+        .then(([bookings, patients, earnings]) => {
+          if (cancelled) return;
+          const safeBookings = Array.isArray(bookings) ? bookings : [];
+          const safePatients = Array.isArray(patients) ? patients : [];
+          setData((prev) => ({
+            bookings: takeFreshList(prev?.bookings ?? [], safeBookings),
+            patients: takeFreshList(prev?.patients ?? [], safePatients),
+            earnings: earnings ?? null,
+          }));
+        })
+        .catch(() => {});
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, [partnerId]);
 
   const derived = useMemo(() => {
@@ -154,7 +213,7 @@ export default function DermatologistDashboardPage() {
             <p className="text-muted-foreground mb-4">
               {error ?? "Unable to load dashboard."}
             </p>
-            <Button variant="outline" onClick={loadDashboard}>
+            <Button variant="outline" onClick={reloadDashboard}>
               Try again
             </Button>
           </CardContent>

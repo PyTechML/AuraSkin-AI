@@ -30,6 +30,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ImageIcon, ArrowLeft, Check } from "lucide-react";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+} from "@/lib/panelPolling";
 
 const TIMELINE_STEPS: Order["status"][] = [
   "placed",
@@ -52,17 +56,43 @@ export default function StoreOrderDetailPage() {
   const [trackingInput, setTrackingInput] = useState("");
   const [noteInput, setNoteInput] = useState("");
 
-  const load = () => {
+  const load = (silent = false) => {
     if (!partnerId || !orderId) return;
-    setLoading(true);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     getOrderByIdForPartner(orderId, partnerId)
-      .then(setOrder)
-      .catch(() => setError("Failed to load order."))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (data != null) {
+          setOrder(data);
+          if (!silent) setError(null);
+        } else if (!silent) {
+          setOrder(null);
+        }
+      })
+      .catch(() => {
+        if (!silent) {
+          setError("Failed to load order.");
+          setOrder(null);
+        }
+      })
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   };
 
   useEffect(() => {
-    load();
+    load(false);
+  }, [partnerId, orderId]);
+
+  useEffect(() => {
+    if (!partnerId || !orderId) return;
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      load(true);
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, [partnerId, orderId]);
 
   useEffect(() => {

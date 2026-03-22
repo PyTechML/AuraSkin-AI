@@ -17,4 +17,8 @@ export interface AdminDashboardData {
 export interface AdminDashboardResult extends AdminDashboardData {
   healthFromApi?: boolean;
   auditFromApi?: boolean;
+  /** Present when GET /admin/dashboard included numeric pending counts for both stores and dermatologists. */
+  pendingApprovalCountsFromApi?: boolean;
+  pendingStoreApprovals?: number;
+  pendingDermatologistApprovals?: number;
 }

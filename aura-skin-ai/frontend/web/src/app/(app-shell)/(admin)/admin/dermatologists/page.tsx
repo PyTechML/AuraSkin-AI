@@ -46,13 +46,13 @@ const PAGE_SIZE = 10;
 function statusLabel(status: AdminDermatologistVerification["status"]): string {
   switch (status) {
     case "pending":
-      return "Pending Verification";
+      return "Awaiting review";
     case "verified":
       return "Verified";
     case "rejected":
       return "Rejected";
     default:
-      return "Pending Verification";
+      return "Awaiting review";
   }
 }
 
@@ -170,8 +170,8 @@ function AdminDermatologistsPageInner() {
           ) : sortedRows.length === 0 ? (
             <PanelEmptyState
               icon={<Stethoscope className="h-12 w-12" />}
-              title="No pending verifications"
-              description="When dermatologists submit verification requests, they will appear here for review."
+              title="No verifications awaiting review"
+              description="When dermatologists submit verification requests, they will appear here."
             />
           ) : (
             <>

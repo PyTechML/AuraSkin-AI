@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+  takeFreshList,
+} from "@/lib/panelPolling";
 import Link from "next/link";
 import { getReports } from "@/services/api";
 import type { Report } from "@/types";
@@ -68,7 +73,23 @@ export default function ReportsPage() {
   const journey = useDashboardJourney(reports, user ?? null);
 
   useEffect(() => {
-    getReports().then(setReports);
+    getReports().then((data) =>
+      setReports(Array.isArray(data) ? data : [])
+    );
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      getReports()
+        .then((data) => {
+          setReports((prev) =>
+            takeFreshList(prev, Array.isArray(data) ? data : [])
+          );
+        })
+        .catch(() => {});
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, []);
 
   const timelineReports: TimelineReport[] = sortReportsNewestFirst([

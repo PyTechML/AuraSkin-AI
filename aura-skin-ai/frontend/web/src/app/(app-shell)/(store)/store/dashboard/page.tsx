@@ -104,6 +104,10 @@ import {
   ChartSkeleton,
 } from "@/components/ui/skeleton-primitives";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+} from "@/lib/panelPolling";
 
 export default function StoreDashboardPage() {
   const { session } = useAuth();
@@ -130,6 +134,21 @@ export default function StoreDashboardPage() {
       })
       .catch(() => setError("Failed to load dashboard data."))
       .finally(() => setLoading(false));
+  }, [partnerId]);
+
+  useEffect(() => {
+    if (!partnerId) return;
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      getPartnerDashboardStats(partnerId)
+        .then((data) => {
+          if (data == null || typeof data !== "object") return;
+          setStats(normalizeDashboardStats(data));
+          setError(null);
+        })
+        .catch(() => {});
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, [partnerId]);
 
   if (loading) {

@@ -176,7 +176,7 @@ function AdminRuleEnginePageInner() {
               <div className="flex flex-col">
                 {safeRules.length === 0 ? (
                   <div className="p-4 text-sm text-muted-foreground">
-                    No rules configured
+                    No AI rules configured
                   </div>
                 ) : (
                 safeRules.map((rule) => {
@@ -280,6 +280,8 @@ function AdminRuleEnginePageInner() {
                     </Button>
                   </div>
                 </>
+              ) : safeRules.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No AI rules configured</p>
               ) : (
                 <p className="text-sm text-muted-foreground">Select a rule to edit.</p>
               )}
