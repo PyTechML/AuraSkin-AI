@@ -24,7 +24,18 @@ coverage/
 .env.local
 .env.*.local
 .env.*
+!.env.example
 *.env
+
+# Common local env paths (also covered by .env rules above)
+aura-skin-ai/backend/.env
+aura-skin-ai/backend/.env.*
+!aura-skin-ai/backend/.env.example
+aura-skin-ai/frontend/web/.env
+aura-skin-ai/frontend/web/.env.*
+!aura-skin-ai/frontend/web/.env.example
+**/supabase/.env
+**/supabase/.env.*
 
 # IDE / OS
 .idea/
@@ -39,6 +50,10 @@ Thumbs.db
 *.pid.lock
 *.tmp
 *.temp
+tmp/
+**/tmp/
+logs/
+**/logs/
 .cache/
 **/.cache/
 
