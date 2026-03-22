@@ -1,6 +1,7 @@
 import { API_BASE } from "./apiBase";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import type { AdminStore } from "@/types/store";
+import type { AdminDermatologistVerification } from "@/types/dermatologist";
 
 function getAuthHeaders(): Record<string, string> {
   const token = useAuthStore.getState().accessToken ?? getPersistedAccessToken();
@@ -410,4 +411,100 @@ export async function getAiRules(): Promise<AiRuleRow[]> {
   } catch {
     return [];
   }
+}
+
+function normalizeVerificationStatus(
+  raw: string | null | undefined
+): AdminDermatologistVerification["status"] {
+  const s = String(raw ?? "pending").toLowerCase();
+  if (s === "verified") return "verified";
+  if (s === "rejected") return "rejected";
+  return "pending";
+}
+
+function mapPendingDermatologistRow(
+  row: Record<string, unknown>
+): AdminDermatologistVerification | null {
+  const verification =
+    row.verification != null && typeof row.verification === "object"
+      ? (row.verification as Record<string, unknown>)
+      : null;
+  if (!verification) return null;
+  const verificationId =
+    verification.id != null ? String(verification.id) : "";
+  if (!verificationId) return null;
+
+  const dermatologistId =
+    row.id != null
+      ? String(row.id)
+      : verification.dermatologist_id != null
+        ? String(verification.dermatologist_id)
+        : "";
+
+  const clinicName =
+    row.clinic_name != null && String(row.clinic_name).trim() !== ""
+      ? String(row.clinic_name).trim()
+      : undefined;
+
+  const specialization =
+    row.specialization != null && String(row.specialization).trim() !== ""
+      ? String(row.specialization).trim()
+      : undefined;
+
+  const yearsRaw = row.years_experience;
+  const yearsExperience =
+    typeof yearsRaw === "number" && !Number.isNaN(yearsRaw)
+      ? yearsRaw
+      : undefined;
+
+  const submittedAt =
+    verification.created_at != null && String(verification.created_at)
+      ? String(verification.created_at)
+      : "";
+
+  const email =
+    typeof row.email === "string" && row.email.trim() !== ""
+      ? row.email.trim()
+      : undefined;
+
+  return {
+    verificationId,
+    dermatologistId,
+    name: clinicName,
+    email,
+    status: normalizeVerificationStatus(
+      typeof verification.verification_status === "string"
+        ? verification.verification_status
+        : undefined
+    ),
+    submittedAt,
+    specialization,
+    yearsExperience,
+  };
+}
+
+export async function getPendingDermatologistVerifications(): Promise<
+  AdminDermatologistVerification[]
+> {
+  try {
+    const data = await apiGet<unknown>("/admin/dermatologists/pending");
+    const list = Array.isArray(data) ? data : [];
+    return list
+      .map((item) =>
+        mapPendingDermatologistRow(
+          item && typeof item === "object" ? (item as Record<string, unknown>) : {}
+        )
+      )
+      .filter((row): row is AdminDermatologistVerification => row != null);
+  } catch {
+    return [];
+  }
+}
+
+export async function verifyDermatologist(verificationId: string): Promise<void> {
+  await apiPut(`/admin/dermatologists/verify/${encodeURIComponent(verificationId)}`, {});
+}
+
+export async function rejectDermatologist(verificationId: string): Promise<void> {
+  await apiPut(`/admin/dermatologists/reject/${encodeURIComponent(verificationId)}`, {});
 }

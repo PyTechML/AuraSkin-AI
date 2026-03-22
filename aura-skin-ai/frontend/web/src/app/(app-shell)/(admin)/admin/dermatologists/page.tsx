@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import { getDermatologists } from "@/services/api";
-import type { Dermatologist } from "@/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  getPendingDermatologistVerifications,
+  verifyDermatologist,
+  rejectDermatologist,
+} from "@/services/apiAdmin";
+import type { AdminDermatologistVerification } from "@/types/dermatologist";
 import {
   AdminHeader,
   AdminPrimaryGrid,
@@ -29,73 +33,104 @@ import {
 } from "@/components/ui/dialog";
 import { PanelTablePagination } from "@/components/panel/PanelTablePagination";
 import { PanelEmptyState } from "@/components/panel/PanelEmptyState";
+import {
+  PanelToastProvider,
+  usePanelToast,
+} from "@/components/panel/PanelToast";
 import { Stethoscope, CheckCircle, XCircle } from "lucide-react";
-
-interface DermWithMeta extends Dermatologist {
-  status: "verified" | "pending" | "suspended";
-  affiliatedStoresCount: number;
-  lastActivity: string;
-}
 
 const PAGE_SIZE = 10;
 
-export default function AdminDermatologistsPage() {
-  const [derms, setDerms] = useState<DermWithMeta[]>([]);
+function statusLabel(status: AdminDermatologistVerification["status"]): string {
+  switch (status) {
+    case "pending":
+      return "Pending Verification";
+    case "verified":
+      return "Verified";
+    case "rejected":
+      return "Rejected";
+    default:
+      return "Pending Verification";
+  }
+}
+
+function statusVariant(
+  status: AdminDermatologistVerification["status"]
+): "default" | "secondary" | "outline" | "success" | "warning" {
+  if (status === "verified") return "default";
+  if (status === "rejected") return "warning";
+  return "secondary";
+}
+
+function AdminDermatologistsPageInner() {
+  const { addToast } = usePanelToast();
+  const [rows, setRows] = useState<AdminDermatologistVerification[]>([]);
   const [page, setPage] = useState(1);
-  const [drawerId, setDrawerId] = useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = useState<"verify" | "suspend" | null>(null);
-  const [actionId, setActionId] = useState<string | null>(null);
+  const [drawerVerificationId, setDrawerVerificationId] = useState<
+    string | null
+  >(null);
+  const [confirmAction, setConfirmAction] = useState<"verify" | "reject" | null>(
+    null
+  );
+  const [actionVerificationId, setActionVerificationId] = useState<
+    string | null
+  >(null);
+
+  const loadRows = useCallback(async () => {
+    const list = await getPendingDermatologistVerifications();
+    const safeDermatologists = Array.isArray(list) ? list : [];
+    setRows(safeDermatologists);
+  }, []);
 
   useEffect(() => {
-    getDermatologists().then((list) => {
-      setDerms(
-        list.map((d, i) => ({
-          ...d,
-          status: (["verified", "pending", "verified"] as const)[i % 3] ?? "pending",
-          affiliatedStoresCount: [1, 0, 1][i % 3] ?? 0,
-          lastActivity: ["30 min ago", "2 days ago", "1 hr ago"][i % 3] ?? "—",
-        }))
-      );
-    });
-  }, []);
+    void loadRows();
+  }, [loadRows]);
 
   const paginated = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
-    return derms.slice(start, start + PAGE_SIZE);
-  }, [derms, page]);
+    return rows.slice(start, start + PAGE_SIZE);
+  }, [rows, page]);
 
-  const selectedDerm = useMemo(
-    () => (drawerId ? derms.find((d) => d.id === drawerId) : null),
-    [drawerId, derms]
+  const selectedRow = useMemo(
+    () =>
+      drawerVerificationId
+        ? rows.find((r) => r.verificationId === drawerVerificationId)
+        : null,
+    [drawerVerificationId, rows]
   );
 
-  const handleVerify = (id: string) => {
-    setDerms((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, status: "verified" as const } : d))
-    );
-    setConfirmAction(null);
-    setActionId(null);
-    if (drawerId === id) setDrawerId(null);
-  };
-
-  const handleSuspend = (id: string) => {
-    setDerms((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, status: "suspended" as const } : d))
-    );
-    setConfirmAction(null);
-    setActionId(null);
-    if (drawerId === id) setDrawerId(null);
-  };
-
-  const openConfirm = (action: "verify" | "suspend", id: string) => {
+  const openConfirm = (action: "verify" | "reject", verificationId: string) => {
     setConfirmAction(action);
-    setActionId(id);
+    setActionVerificationId(verificationId);
   };
 
-  const statusVariant = (s: string) => {
-    if (s === "verified") return "default";
-    if (s === "suspended") return "warning";
-    return "secondary";
+  const runConfirmedAction = async () => {
+    if (!actionVerificationId || !confirmAction) return;
+    const verificationId = actionVerificationId;
+    const action = confirmAction;
+    const previousRows = rows;
+
+    setRows((prev) => prev.filter((r) => r.verificationId !== verificationId));
+    setConfirmAction(null);
+    setActionVerificationId(null);
+    if (drawerVerificationId === verificationId) setDrawerVerificationId(null);
+
+    try {
+      if (action === "verify") {
+        await verifyDermatologist(verificationId);
+        addToast("Dermatologist verified", "success");
+      } else {
+        await rejectDermatologist(verificationId);
+        addToast("Dermatologist rejected", "success");
+      }
+      const fresh = await getPendingDermatologistVerifications();
+      setRows(Array.isArray(fresh) ? fresh : []);
+    } catch (e) {
+      setRows(previousRows);
+      const msg =
+        e instanceof Error ? e.message : "Something went wrong. Try again.";
+      addToast(msg, "error");
+    }
   };
 
   return (
@@ -108,11 +143,11 @@ export default function AdminDermatologistsPage() {
 
       <AdminPrimaryGrid>
         <Card className="border-border/60">
-          {derms.length === 0 ? (
+          {rows.length === 0 ? (
             <PanelEmptyState
               icon={<Stethoscope className="h-12 w-12" />}
-              title="No dermatologists loaded"
-              description="No dermatologists yet. Verified dermatologists will appear here."
+              title="No pending verifications"
+              description="When dermatologists submit verification requests, they will appear here for review."
             />
           ) : (
             <>
@@ -130,19 +165,31 @@ export default function AdminDermatologistsPage() {
                 <TableBody>
                   {paginated.map((d) => (
                     <TableRow
-                      key={d.id}
+                      key={d.verificationId}
                       className="cursor-pointer hover:bg-muted/40 transition-colors"
-                      onClick={() => setDrawerId(d.id)}
+                      onClick={() => setDrawerVerificationId(d.verificationId)}
                     >
-                      <TableCell className="font-medium">{d.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{d.specialty}</TableCell>
-                      <TableCell className="text-muted-foreground">{d.affiliatedStoresCount}</TableCell>
-                      <TableCell>
-                        <Badge variant={statusVariant(d.status)}>{d.status}</Badge>
+                      <TableCell className="font-medium">
+                        {d.name?.trim() ? d.name : "Unknown"}
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{d.lastActivity}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {d.specialization?.trim() ? d.specialization : "—"}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">—</TableCell>
+                      <TableCell>
+                        <Badge variant={statusVariant(d.status)}>
+                          {statusLabel(d.status)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">—</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
-                        <Button variant="ghost" size="sm" onClick={() => setDrawerId(d.id)}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            setDrawerVerificationId(d.verificationId)
+                          }
+                        >
                           View
                         </Button>
                       </TableCell>
@@ -153,7 +200,7 @@ export default function AdminDermatologistsPage() {
               <PanelTablePagination
                 page={page}
                 setPage={setPage}
-                totalItems={derms.length}
+                totalItems={rows.length}
                 pageSize={PAGE_SIZE}
               />
             </>
@@ -162,56 +209,79 @@ export default function AdminDermatologistsPage() {
       </AdminPrimaryGrid>
 
       <AdminDrawer
-        open={!!drawerId}
-        onOpenChange={(open) => !open && setDrawerId(null)}
+        open={!!drawerVerificationId}
+        onOpenChange={(open) => !open && setDrawerVerificationId(null)}
         title="Dermatologist details"
       >
-        {selectedDerm ? (
+        {selectedRow ? (
           <div className="space-y-6">
             <div>
-              <p className="font-medium">{selectedDerm.name}</p>
-              <p className="text-sm text-muted-foreground">{selectedDerm.specialty}</p>
-              <p className="text-sm text-muted-foreground">{selectedDerm.email}</p>
-              <Badge variant={statusVariant(selectedDerm.status)} className="mt-2">
-                {selectedDerm.status}
+              <p className="font-medium">
+                {selectedRow.name?.trim() ? selectedRow.name : "Unknown"}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {selectedRow.specialization?.trim()
+                  ? selectedRow.specialization
+                  : "—"}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {selectedRow.email?.trim() ? selectedRow.email : "—"}
+              </p>
+              <Badge
+                variant={statusVariant(selectedRow.status)}
+                className="mt-2"
+              >
+                {statusLabel(selectedRow.status)}
               </Badge>
             </div>
             <div>
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Credentials</p>
-              <p className="text-sm mt-1">{selectedDerm.yearsExperience ?? "—"} years experience</p>
-              <p className="text-sm text-muted-foreground">
-                {selectedDerm.certifications?.length ? selectedDerm.certifications.join(", ") : "—"}
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Credentials
               </p>
+              <p className="text-sm mt-1">
+                {selectedRow.yearsExperience != null
+                  ? `${selectedRow.yearsExperience} years experience`
+                  : "—"}
+              </p>
+              <p className="text-sm text-muted-foreground">—</p>
             </div>
             <div>
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Affiliated stores</p>
-              <p className="text-sm mt-1 text-muted-foreground">{selectedDerm.affiliatedStoresCount} store(s)</p>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Affiliated stores
+              </p>
+              <p className="text-sm mt-1 text-muted-foreground">—</p>
             </div>
             <div>
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active patients</p>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Active patients
+              </p>
               <p className="text-sm mt-1 text-muted-foreground">—</p>
             </div>
             <div className="flex flex-col gap-2 pt-2">
-              {selectedDerm.status !== "verified" && (
-                <Button
-                  size="sm"
-                  onClick={() => openConfirm("verify", selectedDerm.id)}
-                  className="w-full"
-                >
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  Mark verified
-                </Button>
-              )}
-              {selectedDerm.status !== "suspended" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openConfirm("suspend", selectedDerm.id)}
-                  className="w-full"
-                >
-                  <XCircle className="h-4 w-4 mr-2" />
-                  Suspend
-                </Button>
+              {selectedRow.status === "pending" && (
+                <>
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      openConfirm("verify", selectedRow.verificationId)
+                    }
+                    className="w-full"
+                  >
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Mark verified
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      openConfirm("reject", selectedRow.verificationId)
+                    }
+                    className="w-full"
+                  >
+                    <XCircle className="h-4 w-4 mr-2" />
+                    Reject
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -224,36 +294,48 @@ export default function AdminDermatologistsPage() {
         open={!!confirmAction}
         onOpenChange={() => {
           setConfirmAction(null);
-          setActionId(null);
+          setActionVerificationId(null);
         }}
       >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {confirmAction === "verify" ? "Verify dermatologist?" : "Suspend dermatologist?"}
+              {confirmAction === "verify"
+                ? "Verify dermatologist?"
+                : "Reject dermatologist?"}
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             {confirmAction === "verify"
               ? "They will be marked as verified and visible to users."
-              : "They will be suspended and hidden from bookings."}
+              : "Their verification request will be rejected."}
           </p>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setConfirmAction(null); setActionId(null); }}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setConfirmAction(null);
+                setActionVerificationId(null);
+              }}
+            >
               Cancel
             </Button>
-            {actionId && (
-              <Button
-                onClick={() =>
-                  confirmAction === "verify" ? handleVerify(actionId) : handleSuspend(actionId)
-                }
-              >
-                {confirmAction === "verify" ? "Verify" : "Suspend"}
+            {actionVerificationId && (
+              <Button onClick={() => void runConfirmedAction()}>
+                {confirmAction === "verify" ? "Verify" : "Reject"}
               </Button>
             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+export default function AdminDermatologistsPage() {
+  return (
+    <PanelToastProvider>
+      <AdminDermatologistsPageInner />
+    </PanelToastProvider>
   );
 }
