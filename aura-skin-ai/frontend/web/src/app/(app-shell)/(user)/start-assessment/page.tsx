@@ -141,6 +141,8 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
   const form = useForm<StepValues>({
     resolver: zodResolver(step.schema),
     defaultValues: getDefaultValues(step.key, data, fileNames) as StepValues,
+    mode: "onChange",
+    reValidateMode: "onChange",
   });
   const err = (name: string) => (form.formState.errors as Record<string, { message?: string }>)[name]?.message;
   const [cameraState, setCameraState] = useState<CameraState>("idle");
@@ -225,7 +227,7 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
     const nextNames = [...fileNames];
     nextNames[captureIndex] = file.name;
     setFileNames(nextNames);
-    form.setValue("fileNames", nextNames);
+    form.setValue("fileNames", nextNames, { shouldValidate: true });
     setCaptureIndex((prev) => Math.min(prev + 1, IMAGE_VIEWS.length - 1));
   };
 
@@ -264,7 +266,7 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
                 <Label>Skin type</Label>
                 <Select
                   value={form.watch("skinType")}
-                  onValueChange={(v) => form.setValue("skinType", v)}
+                  onValueChange={(v) => form.setValue("skinType", v, { shouldValidate: true, shouldDirty: true })}
                 >
                   <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                   <SelectContent>
@@ -273,12 +275,13 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
                     ))}
                   </SelectContent>
                 </Select>
+                {err("skinType") && <p className="text-sm text-destructive">{err("skinType")}</p>}
               </div>
               <div className="space-y-2">
                 <Label>Skin tone</Label>
                 <Select
                   value={form.watch("skinTone")}
-                  onValueChange={(v) => form.setValue("skinTone", v)}
+                  onValueChange={(v) => form.setValue("skinTone", v, { shouldValidate: true, shouldDirty: true })}
                 >
                   <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                   <SelectContent>
@@ -287,6 +290,7 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
                     ))}
                   </SelectContent>
                 </Select>
+                {err("skinTone") && <p className="text-sm text-destructive">{err("skinTone")}</p>}
               </div>
             </>
           )}
@@ -303,7 +307,8 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
                         const prev = form.getValues("concerns") ?? [];
                         form.setValue(
                           "concerns",
-                          checked ? [...prev, opt] : prev.filter((c) => c !== opt)
+                          checked ? [...prev, opt] : prev.filter((c) => c !== opt),
+                          { shouldValidate: true }
                         );
                       }}
                     />
@@ -321,7 +326,7 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
                 <Label>Sun exposure</Label>
                 <Select
                   value={form.watch("sunExposure")}
-                  onValueChange={(v) => form.setValue("sunExposure", v)}
+                  onValueChange={(v) => form.setValue("sunExposure", v, { shouldValidate: true, shouldDirty: true })}
                 >
                   <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                   <SelectContent>
@@ -330,6 +335,7 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
                     <SelectItem value="High">High</SelectItem>
                   </SelectContent>
                 </Select>
+                {err("sunExposure") && <p className="text-sm text-destructive">{err("sunExposure")}</p>}
               </div>
               <div className="space-y-2">
                 <Label>Sleep (hours per night, optional)</Label>
@@ -343,7 +349,7 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
                 <Label>Stress level (optional)</Label>
                 <Select
                   value={form.watch("stressLevel")}
-                  onValueChange={(v) => form.setValue("stressLevel", v)}
+                  onValueChange={(v) => form.setValue("stressLevel", v, { shouldValidate: true, shouldDirty: true })}
                 >
                   <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                   <SelectContent>
@@ -444,7 +450,13 @@ function StepForm({ step, data, fileNames, setFileNames, files, setFiles, onSucc
                 Back
               </Button>
             )}
-            <Button type="submit" disabled={step.key === "imageUpload" && files.filter(Boolean).length < 5}>
+            <Button
+              type="submit"
+              disabled={
+                (step.key === "imageUpload" && files.filter(Boolean).length < 5) ||
+                (step.key !== "imageUpload" && !form.formState.isValid)
+              }
+            >
               {step.key === "imageUpload" ? "Continue to review" : "Next"}
             </Button>
           </div>
@@ -468,15 +480,32 @@ export default function AssessmentStartPage() {
     if (step.key === "skinConcerns") {
       setStepData("skinConcerns", (values as { concerns: string[] }).concerns);
     } else if (step.key === "medicalBackground") {
-      setStepData("medicalBackground", values as AssessmentStepData["medicalBackground"]);
+      const mb = values as AssessmentStepData["medicalBackground"];
+      const allergies = mb?.allergies?.trim() ? mb.allergies.trim() : undefined;
+      setStepData("medicalBackground", {
+        conditions: mb?.conditions ?? [],
+        medications: mb?.medications ?? [],
+        allergies,
+      } as AssessmentStepData["medicalBackground"]);
     } else if (step.key === "imageUpload") {
       setStepData("imageUpload", { fileNames, files });
     } else if (step.key === "personalDetails") {
-      setStepData("personalDetails", values as AssessmentStepData["personalDetails"]);
+      const pd = values as AssessmentStepData["personalDetails"];
+      setStepData("personalDetails", {
+        fullName: pd!.fullName.trim(),
+        age: pd!.age,
+        gender: pd!.gender?.trim() ? pd!.gender.trim() : undefined,
+      } as AssessmentStepData["personalDetails"]);
     } else if (step.key === "skinTypeTone") {
       setStepData("skinTypeTone", values as AssessmentStepData["skinTypeTone"]);
     } else if (step.key === "lifestyle") {
-      setStepData("lifestyle", values as AssessmentStepData["lifestyle"]);
+      const ls = values as AssessmentStepData["lifestyle"];
+      setStepData("lifestyle", {
+        sunExposure: ls!.sunExposure,
+        sleepHours: ls!.sleepHours,
+        stressLevel: ls!.stressLevel,
+        diet: ls!.diet?.trim() ? ls!.diet.trim() : undefined,
+      } as AssessmentStepData["lifestyle"]);
     }
 
     if (isLast) {

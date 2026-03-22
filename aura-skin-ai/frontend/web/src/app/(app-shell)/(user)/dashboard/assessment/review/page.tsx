@@ -164,59 +164,93 @@ export default function AssessmentReviewPage() {
           <CardDescription>Your assessment responses.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {data.personalDetails && (
-            <div>
-              <h3 className="font-label text-sm text-muted-foreground">Personal details</h3>
-              <p className="text-sm">
-                {data.personalDetails.fullName}, {data.personalDetails.age}
-                {data.personalDetails.gender && ` · ${data.personalDetails.gender}`}
-              </p>
-            </div>
-          )}
-          {data.skinTypeTone && (
-            <div>
-              <h3 className="font-label text-sm text-muted-foreground">Skin type & tone</h3>
-              <p className="text-sm">
-                {data.skinTypeTone.skinType}, {data.skinTypeTone.skinTone}
-              </p>
-            </div>
-          )}
-          {data.skinConcerns && data.skinConcerns.length > 0 && (
-            <div>
-              <h3 className="font-label text-sm text-muted-foreground">Concerns</h3>
-              <p className="text-sm">{data.skinConcerns.join(", ")}</p>
-            </div>
-          )}
-          {data.lifestyle && (
-            <div>
-              <h3 className="font-label text-sm text-muted-foreground">Lifestyle</h3>
-              <p className="text-sm">
-                Sun exposure: {data.lifestyle.sunExposure}
-                {data.lifestyle.sleepHours != null && ` · Sleep: ${data.lifestyle.sleepHours}h`}
-              </p>
-            </div>
-          )}
-          {data.medicalBackground && (
-            <div>
-              <h3 className="font-label text-sm text-muted-foreground">Medical background</h3>
-              <p className="text-sm">
-                Conditions: {data.medicalBackground.conditions?.length ? data.medicalBackground.conditions.join(", ") : "None"}
-                <br />
-                Medications: {data.medicalBackground.medications?.length ? data.medicalBackground.medications.join(", ") : "None"}
-              </p>
-            </div>
-          )}
-          {data.imageUpload?.files?.length ? (
-            <div>
-              <h3 className="font-label text-sm text-muted-foreground">Images</h3>
-              <p className="text-sm">{data.imageUpload.files.length} file(s) ready for upload.</p>
-            </div>
-          ) : data.imageUpload?.fileNames?.length ? (
-            <div>
-              <h3 className="font-label text-sm text-muted-foreground">Images</h3>
-              <p className="text-sm">{data.imageUpload.fileNames.length} file(s) selected.</p>
-            </div>
-          ) : null}
+          <div>
+            <h3 className="font-label text-sm text-muted-foreground">Personal details</h3>
+            <p className="text-sm">
+              {data.personalDetails ? (
+                <>
+                  {data.personalDetails.fullName ?? "—"},{" "}
+                  {Number.isFinite(Number(data.personalDetails.age))
+                    ? data.personalDetails.age
+                    : "—"}
+                  {data.personalDetails.gender?.trim()
+                    ? ` · ${data.personalDetails.gender.trim()}`
+                    : ""}
+                </>
+              ) : (
+                "—"
+              )}
+            </p>
+          </div>
+          <div>
+            <h3 className="font-label text-sm text-muted-foreground">Skin type & tone</h3>
+            <p className="text-sm">
+              {data.skinTypeTone
+                ? `${data.skinTypeTone.skinType ?? "—"}, ${data.skinTypeTone.skinTone ?? "—"}`
+                : "—"}
+            </p>
+          </div>
+          <div>
+            <h3 className="font-label text-sm text-muted-foreground">Concerns</h3>
+            <p className="text-sm">
+              {Array.isArray(data.skinConcerns) && data.skinConcerns.length > 0
+                ? data.skinConcerns.join(", ")
+                : "—"}
+            </p>
+          </div>
+          <div>
+            <h3 className="font-label text-sm text-muted-foreground">Lifestyle</h3>
+            <p className="text-sm">
+              {data.lifestyle
+                ? [
+                    `Sun exposure: ${data.lifestyle.sunExposure ?? "—"}`,
+                    data.lifestyle.sleepHours != null && Number.isFinite(Number(data.lifestyle.sleepHours))
+                      ? `Sleep: ${data.lifestyle.sleepHours}h`
+                      : null,
+                    data.lifestyle.diet?.trim() ? `Diet: ${data.lifestyle.diet.trim()}` : null,
+                    data.lifestyle.stressLevel?.trim() ? `Stress: ${data.lifestyle.stressLevel.trim()}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "—"
+                : "—"}
+            </p>
+          </div>
+          <div>
+            <h3 className="font-label text-sm text-muted-foreground">Medical background</h3>
+            <p className="text-sm">
+              {data.medicalBackground ? (
+                <>
+                  Conditions:{" "}
+                  {Array.isArray(data.medicalBackground.conditions) && data.medicalBackground.conditions.length > 0
+                    ? data.medicalBackground.conditions.join(", ")
+                    : "None"}
+                  <br />
+                  Medications:{" "}
+                  {Array.isArray(data.medicalBackground.medications) && data.medicalBackground.medications.length > 0
+                    ? data.medicalBackground.medications.join(", ")
+                    : "None"}
+                  {data.medicalBackground.allergies?.trim() ? (
+                    <>
+                      <br />
+                      Allergies: {data.medicalBackground.allergies.trim()}
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                "—"
+              )}
+            </p>
+          </div>
+          <div>
+            <h3 className="font-label text-sm text-muted-foreground">Images</h3>
+            <p className="text-sm">
+              {data.imageUpload?.files && data.imageUpload.files.length > 0
+                ? `${data.imageUpload.files.length} file(s) ready for upload.`
+                : Array.isArray(data.imageUpload?.fileNames) && data.imageUpload.fileNames.length > 0
+                  ? `${data.imageUpload.fileNames.length} file(s) selected.`
+                  : "—"}
+            </p>
+          </div>
         </CardContent>
       </Card>
 

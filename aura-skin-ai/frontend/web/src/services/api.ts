@@ -17,6 +17,7 @@ import {
   updateDermatologistSlot,
 } from "./apiPartner";
 import type { CreateDermatologistSlotPayload, NormalizedSlot } from "@/types/availability";
+import { buildAssessmentResultFromReportPayload } from "@/types/assessment";
 
 async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}/api${path}`, {
@@ -209,7 +210,10 @@ export async function getSimilarProducts(
 }
 
 /** Normalize backend report (snake_case) to frontend Report shape. */
-function normalizeReport(r: Record<string, unknown> | null | undefined): Report | null {
+function normalizeReport(
+  r: Record<string, unknown> | null | undefined,
+  options?: { recommendedProducts?: unknown[] }
+): Report | null {
   if (!r || typeof r !== "object" || !r.id) return null;
   const id = String(r.id);
   const created = r.created_at ? new Date(String(r.created_at)) : new Date();
@@ -219,7 +223,12 @@ function normalizeReport(r: Record<string, unknown> | null | undefined): Report 
     "";
   const concernsRaw = r.skin_concerns ?? r.concerns;
   const skinScoreRaw = r.skin_score ?? r.skinScore;
-  const skinScore = typeof skinScoreRaw === "number" && skinScoreRaw >= 0 && skinScoreRaw <= 100 ? skinScoreRaw : undefined;
+  const skinScoreNum = typeof skinScoreRaw === "number" ? skinScoreRaw : Number(skinScoreRaw);
+  const skinScore =
+    Number.isFinite(skinScoreNum) && skinScoreNum >= 0 && skinScoreNum <= 100 ? skinScoreNum : undefined;
+  const structured = buildAssessmentResultFromReportPayload(r, options);
+  const confidenceScore =
+    skinScore != null && Number.isFinite(skinScore) ? skinScore : structured.confidenceScore;
   return {
     id,
     title: `Skin Report · ${date}`,
@@ -228,6 +237,14 @@ function normalizeReport(r: Record<string, unknown> | null | undefined): Report 
     skinType: typeof r.skin_type === "string" ? r.skin_type : undefined,
     concerns: Array.isArray(concernsRaw) ? concernsRaw.filter((c): c is string => typeof c === "string") : undefined,
     skinScore,
+    routineSteps: structured.routineSteps,
+    recommendedIngredients: structured.recommendedIngredients,
+    avoidIngredients: structured.avoidIngredients,
+    ...(structured.sensitivityLevel ? { sensitivityLevel: structured.sensitivityLevel } : {}),
+    ...(structured.inflammationLevelNormalized
+      ? { inflammationLevelNormalized: structured.inflammationLevelNormalized }
+      : {}),
+    confidenceScore,
   };
 }
 
@@ -247,8 +264,11 @@ export async function getReports(): Promise<Report[]> {
     const res = raw as UserReportsResponse;
     const past = Array.isArray(res?.past_reports) ? res.past_reports : [];
     const latestReport = res?.latest_report?.report;
+    const latestProducts = res?.latest_report?.recommendedProducts;
     const list = [
-      ...(latestReport ? [normalizeReport(latestReport as Record<string, unknown>)] : []),
+      ...(latestReport
+        ? [normalizeReport(latestReport as Record<string, unknown>, { recommendedProducts: latestProducts })]
+        : []),
       ...past.map((r) => normalizeReport(r as Record<string, unknown>)),
     ].filter((r): r is Report => r != null);
     return list;
@@ -259,9 +279,23 @@ export async function getReports(): Promise<Report[]> {
 
 export async function getReportById(id: string): Promise<Report | null> {
   try {
-    const result = await apiGet<{ success?: boolean; data?: { report: Record<string, unknown> }; report?: Record<string, unknown> }>(`/user/reports/${id}`);
-    const raw = result?.data?.report ?? result?.report;
-    return raw ? normalizeReport(raw) : null;
+    const result = await apiGet<{
+      success?: boolean;
+      data?: {
+        report: Record<string, unknown>;
+        recommendedProducts?: unknown[];
+        recommendedDermatologists?: unknown[];
+      };
+      report?: Record<string, unknown>;
+      recommendedProducts?: unknown[];
+    }>(`/user/reports/${id}`);
+    const payload = (result?.data ?? result) as {
+      report?: Record<string, unknown>;
+      recommendedProducts?: unknown[];
+    };
+    const raw = payload?.report ?? (result as { report?: Record<string, unknown> })?.report;
+    const products = payload?.recommendedProducts;
+    return raw ? normalizeReport(raw, { recommendedProducts: products }) : null;
   } catch {
     return null;
   }
@@ -269,7 +303,17 @@ export async function getReportById(id: string): Promise<Report | null> {
 
 export interface ReportWithRecommendations {
   report: Report;
-  recommendedProducts: Array<{ id: string; product_id?: string; product?: { id: string; name?: string; description?: string } }>;
+  recommendedProducts: Array<{
+    id: string;
+    product_id?: string;
+    product?: {
+      id: string;
+      name?: string;
+      description?: string;
+      key_ingredients?: string[];
+      keyIngredients?: string[];
+    };
+  }>;
   recommendedDermatologists: Array<{ id: string; dermatologist_id?: string; dermatologist?: { id: string; name?: string; clinic_name?: string } }>;
 }
 
@@ -279,11 +323,12 @@ export async function getReportWithRecommendations(id: string): Promise<ReportWi
     const payload = result?.data ?? result;
     if (!payload) return null;
     const raw = payload.report;
-    const report = raw ? normalizeReport(raw) : null;
+    const products = payload.recommendedProducts ?? [];
+    const report = raw ? normalizeReport(raw, { recommendedProducts: products }) : null;
     if (!report) return null;
     return {
       report,
-      recommendedProducts: (payload.recommendedProducts ?? []) as ReportWithRecommendations["recommendedProducts"],
+      recommendedProducts: products as ReportWithRecommendations["recommendedProducts"],
       recommendedDermatologists: (payload.recommendedDermatologists ?? []) as ReportWithRecommendations["recommendedDermatologists"],
     };
   } catch {

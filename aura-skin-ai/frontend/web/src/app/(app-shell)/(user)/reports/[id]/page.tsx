@@ -7,6 +7,8 @@ import { getReportById, getReports } from "@/services/api";
 import type { Report } from "@/types";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { CardSkeleton } from "@/components/ui/skeleton-primitives";
+import { AssessmentResultPanel } from "@/components/assessment/AssessmentResultPanel";
 import { ReportActionsSection } from "@/components/reports/ReportActionsSection";
 import { sortReportsNewestFirst } from "@/lib/reportInsights";
 
@@ -59,8 +61,10 @@ export default function ReportDetailPage() {
 
   if (!loaded) {
     return (
-      <div className="space-y-4">
-        <p className="text-muted-foreground">Loading report…</p>
+      <div className="space-y-6">
+        <div className="h-9 w-28 rounded-md border border-border/60 bg-muted/40 animate-pulse" aria-hidden />
+        <CardSkeleton height="h-40" />
+        <CardSkeleton height="h-56" />
       </div>
     );
   }
@@ -98,17 +102,10 @@ export default function ReportDetailPage() {
           <p className="text-sm text-muted-foreground">{report.date}</p>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p>{report.summary}</p>
-          {report.skinType && (
-            <p className="text-sm">
-              <span className="font-label">Skin type:</span> {report.skinType}
-            </p>
-          )}
-          {report.concerns && report.concerns.length > 0 && (
-            <p className="text-sm">
-              <span className="font-label">Concerns:</span> {report.concerns.join(", ")}
-            </p>
-          )}
+          <p className="text-sm text-foreground">
+            {report.summary?.trim() ? report.summary : "—"}
+          </p>
+          <AssessmentResultPanel report={report} />
         </CardContent>
       </Card>
 

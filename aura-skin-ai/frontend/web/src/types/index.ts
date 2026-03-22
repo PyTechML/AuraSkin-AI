@@ -1,3 +1,7 @@
+import type { SeverityBucket } from "./assessment";
+
+export type { AssessmentResult, SeverityBucket } from "./assessment";
+
 export type UserRole = "USER" | "ADMIN" | "DERMATOLOGIST" | "STORE";
 
 export interface User {
@@ -92,6 +96,14 @@ export interface Report {
   skinType?: string;
   concerns?: string[];
   skinScore?: number;
+  /** Normalized from API / recommended products (client-only shape). */
+  routineSteps?: string[];
+  recommendedIngredients?: string[];
+  avoidIngredients?: string[];
+  sensitivityLevel?: string;
+  inflammationLevelNormalized?: SeverityBucket;
+  /** Alias for display when skin_score is a finite 0–100 value. */
+  confidenceScore?: number | null;
 }
 
 export interface Dermatologist {
