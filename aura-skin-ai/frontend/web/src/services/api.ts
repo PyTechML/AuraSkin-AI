@@ -5,7 +5,6 @@ import type {
   Store,
   Patient,
   Order,
-  OrderItem,
   ConsultationBooking,
 } from "@/types";
 import { API_BASE } from "./apiBase";
@@ -506,12 +505,12 @@ export async function submitContact(payload: {
   await apiPost("/contact", payload);
 }
 
-export async function createOrder(
-  userId: string,
-  items: OrderItem[],
-  storeId?: string
-): Promise<Order> {
-  return await apiPost("/user/orders", { userId, items, storeId });
+export async function createCheckoutSession(payload: {
+  product_id: string;
+  quantity: number;
+  store_id?: string;
+}): Promise<{ checkout_url: string }> {
+  return await apiPost("/payments/create-checkout", payload);
 }
 
 export async function getOrders(userId: string): Promise<Order[]> {

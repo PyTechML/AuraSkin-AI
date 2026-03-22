@@ -18,7 +18,7 @@ export class CheckoutService {
     userId: string,
     productId: string,
     quantity: number,
-    storeId: string,
+    storeId: string | undefined,
     successUrl: string,
     cancelUrl: string
   ): Promise<{ checkout_url: string }> {
@@ -26,10 +26,25 @@ export class CheckoutService {
       throw new BadRequestException("Payment service is not configured");
     }
     const supabase = getSupabaseClient();
+    let resolvedStoreId = storeId?.trim() ?? "";
+    if (!resolvedStoreId) {
+      const { data: invRow, error: invError } = await supabase
+        .from("inventory")
+        .select("store_id")
+        .eq("product_id", productId)
+        .eq("status", "approved")
+        .limit(1)
+        .maybeSingle();
+      const sid = (invRow as { store_id?: string } | null)?.store_id;
+      if (invError || !sid) {
+        throw new BadRequestException("No approved inventory for product");
+      }
+      resolvedStoreId = sid;
+    }
     const { data: inventory } = await supabase
       .from("inventory")
       .select("price_override")
-      .eq("store_id", storeId)
+      .eq("store_id", resolvedStoreId)
       .eq("product_id", productId)
       .eq("status", "approved")
       .single();
@@ -67,7 +82,7 @@ export class CheckoutService {
       metadata: {
         type: "order",
         user_id: userId,
-        store_id: storeId,
+        store_id: resolvedStoreId,
         product_id: productId,
         quantity: String(quantity),
         unit_price: String(unitPrice),

@@ -4,9 +4,9 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useCartStore } from "@/store/cartStore";
-import { useOrdersStore } from "@/store/ordersStore";
 import { useAuthStore } from "@/store/authStore";
-import { getProductById } from "@/services/api";
+import { createCheckoutSession, getProductById } from "@/services/api";
+import { usePanelToast } from "@/components/panel/PanelToast";
 import type { Product } from "@/types";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,9 +27,8 @@ function CheckoutContent() {
   const directQty = parseInt(searchParams.get("qty") ?? "1", 10);
 
   const items = useCartStore((s) => s.items ?? []);
-  const clear = useCartStore((s) => s.clear);
-  const createOrder = useOrdersStore((s) => s.createOrder);
   const user = useAuthStore((s) => s.user);
+  const { addToast } = usePanelToast();
 
   const [step, setStep] = useState(1);
   const [address, setAddress] = useState({
@@ -97,17 +96,23 @@ function CheckoutContent() {
     if (!user) return;
     setSubmitting(true);
     try {
-      const orderItems = checkoutItems.map(({ product, quantity }) => ({
-        productId: product.id,
-        productName: product.name,
-        quantity,
-        price: product.price ?? 0,
-      }));
-      const order = await createOrder(orderItems);
-      if (order) {
-        if (mode !== "direct") clear();
-        router.push(`/orders/${order.id}`);
+      if (checkoutItems.length > 1) {
+        addToast("Unable to start checkout", "error");
+        return;
       }
+      const line = checkoutItems[0];
+      if (!line) return;
+      const { checkout_url: checkoutUrl } = await createCheckoutSession({
+        product_id: line.product.id,
+        quantity: line.quantity,
+      });
+      if (checkoutUrl) {
+        window.location.href = checkoutUrl;
+        return;
+      }
+      addToast("Unable to start checkout", "error");
+    } catch {
+      addToast("Unable to start checkout", "error");
     } finally {
       setSubmitting(false);
     }
@@ -287,7 +292,7 @@ function CheckoutContent() {
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Payment integration is UI-only. In production, this would connect to a payment gateway.
+                  After review, you will complete payment securely on Stripe.
                 </p>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => setStep(1)}>
@@ -330,7 +335,7 @@ function CheckoutContent() {
                     Back
                   </Button>
                   <Button onClick={handleSubmit} disabled={submitting}>
-                    {submitting ? "Placing order…" : "Place order"}
+                    {submitting ? "Starting checkout…" : "Place order"}
                   </Button>
                 </div>
               </CardContent>

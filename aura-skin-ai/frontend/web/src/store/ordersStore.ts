@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Order } from "@/types";
-import { createOrder as apiCreateOrder, getOrders as apiGetOrders, getOrderById as apiGetOrderById } from "@/services/api";
+import { getOrders as apiGetOrders, getOrderById as apiGetOrderById } from "@/services/api";
 import { useAuthStore } from "./authStore";
 
 interface OrdersState {
@@ -8,11 +8,10 @@ interface OrdersState {
   loading: boolean;
   fetchError: string | null;
   fetchOrders: () => Promise<void>;
-  createOrder: (items: { productId: string; productName: string; quantity: number; price: number }[]) => Promise<Order | null>;
   getOrderById: (id: string) => Promise<Order | null>;
 }
 
-export const useOrdersStore = create<OrdersState>((set, get) => ({
+export const useOrdersStore = create<OrdersState>((set) => ({
   orders: [],
   loading: false,
   fetchError: null,
@@ -27,17 +26,6 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       set({ orders: [], fetchError: "Unable to load orders. Please try again." });
     } finally {
       set({ loading: false });
-    }
-  },
-  createOrder: async (items) => {
-    const user = useAuthStore.getState().user;
-    if (!user) return null;
-    try {
-      const order = await apiCreateOrder(user.id, items);
-      set((s) => ({ orders: [order, ...s.orders] }));
-      return order;
-    } catch {
-      return null;
     }
   },
   getOrderById: async (id: string) => {
