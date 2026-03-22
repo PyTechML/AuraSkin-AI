@@ -6,6 +6,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# TypeScript incremental (do not commit)
+*.tsbuildinfo
+**/*.tsbuildinfo
+
 # Frontend build artifacts
 .next/
 **/.next/

@@ -7,6 +7,9 @@ import type { User, UserRole } from "@/types";
 import { API_BASE } from "@/services/apiBase";
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
+/** Transient API/network failures on refresh should not immediately drop the session. */
+const AUTH_ME_MAX_ATTEMPTS = 4;
+const AUTH_ME_RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
 const BACKEND_TO_FRONTEND_ROLE: Record<string, UserRole> = {
   user: "USER",
   store: "STORE",
@@ -65,39 +68,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [setHasHydrated]);
 
   const reconcileWithMe = useCallback(async (token: string) => {
-    try {
-      const response = await fetch(`${API_BASE}/api/auth/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      if (!response.ok) {
+    for (let attempt = 0; attempt < AUTH_ME_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
         if (response.status === 401) {
           logout();
+          return;
+        }
+        if (!response.ok) {
+          if (AUTH_ME_RETRYABLE_STATUS.has(response.status) && attempt < AUTH_ME_MAX_ATTEMPTS - 1) {
+            await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+            continue;
+          }
+          return;
+        }
+        const payload = (await response.json().catch(() => ({}))) as {
+          data?: { id?: string; email?: string; fullName?: string | null; role?: string };
+        };
+        const me = payload?.data;
+        const frontendRole = me?.role ? BACKEND_TO_FRONTEND_ROLE[me.role.toLowerCase()] : null;
+        if (!me?.id || !me?.email || !frontendRole) {
+          return;
+        }
+        setSession(
+          token,
+          {
+            id: me.id,
+            email: me.email,
+            name: me.fullName ?? me.email,
+            role: frontendRole,
+          },
+          frontendRole,
+          useAuthStore.getState().sessionToken
+        );
+        return;
+      } catch {
+        if (attempt < AUTH_ME_MAX_ATTEMPTS - 1) {
+          await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+          continue;
         }
         return;
       }
-      const payload = (await response.json().catch(() => ({}))) as {
-        data?: { id?: string; email?: string; fullName?: string | null; role?: string };
-      };
-      const me = payload?.data;
-      const frontendRole = me?.role ? BACKEND_TO_FRONTEND_ROLE[me.role.toLowerCase()] : null;
-      if (!me?.id || !me?.email || !frontendRole) {
-        return;
-      }
-      setSession(
-        token,
-        {
-          id: me.id,
-          email: me.email,
-          name: me.fullName ?? me.email,
-          role: frontendRole,
-        },
-        frontendRole,
-        useAuthStore.getState().sessionToken
-      );
-    } catch {
-      // Keep current session on transient network/runtime failures.
-      return;
     }
   }, [logout, setSession]);
 
@@ -145,7 +159,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   /** If persist hydration fails without notifying listeners, unblock the shell after a short wait. */
   useEffect(() => {
-    const safetyMs = 2800;
+    // Allow time for /auth/me retries so we do not mark ready before bootstrap finishes.
+    const safetyMs = 10_000;
     const id = window.setTimeout(() => {
       if (useAuthStore.getState()._hasHydrated) return;
       void (async () => {
