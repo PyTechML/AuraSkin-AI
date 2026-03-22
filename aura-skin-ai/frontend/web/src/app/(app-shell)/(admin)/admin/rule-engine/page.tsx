@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   AdminHeader,
   AdminPrimaryGrid,
@@ -18,32 +18,38 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Plus, GripVertical, Trash2, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getAiRules, type AiRuleRow } from "@/services/apiAdmin";
+import {
+  getAdminRules,
+  createAdminRule,
+  deleteAdminRule,
+} from "@/services/apiAdmin";
+import {
+  PanelToastProvider,
+  usePanelToast,
+} from "@/components/panel/PanelToast";
+import {
+  ADMIN_RULE_TYPES,
+  type AdminRule,
+  type AdminRuleType,
+} from "@/types/rule";
 
-interface RuleItem {
-  id: string;
-  name: string;
-  status: "active" | "draft";
-  priority: number;
-  severity: string;
-  updatedAt: string;
+function listDateLabel(r: AdminRule): string {
+  const raw = r.updatedAt ?? r.createdAt ?? "";
+  return raw ? raw.slice(0, 10) : "—";
 }
 
-function mapApiRuleToItem(r: AiRuleRow): RuleItem {
-  return {
-    id: r.id,
-    name: `${r.rule_type}: ${r.rule_value}`,
-    status: "active",
-    priority: 1,
-    severity: "medium",
-    updatedAt: (r.created_at ?? "").slice(0, 10),
-  };
-}
-
-export default function AdminRuleEnginePage() {
-  const [rules, setRules] = useState<RuleItem[]>([]);
+function AdminRuleEnginePageInner() {
+  const { addToast } = usePanelToast();
+  const [rules, setRules] = useState<AdminRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
   const [logicMode, setLogicMode] = useState<"AND" | "OR">("AND");
@@ -51,23 +57,79 @@ export default function AdminRuleEnginePage() {
   const [sandboxConcern, setSandboxConcern] = useState("Hydration");
   const [sandboxAge, setSandboxAge] = useState("28");
   const [sandboxResult, setSandboxResult] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addRuleType, setAddRuleType] = useState<AdminRuleType>("blocked_keywords");
+  const [addRuleValue, setAddRuleValue] = useState("");
+  const [addSubmitting, setAddSubmitting] = useState(false);
 
-  useEffect(() => {
-    getAiRules()
-      .then((apiRules) => {
-        const mapped = apiRules.map(mapApiRuleToItem);
-        setRules(mapped);
-        if (mapped.length > 0 && !selectedRuleId) setSelectedRuleId(mapped[0].id);
-      })
-      .finally(() => setLoading(false));
+  const loadRules = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = await getAdminRules();
+      const safeRules = Array.isArray(list) ? list : [];
+      setRules(safeRules);
+      setSelectedRuleId((prev) => {
+        if (safeRules.length === 0) return null;
+        if (prev && safeRules.some((r) => r.id === prev)) return prev;
+        return safeRules[0].id;
+      });
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const selectedRule = rules.find((r) => r.id === selectedRuleId);
+  useEffect(() => {
+    void loadRules();
+  }, [loadRules]);
+
+  const safeRules = Array.isArray(rules) ? rules : [];
+  const selectedRule = safeRules.find((r) => r.id === selectedRuleId);
 
   const runSandbox = () => {
     setSandboxResult(
       `Preview: Would match rules for skin type "${sandboxSkinType}", concern "${sandboxConcern}", age ${sandboxAge}. Connect recommendation API for live results.`
     );
+  };
+
+  const openAddDialog = () => {
+    setAddRuleType("blocked_keywords");
+    setAddRuleValue("");
+    setAddOpen(true);
+  };
+
+  const submitCreateRule = async () => {
+    const trimmed = addRuleValue.trim();
+    if (!trimmed) return;
+    setAddSubmitting(true);
+    try {
+      await createAdminRule({ rule_type: addRuleType, rule_value: trimmed });
+      addToast("Rule created");
+      setAddOpen(false);
+      await loadRules();
+    } catch {
+      addToast("Unable to update rule", "error");
+    } finally {
+      setAddSubmitting(false);
+    }
+  };
+
+  const handleDeleteRule = async () => {
+    if (!selectedRule) return;
+    if (
+      !window.confirm(
+        "Delete this rule? This cannot be undone."
+      )
+    ) {
+      return;
+    }
+    const id = selectedRule.id;
+    try {
+      await deleteAdminRule(id);
+      addToast("Rule deleted");
+      await loadRules();
+    } catch {
+      addToast("Unable to update rule", "error");
+    }
   };
 
   return (
@@ -89,7 +151,14 @@ export default function AdminRuleEnginePage() {
                 <div className="p-4 text-sm text-muted-foreground">Loading rules…</div>
               ) : (
               <div className="flex flex-col">
-                {rules.map((rule) => (
+                {safeRules.length === 0 ? (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    No rules configured
+                  </div>
+                ) : (
+                safeRules.map((rule) => {
+                  const status = rule.isActive ? "active" : "draft";
+                  return (
                   <button
                     key={rule.id}
                     type="button"
@@ -103,18 +172,20 @@ export default function AdminRuleEnginePage() {
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium truncate">{rule.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        P{rule.priority} · {rule.severity} · {rule.updatedAt}
+                        P1 · medium · {listDateLabel(rule)}
                       </p>
                     </div>
-                    <Badge variant={rule.status === "active" ? "default" : "secondary"} className="shrink-0">
-                      {rule.status}
+                    <Badge variant={status === "active" ? "default" : "secondary"} className="shrink-0">
+                      {status}
                     </Badge>
                   </button>
-                ))}
+                  );
+                })
+                )}
               </div>
               )}
               <div className="p-2 border-t border-border/60">
-                <Button variant="outline" size="sm" className="w-full">
+                <Button variant="outline" size="sm" className="w-full" type="button" onClick={openAddDialog}>
                   <Plus className="h-4 w-4 mr-2" />
                   Add rule
                 </Button>
@@ -166,12 +237,12 @@ export default function AdminRuleEnginePage() {
                     </div>
                     <div className="rounded-lg border border-border/60 p-3 bg-muted/20 animate-in fade-in duration-200">
                       <p className="text-xs font-medium text-muted-foreground">Priority</p>
-                      <p className="text-sm mt-1">{selectedRule.priority}</p>
+                      <p className="text-sm mt-1">1</p>
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <Button size="sm">Save changes</Button>
-                    <Button variant="outline" size="sm">
+                    <Button size="sm" type="button">Save changes</Button>
+                    <Button variant="outline" size="sm" type="button" onClick={() => void handleDeleteRule()}>
                       <Trash2 className="h-4 w-4 mr-2" />
                       Delete
                     </Button>
@@ -246,6 +317,64 @@ export default function AdminRuleEnginePage() {
           </CardContent>
         </Card>
       </AdminPrimaryGrid>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add rule</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div>
+              <Label htmlFor="rule-type" className="text-xs">Rule type</Label>
+              <Select
+                value={addRuleType}
+                onValueChange={(v) => setAddRuleType(v as AdminRuleType)}
+              >
+                <SelectTrigger id="rule-type" className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ADMIN_RULE_TYPES.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t.replace(/_/g, " ")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="rule-value" className="text-xs">Value</Label>
+              <Input
+                id="rule-value"
+                className="mt-1"
+                value={addRuleValue}
+                onChange={(e) => setAddRuleValue(e.target.value)}
+                placeholder="e.g. keyword list or numeric limit"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" type="button" onClick={() => setAddOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={addSubmitting || !addRuleValue.trim()}
+              onClick={() => void submitCreateRule()}
+            >
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
+  );
+}
+
+export default function AdminRuleEnginePage() {
+  return (
+    <PanelToastProvider>
+      <AdminRuleEnginePageInner />
+    </PanelToastProvider>
   );
 }

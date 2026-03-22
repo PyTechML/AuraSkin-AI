@@ -24,7 +24,8 @@ import { PanelEmptyState } from "@/components/panel/PanelEmptyState";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Shield } from "lucide-react";
-import { getAdminAuditLogs, type AuditLogRow } from "@/services/apiAdmin";
+import { getAdminAuditLogs } from "@/services/apiAdmin";
+import type { AdminAuditLog } from "@/types/governance";
 
 const PAGE_SIZE = 10;
 
@@ -38,16 +39,30 @@ interface AuditEntry {
   module?: string;
 }
 
-function mapApiToEntry(r: AuditLogRow): AuditEntry {
+function mapApiToEntry(r: AdminAuditLog): AuditEntry {
+  const entityType = r.entityType ?? "";
+  const entityId = r.entityId ?? "";
+  const targetPart = `${entityType}${entityId ? ` ${entityId}` : ""}`.trim();
   return {
     id: r.id,
-    admin: r.admin_email ?? r.admin_id ?? "—",
+    admin: r.performedBy ?? "—",
     action: r.action,
-    target: `${r.target_entity}${r.target_id ? ` ${r.target_id}` : ""}`,
-    timestamp: r.created_at,
+    target: targetPart !== "" ? targetPart : "—",
+    timestamp: r.createdAt,
     ipAddress: "—",
-    module: r.target_entity,
+    module: entityType || undefined,
   };
+}
+
+function sortLogsByCreatedAtDesc(logs: AdminAuditLog[]): AdminAuditLog[] {
+  return [...logs].sort((a, b) => {
+    const ta = a.createdAt || "";
+    const tb = b.createdAt || "";
+    if (!ta && !tb) return 0;
+    if (!ta) return 1;
+    if (!tb) return -1;
+    return tb.localeCompare(ta);
+  });
 }
 
 export default function AdminAuditLogsPage() {
@@ -60,8 +75,11 @@ export default function AdminAuditLogsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getAdminAuditLogs(200)
-      .then((data) => setEntries(data.map(mapApiToEntry)))
+    getAdminAuditLogs(20)
+      .then((data) => {
+        const safeLogs = Array.isArray(data) ? data : [];
+        setEntries(sortLogsByCreatedAtDesc(safeLogs).map(mapApiToEntry));
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -128,8 +146,8 @@ export default function AdminAuditLogsPage() {
           ) : filtered.length === 0 ? (
             <PanelEmptyState
               icon={<Shield className="h-12 w-12" />}
-              title="No audit logs"
-              description="Admin actions will appear here."
+              title="No governance activity yet"
+              description="Admin actions will appear here when recorded."
             />
           ) : (
           <>
@@ -149,7 +167,11 @@ export default function AdminAuditLogsPage() {
                   <TableCell className="text-muted-foreground">{entry.admin}</TableCell>
                   <TableCell className="font-medium">{entry.action}</TableCell>
                   <TableCell className="text-muted-foreground">{entry.target}</TableCell>
-                  <TableCell className="text-muted-foreground">{entry.timestamp.replace("T", " ").slice(0, 19)}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {entry.timestamp
+                      ? entry.timestamp.replace("T", " ").slice(0, 19)
+                      : "—"}
+                  </TableCell>
                   <TableCell className="text-muted-foreground">{entry.ipAddress}</TableCell>
                 </TableRow>
               ))}

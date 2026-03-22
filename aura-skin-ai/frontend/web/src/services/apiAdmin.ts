@@ -3,6 +3,8 @@ import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import type { AdminStore } from "@/types/store";
 import type { AdminDermatologistVerification } from "@/types/dermatologist";
 import type { AdminDashboardResult } from "@/types/admin-dashboard";
+import type { AdminRule, CreateAdminRulePayload } from "@/types/rule";
+import type { AdminAuditLog } from "@/types/governance";
 
 function getAuthHeaders(): Record<string, string> {
   const token = useAuthStore.getState().accessToken ?? getPersistedAccessToken();
@@ -31,6 +33,24 @@ async function apiPut<T>(path: string, body?: unknown): Promise<T> {
   };
   const res = await fetch(`${API_BASE}/api${path}`, {
     method: "PUT",
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (json as any)?.message ?? `Request failed: ${res.status}`;
+    throw new Error(msg);
+  }
+  return ((json as any)?.data ?? json) as T;
+}
+
+async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeaders(),
+  };
+  const res = await fetch(`${API_BASE}/api${path}`, {
+    method: "POST",
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -480,39 +500,104 @@ export async function getAdminReports(): Promise<AdminReportRow[]> {
   }
 }
 
-export interface AuditLogRow {
-  id: string;
-  admin_id: string;
-  admin_email?: string | null;
-  action: string;
-  target_entity: string;
-  target_id: string | null;
-  details: Record<string, unknown> | null;
-  created_at: string;
+function mapRawToAdminAuditLog(row: Record<string, unknown>): AdminAuditLog | null {
+  const id = row.id != null ? String(row.id) : "";
+  if (!id) return null;
+  const actionRaw = row.action != null ? String(row.action).trim() : "";
+  const action = actionRaw !== "" ? actionRaw : "System update";
+  const te = row.target_entity != null ? String(row.target_entity).trim() : "";
+  const entityType = te !== "" ? te : undefined;
+  const tid = row.target_id;
+  const entityId =
+    tid != null && String(tid).trim() !== "" ? String(tid).trim() : undefined;
+  const ca = row.created_at != null ? String(row.created_at) : "";
+  const createdAt = ca;
+  const email = row.admin_email != null ? String(row.admin_email).trim() : "";
+  const aid = row.admin_id != null ? String(row.admin_id).trim() : "";
+  const performedBy = email !== "" ? email : aid !== "" ? aid : undefined;
+  return {
+    id,
+    action,
+    entityType,
+    entityId,
+    createdAt,
+    performedBy,
+  };
 }
 
-export async function getAdminAuditLogs(limit?: number): Promise<AuditLogRow[]> {
+export async function getAdminAuditLogs(limit?: number): Promise<AdminAuditLog[]> {
   try {
     const path = limit ? `/admin/audit-logs?limit=${limit}` : "/admin/audit-logs";
-    return await apiGet<AuditLogRow[]>(path);
+    const raw = await apiGet<unknown>(path);
+    const list = Array.isArray(raw) ? raw : [];
+    return list
+      .map((item) =>
+        item != null && typeof item === "object"
+          ? mapRawToAdminAuditLog(item as Record<string, unknown>)
+          : null
+      )
+      .filter((r): r is AdminAuditLog => r != null);
   } catch {
     return [];
   }
 }
 
-export interface AiRuleRow {
-  id: string;
-  rule_type: string;
-  rule_value: string;
-  created_at: string;
+function mapApiRuleRowToAdminRule(row: Record<string, unknown>): AdminRule | null {
+  const id = row.id != null ? String(row.id) : "";
+  if (!id) return null;
+  const ruleType = row.rule_type != null ? String(row.rule_type) : "";
+  const ruleValue = row.rule_value != null ? String(row.rule_value) : "";
+  const name =
+    ruleType && ruleValue
+      ? `${ruleType}: ${ruleValue}`
+      : ruleType || ruleValue || "Rule";
+  const isActiveRaw = row.is_active;
+  const isActive =
+    typeof isActiveRaw === "boolean"
+      ? isActiveRaw
+      : isActiveRaw === "true" || isActiveRaw === 1
+        ? true
+        : isActiveRaw === "false" || isActiveRaw === 0
+          ? false
+          : true;
+  const desc = row.description;
+  return {
+    id,
+    name,
+    description: typeof desc === "string" && desc.trim() !== "" ? desc : undefined,
+    isActive,
+    createdAt: typeof row.created_at === "string" ? row.created_at : undefined,
+    updatedAt: typeof row.updated_at === "string" ? row.updated_at : undefined,
+  };
 }
 
-export async function getAiRules(): Promise<AiRuleRow[]> {
+export async function getAdminRules(): Promise<AdminRule[]> {
   try {
-    return await apiGet<AiRuleRow[]>("/admin/ai/rules");
+    const data = await apiGet<unknown>("/admin/ai/rules");
+    const list = Array.isArray(data) ? data : [];
+    return list
+      .map((item) =>
+        mapApiRuleRowToAdminRule(
+          item && typeof item === "object" ? (item as Record<string, unknown>) : {}
+        )
+      )
+      .filter((r): r is AdminRule => r != null);
   } catch {
     return [];
   }
+}
+
+export async function createAdminRule(payload: CreateAdminRulePayload): Promise<AdminRule> {
+  const data = await apiPost<unknown>("/admin/ai/rules", payload);
+  const row =
+    data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  const mapped = mapApiRuleRowToAdminRule(row);
+  if (!mapped) throw new Error("Invalid rule response");
+  return mapped;
+}
+
+export async function deleteAdminRule(ruleId: string): Promise<void> {
+  await apiDelete(`/admin/ai/rules/${encodeURIComponent(ruleId)}`);
 }
 
 function normalizeVerificationStatus(
