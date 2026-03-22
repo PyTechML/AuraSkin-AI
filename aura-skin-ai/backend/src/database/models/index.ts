@@ -102,6 +102,7 @@ export interface DbStoreProfile {
   longitude: number | null;
   contact_number: string | null;
   logo_url: string | null;
+  approval_status?: string | null;
   created_at?: string;
 }
 

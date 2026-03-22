@@ -1,3 +1,8 @@
+import type { Store } from "./index";
+
+/** Public directory row from GET /api/stores (approved profile + approved inventory + LIVE products). */
+export type PublicStore = Store & { totalProducts: number };
+
 /** Admin governance list row — normalized from `store_profiles` via GET /admin/stores. */
 export interface AdminStore {
   id: string;

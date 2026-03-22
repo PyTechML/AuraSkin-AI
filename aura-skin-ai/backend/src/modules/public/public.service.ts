@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
-import { PublicRepository, type ProductFilters } from "./public.repository";
-import type { DbProduct, DbStore, DbDermatologist, DbBlog, DbFaq } from "../../database/models";
+import { PublicRepository, type ProductFilters, type PublicStoreProfileRow } from "./public.repository";
+import type { DbProduct, DbDermatologist, DbBlog, DbFaq } from "../../database/models";
 
 /** API response shapes (camelCase) for frontend compatibility. */
 export interface ProductResponse {
@@ -34,6 +34,8 @@ export interface StoreResponse {
   openingHours?: string;
   contact?: string;
   distance?: number;
+  /** Approved inventory rows linked to LIVE products for this store. */
+  totalProducts: number;
 }
 
 export interface DermatologistResponse {
@@ -87,18 +89,21 @@ function mapProduct(row: DbProduct): ProductResponse {
   };
 }
 
-function mapStore(row: DbStore): StoreResponse {
+function mapStoreProfile(row: PublicStoreProfileRow): StoreResponse {
+  const total = row.totalProducts;
+  const totalProducts = Number.isFinite(total) ? total : 0;
   return {
     id: row.id,
-    name: row.name,
+    name: row.store_name ?? "",
     location: row.city ?? "",
-    status: row.status ?? "Active",
-    address: row.address,
+    status: "Active",
+    address: row.address ?? undefined,
     lat: row.latitude != null ? Number(row.latitude) : undefined,
     lng: row.longitude != null ? Number(row.longitude) : undefined,
-    description: row.description,
-    openingHours: row.opening_hours,
-    contact: row.contact_number,
+    description: row.store_description ?? undefined,
+    imageUrl: row.logo_url ?? undefined,
+    contact: row.contact_number ?? undefined,
+    totalProducts,
   };
 }
 
@@ -171,7 +176,7 @@ export class PublicService {
 
   async getStores(): Promise<StoreResponse[]> {
     const rows = await this.repo.getStores();
-    return rows.map(mapStore);
+    return rows.map(mapStoreProfile);
   }
 
   async getStoresNearby(lat: number, lng: number): Promise<StoreResponse[]> {
@@ -179,7 +184,7 @@ export class PublicService {
     const withDistance = rows
       .filter((s) => s.latitude != null && s.longitude != null)
       .map((s) => {
-        const mapped = mapStore(s);
+        const mapped = mapStoreProfile(s);
         mapped.distance = Math.round(distanceKm(lat, lng, Number(s.latitude), Number(s.longitude)) * 10) / 10;
         return mapped;
       });
@@ -188,7 +193,7 @@ export class PublicService {
 
   async getStoreById(id: string): Promise<StoreResponse | null> {
     const row = await this.repo.getStoreById(id);
-    return row ? mapStore(row) : null;
+    return row ? mapStoreProfile(row) : null;
   }
 
   async getDermatologists(): Promise<DermatologistResponse[]> {

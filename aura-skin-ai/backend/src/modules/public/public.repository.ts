@@ -1,12 +1,15 @@
 import { getSupabaseClient } from "../../database/supabase.client";
 import type {
   DbProduct,
-  DbStore,
+  DbStoreProfile,
   DbDermatologist,
   DbBlog,
   DbFaq,
   DbContactMessage,
 } from "../../database/models";
+
+/** Approved store_profiles row with public catalog product count. */
+export type PublicStoreProfileRow = DbStoreProfile & { totalProducts: number };
 
 export interface ProductFilters {
   skinType?: string;
@@ -112,18 +115,95 @@ export class PublicRepository {
     return (data as DbProduct[]) ?? [];
   }
 
-  async getStores(): Promise<DbStore[]> {
+  /**
+   * Approved store_profiles with at least one approved inventory row
+   * whose product is LIVE (same gate as public product listing).
+   */
+  async getStores(): Promise<PublicStoreProfileRow[]> {
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase.from("stores").select("*").order("name");
-    if (error) return [];
-    return (data as DbStore[]) ?? [];
+    const { data: invRows, error: invError } = await supabase
+      .from("inventory")
+      .select("store_id, product_id")
+      .eq("status", "approved");
+    if (invError || !invRows?.length) return [];
+
+    const productIds = [...new Set(invRows.map((r: { product_id: string }) => r.product_id))];
+    if (productIds.length === 0) return [];
+
+    const { data: liveProducts, error: liveError } = await supabase
+      .from("products")
+      .select("id")
+      .in("id", productIds)
+      .eq("approval_status", "LIVE");
+    if (liveError || !liveProducts?.length) return [];
+
+    const liveProductIds = new Set(liveProducts.map((p: { id: string }) => p.id));
+    const countByStore = new Map<string, number>();
+    for (const row of invRows as { store_id: string; product_id: string }[]) {
+      if (!liveProductIds.has(row.product_id)) continue;
+      countByStore.set(row.store_id, (countByStore.get(row.store_id) ?? 0) + 1);
+    }
+
+    const eligibleStoreIds = [...countByStore.keys()];
+    if (eligibleStoreIds.length === 0) return [];
+
+    const { data: profiles, error: profError } = await supabase
+      .from("store_profiles")
+      .select("*")
+      .in("id", eligibleStoreIds)
+      .eq("approval_status", "approved");
+    if (profError || !profiles?.length) return [];
+
+    const rows: PublicStoreProfileRow[] = (profiles as DbStoreProfile[]).map((p) => ({
+      ...p,
+      totalProducts: countByStore.get(p.id) ?? 0,
+    }));
+
+    rows.sort((a, b) => {
+      const an = (a.store_name ?? "").trim().toLowerCase();
+      const bn = (b.store_name ?? "").trim().toLowerCase();
+      if (an === bn) return (a.id ?? "").localeCompare(b.id ?? "");
+      if (!an) return 1;
+      if (!bn) return -1;
+      return an.localeCompare(bn);
+    });
+
+    return rows.filter((r) => r.totalProducts > 0);
   }
 
-  async getStoreById(id: string): Promise<DbStore | null> {
+  async getStoreById(id: string): Promise<PublicStoreProfileRow | null> {
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase.from("stores").select("*").eq("id", id).single();
-    if (error || !data) return null;
-    return data as DbStore;
+    const { data: profile, error: profError } = await supabase
+      .from("store_profiles")
+      .select("*")
+      .eq("id", id)
+      .eq("approval_status", "approved")
+      .maybeSingle();
+    if (profError || !profile) return null;
+
+    const { data: invRows, error: invError } = await supabase
+      .from("inventory")
+      .select("product_id")
+      .eq("store_id", id)
+      .eq("status", "approved");
+    if (invError || !invRows?.length) return null;
+
+    const productIds = [...new Set(invRows.map((r: { product_id: string }) => r.product_id))];
+    const { data: liveProducts, error: liveError } = await supabase
+      .from("products")
+      .select("id")
+      .in("id", productIds)
+      .eq("approval_status", "LIVE");
+    if (liveError || !liveProducts?.length) return null;
+
+    const liveProductIds = new Set(liveProducts.map((p: { id: string }) => p.id));
+    let totalProducts = 0;
+    for (const row of invRows as { product_id: string }[]) {
+      if (liveProductIds.has(row.product_id)) totalProducts += 1;
+    }
+    if (totalProducts === 0) return null;
+
+    return { ...(profile as DbStoreProfile), totalProducts };
   }
 
   async getDermatologists(): Promise<DbDermatologist[]> {

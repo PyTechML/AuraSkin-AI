@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useUserLocation } from "@/hooks/useUserLocation";
 import { getStoresNearby, getStores } from "@/services/api";
-import type { Store } from "@/types";
+import type { PublicStore } from "@/types/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { MapPin, Star } from "lucide-react";
@@ -24,7 +24,7 @@ export default function StoresPage() {
     hasAccurateLocation,
     refresh,
   } = useUserLocation();
-  const [stores, setStores] = useState<Store[]>([]);
+  const [stores, setStores] = useState<PublicStore[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -101,7 +101,7 @@ export default function StoresPage() {
             <Card className="border-border">
               <CardContent className="py-12 text-center">
                 <MapPin className="h-12 w-12 text-muted-foreground/60 mx-auto mb-4" />
-                <p className="text-muted-foreground">No stores found.</p>
+                <p className="text-muted-foreground">No stores available yet</p>
               </CardContent>
             </Card>
           ) : (
@@ -114,7 +114,15 @@ export default function StoresPage() {
                         <MapPin className="h-8 w-8 text-muted-foreground/60" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-heading font-semibold">{store.name}</h3>
+                        <h3 className="font-heading font-semibold">{store.name ?? "Store"}</h3>
+                        {store.location ? (
+                          <p className="text-sm text-muted-foreground">{store.location}</p>
+                        ) : null}
+                        {Number.isFinite(store.totalProducts) && store.totalProducts > 0 ? (
+                          <p className="text-sm text-muted-foreground">
+                            {store.totalProducts} product{store.totalProducts === 1 ? "" : "s"}
+                          </p>
+                        ) : null}
                         {store.rating != null && (
                           <p className="text-sm text-muted-foreground flex items-center gap-1">
                             <Star className="h-4 w-4 fill-amber-400 text-amber-400" />

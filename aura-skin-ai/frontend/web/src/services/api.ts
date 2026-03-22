@@ -7,6 +7,7 @@ import type {
   Order,
   ConsultationBooking,
 } from "@/types";
+import type { PublicStore } from "@/types/store";
 import { API_BASE } from "./apiBase";
 import { apiPost, apiPostMultipart, getAuthHeaders } from "./apiInternal";
 import {
@@ -416,28 +417,59 @@ export async function getDermatologistById(id: string): Promise<Dermatologist | 
   }
 }
 
-export async function getStores(): Promise<Store[]> {
+function normalizePublicStoreItem(raw: unknown): PublicStore | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = o.id != null ? String(o.id) : "";
+  if (!id) return null;
+  const totalRaw = o.totalProducts;
+  const totalProducts =
+    typeof totalRaw === "number" && Number.isFinite(totalRaw) ? totalRaw : 0;
+  const base: Store = {
+    id,
+    name: typeof o.name === "string" ? o.name : "",
+    location: typeof o.location === "string" ? o.location : "",
+    status: typeof o.status === "string" ? o.status : "Active",
+    address: typeof o.address === "string" ? o.address : undefined,
+    lat: typeof o.lat === "number" && Number.isFinite(o.lat) ? o.lat : undefined,
+    lng: typeof o.lng === "number" && Number.isFinite(o.lng) ? o.lng : undefined,
+    description: typeof o.description === "string" ? o.description : undefined,
+    imageUrl: typeof o.imageUrl === "string" ? o.imageUrl : undefined,
+    rating: typeof o.rating === "number" && Number.isFinite(o.rating) ? o.rating : undefined,
+    openingHours: typeof o.openingHours === "string" ? o.openingHours : undefined,
+    contact: typeof o.contact === "string" ? o.contact : undefined,
+    distance: typeof o.distance === "number" && Number.isFinite(o.distance) ? o.distance : undefined,
+  };
+  return { ...base, totalProducts };
+}
+
+function normalizePublicStoreList(data: unknown): PublicStore[] {
+  const list = Array.isArray(data) ? data : [];
+  return list.map(normalizePublicStoreItem).filter((s): s is PublicStore => s != null);
+}
+
+export async function getStores(): Promise<PublicStore[]> {
   try {
-    return await apiGet<Store[]>("/stores");
+    const data = await apiGet<unknown>("/stores");
+    return normalizePublicStoreList(data);
   } catch {
     return [];
   }
 }
 
-export async function getStoresNearby(
-  lat: number,
-  lng: number
-): Promise<Store[]> {
+export async function getStoresNearby(lat: number, lng: number): Promise<PublicStore[]> {
   try {
-    return await apiGet<Store[]>(`/stores/nearby?lat=${lat}&lng=${lng}`);
+    const data = await apiGet<unknown>(`/stores/nearby?lat=${lat}&lng=${lng}`);
+    return normalizePublicStoreList(data);
   } catch {
     return [];
   }
 }
 
-export async function getStoreById(id: string): Promise<Store | null> {
+export async function getStoreById(id: string): Promise<PublicStore | null> {
   try {
-    return await apiGet<Store>(`/stores/${id}`);
+    const data = await apiGet<unknown>(`/stores/${id}`);
+    return normalizePublicStoreItem(data);
   } catch {
     return null;
   }
