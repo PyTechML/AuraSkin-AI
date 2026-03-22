@@ -128,8 +128,8 @@ export default function DermatologistDashboardPage() {
           title="Dermatologist Dashboard"
           subtitle="Monitor patient requests, consultations, and clinical performance in real time."
         />
-        <div className="grid gap-4 md:grid-cols-3">
-          {[1, 2, 3].map((i) => (
+        <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
+          {[1, 2, 3, 4, 5].map((i) => (
             <CardSkeleton key={i} height="h-28" />
           ))}
         </div>
@@ -164,6 +164,10 @@ export default function DermatologistDashboardPage() {
   }
 
   const { earnings } = data;
+  const totalEarnings = Number(earnings?.totalRevenue) || 0;
+  const monthlyEarnings = Number(earnings?.monthlyRevenue) || 0;
+  const pendingSettlement = Number(earnings?.pendingPayout) || 0;
+  const settledEarnings = Math.max(0, totalEarnings - pendingSettlement);
 
   return (
     <div className="space-y-6">
@@ -173,11 +177,12 @@ export default function DermatologistDashboardPage() {
       />
 
       <p className="text-sm text-muted-foreground">
-        Overview of today&apos;s consultation workload and earnings.
+        Overview of today&apos;s consultation workload and recorded earnings
+        (not withdrawable cash until withdrawals are supported).
       </p>
       {/* Top KPI cards */}
       <PanelSectionReveal>
-        <PanelStagger className="grid gap-4 md:grid-cols-3">
+        <PanelStagger className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
           <PanelStaggerItem>
             <Card className="border-border partner-card-hover">
               <CardHeader className="pb-2">
@@ -210,18 +215,50 @@ export default function DermatologistDashboardPage() {
             <Card className="border-border partner-card-hover">
               <CardHeader className="pb-2">
                 <CardTitle className="font-heading text-sm font-medium text-muted-foreground flex items-center gap-2">
-                  <Wallet className="h-4 w-4" /> Earnings snapshot
+                  <Wallet className="h-4 w-4" /> Total earnings
                 </CardTitle>
+                <CardDescription className="text-xs pt-0">
+                  All amounts recorded in your earnings ledger.
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-semibold">
-                  ${((Number(earnings?.monthlyRevenue) || 0).toFixed(2))}
+                  ${totalEarnings.toFixed(2)}
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Total: ${((Number(earnings?.totalRevenue) || 0).toFixed(2))}
+              </CardContent>
+            </Card>
+          </PanelStaggerItem>
+          <PanelStaggerItem>
+            <Card className="border-border partner-card-hover">
+              <CardHeader className="pb-2">
+                <CardTitle className="font-heading text-sm font-medium text-muted-foreground flex items-center gap-2">
+                  <Wallet className="h-4 w-4" /> Monthly earnings
+                </CardTitle>
+                <CardDescription className="text-xs pt-0">
+                  Paid / settled rows recorded this calendar month.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-semibold">
+                  ${monthlyEarnings.toFixed(2)}
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Pending: ${((Number(earnings?.pendingPayout) || 0).toFixed(2))}
+              </CardContent>
+            </Card>
+          </PanelStaggerItem>
+          <PanelStaggerItem>
+            <Card className="border-border partner-card-hover">
+              <CardHeader className="pb-2">
+                <CardTitle className="font-heading text-sm font-medium text-muted-foreground flex items-center gap-2">
+                  <Wallet className="h-4 w-4" /> Completed consultations value
+                </CardTitle>
+                <CardDescription className="text-xs pt-0">
+                  Ledger earnings no longer marked pending settlement (total
+                  minus pending).
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-semibold">
+                  ${settledEarnings.toFixed(2)}
                 </p>
               </CardContent>
             </Card>

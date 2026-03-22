@@ -40,7 +40,11 @@ CREATE TABLE IF NOT EXISTS consultations (
   slot_id uuid NOT NULL REFERENCES consultation_slots(id) ON DELETE CASCADE,
   consultation_status text NOT NULL DEFAULT 'pending' CHECK (consultation_status IN ('pending', 'confirmed', 'completed', 'cancelled')),
   consultation_notes text,
-  created_at timestamptz DEFAULT now()
+  diagnosis text,
+  treatment_plan text,
+  follow_up_required boolean DEFAULT false,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
 );
 
 -- Prescriptions: issued after consultation

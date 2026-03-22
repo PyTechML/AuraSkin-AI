@@ -2,9 +2,18 @@ import { Injectable } from "@nestjs/common";
 import { getSupabaseClient } from "../../../../database/supabase.client";
 
 export interface PartnerDashboardStatsDto {
+  /** Delivered-order revenue for orders created today (not withdrawable cash). */
   revenueToday: number;
+  /** Delivered-order revenue in the last 7 days (created_at). */
   revenueThisWeek: number;
+  /** Delivered-order revenue in the last 30 days (created_at). */
   revenueThisMonth: number;
+  /** Lifetime sum of delivered orders (completed transaction value). */
+  totalRevenueDelivered: number;
+  /** Sum of order totals still in fulfillment (excludes delivered, cancelled, refunded). */
+  pendingOrdersValue: number;
+  /** Delivered orders with created_at in the current calendar month. */
+  completedOrdersRevenueThisMonth: number;
   pendingOrdersCount: number;
   lowStockCount: number;
   activityItems: { id: string; type: string; title: string; date: string }[];
@@ -29,6 +38,9 @@ function emptyStats(): PartnerDashboardStatsDto {
     revenueToday: 0,
     revenueThisWeek: 0,
     revenueThisMonth: 0,
+    totalRevenueDelivered: 0,
+    pendingOrdersValue: 0,
+    completedOrdersRevenueThisMonth: 0,
     pendingOrdersCount: 0,
     lowStockCount: 0,
     activityItems: [],
@@ -101,10 +113,17 @@ export class DashboardService {
       const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
         .toISOString()
         .slice(0, 10);
+      const calendarMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+        .toISOString()
+        .slice(0, 10);
+      const calendarMonthPrefix = today.slice(0, 7);
 
       let revenueToday = 0;
       let revenueThisWeek = 0;
       let revenueThisMonth = 0;
+      let totalRevenueDelivered = 0;
+      let pendingOrdersValue = 0;
+      let completedOrdersRevenueThisMonth = 0;
       let pendingOrdersCount = 0;
       const statusCounts: Record<string, number> = {};
 
@@ -112,14 +131,26 @@ export class DashboardService {
         const created = typeof o.created_at === "string" ? o.created_at.slice(0, 10) : "";
         const total = Number(o.total_amount ?? 0);
         const status = String(o.order_status ?? "placed");
+        const isDelivered = status === "delivered";
+        const isTerminal = isDelivered || status === "cancelled" || status === "refunded";
 
         if (status !== "delivered" && status !== "cancelled") {
           pendingOrdersCount += 1;
         }
 
-        if (created >= today) revenueToday += total;
-        if (created >= weekAgo) revenueThisWeek += total;
-        if (created >= monthAgo) revenueThisMonth += total;
+        if (!isTerminal) {
+          pendingOrdersValue += total;
+        }
+
+        if (isDelivered) {
+          totalRevenueDelivered += total;
+          if (created >= calendarMonthStart && created.slice(0, 7) === calendarMonthPrefix) {
+            completedOrdersRevenueThisMonth += total;
+          }
+          if (created >= today) revenueToday += total;
+          if (created >= weekAgo) revenueThisWeek += total;
+          if (created >= monthAgo) revenueThisMonth += total;
+        }
 
         statusCounts[status] = (statusCounts[status] ?? 0) + 1;
       });
@@ -188,6 +219,9 @@ export class DashboardService {
         revenueToday,
         revenueThisWeek,
         revenueThisMonth,
+        totalRevenueDelivered,
+        pendingOrdersValue,
+        completedOrdersRevenueThisMonth,
         pendingOrdersCount,
         lowStockCount,
         activityItems,

@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@/providers/AuthProvider";
-import { getAssignedUserDetail } from "@/services/apiPartner";
+import { getAssignedUserDetail, getDermatologistConsultations } from "@/services/apiPartner";
 import type { AssignedUserDetail } from "@/types";
+import type { NormalizedConsultation } from "@/types/consultation";
 import {
   Card,
   CardContent,
@@ -27,6 +28,9 @@ export default function DermatologistPatientDetailPage() {
   const { session } = useAuth();
   const partnerId = session?.user?.id ?? "";
   const [patient, setPatient] = useState<AssignedUserDetail | null>(null);
+  const [consultationHistory, setConsultationHistory] = useState<
+    NormalizedConsultation[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,6 +45,34 @@ export default function DermatologistPatientDetailPage() {
       .then(setPatient)
       .catch(() => setError("Failed to load patient."))
       .finally(() => setLoading(false));
+  }, [partnerId, patientId]);
+
+  useEffect(() => {
+    if (!partnerId || !patientId) {
+      setConsultationHistory([]);
+      return;
+    }
+    let cancelled = false;
+    getDermatologistConsultations()
+      .then((all) => {
+        if (cancelled) return;
+        const pid = patientId.trim();
+        const mine = (Array.isArray(all) ? all : []).filter(
+          (c) => (c.patientId ?? "").trim() === pid
+        );
+        mine.sort((a, b) => {
+          const ta = new Date(`${a.date ?? ""}T${a.timeSlot ?? ""}`).getTime();
+          const tb = new Date(`${b.date ?? ""}T${b.timeSlot ?? ""}`).getTime();
+          return (Number(tb) || 0) - (Number(ta) || 0);
+        });
+        setConsultationHistory(mine);
+      })
+      .catch(() => {
+        if (!cancelled) setConsultationHistory([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [partnerId, patientId]);
 
   if (loading) {
@@ -150,6 +182,55 @@ export default function DermatologistPatientDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="border-border">
+        <CardHeader>
+          <CardTitle className="font-heading text-lg flex items-center gap-2">
+            <Calendar className="h-4 w-4" /> Consultation history
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {consultationHistory.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No consultations with this patient yet.
+            </p>
+          ) : (
+            <ul className="space-y-3 text-sm">
+              {consultationHistory.map((c) => {
+                const notePreview = (c.notes ?? "")
+                  .trim()
+                  .replace(/\s+/g, " ")
+                  .slice(0, 100);
+                return (
+                  <li
+                    key={c.id}
+                    className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 border-b border-border/60 pb-3 last:border-0 last:pb-0"
+                  >
+                    <div className="space-y-1 min-w-0">
+                      <p className="font-medium">
+                        {(c.date ?? "").trim() || "-"}{" "}
+                        <span className="text-muted-foreground font-normal">
+                          · {(c.timeSlot ?? "").trim() || "-"} · {c.status ?? ""}
+                        </span>
+                      </p>
+                      <p className="text-muted-foreground break-words">
+                        {notePreview
+                          ? `${notePreview}${(c.notes ?? "").trim().length > 100 ? "…" : ""}`
+                          : "No notes saved yet."}
+                      </p>
+                    </div>
+                    <Button variant="outline" size="sm" className="shrink-0" asChild>
+                      <Link href={`/dermatologist/consultations/${c.id}`}>
+                        Open
+                      </Link>
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="border-border">
         <CardHeader>

@@ -297,6 +297,9 @@ export interface ConsultationBooking {
   status: BookingStatus;
   createdAt: string;
   notes?: string;
+  diagnosis?: string;
+  treatmentPlan?: string;
+  followUpRequired?: boolean;
 }
 
 export interface Patient {

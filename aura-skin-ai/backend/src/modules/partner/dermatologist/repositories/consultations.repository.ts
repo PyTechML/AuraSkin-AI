@@ -74,6 +74,29 @@ export class ConsultationsRepository {
     return data as DbConsultation;
   }
 
+  async updateClinicalById(
+    id: string,
+    dermatologistId: string,
+    patch: {
+      consultation_notes?: string | null;
+      diagnosis?: string | null;
+      treatment_plan?: string | null;
+      follow_up_required?: boolean;
+    }
+  ): Promise<DbConsultation | null> {
+    const supabase = getSupabaseClient();
+    const updated_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from("consultations")
+      .update({ ...patch, updated_at })
+      .eq("id", id)
+      .eq("dermatologist_id", dermatologistId)
+      .select()
+      .single();
+    if (error || !data) return null;
+    return data as DbConsultation;
+  }
+
   async getSlotById(slotId: string): Promise<DbConsultationSlot | null> {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase

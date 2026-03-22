@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   Put,
@@ -15,6 +16,7 @@ import type { BackendRole } from "../../../shared/constants/roles";
 import { ConsultationsService } from "./services/consultations.service";
 import { formatSuccess } from "../../../shared/utils/responseFormatter";
 import { ForbiddenException } from "@nestjs/common";
+import { UpdateConsultationClinicalDto } from "./dto/update-consultation-clinical.dto";
 
 const RequireDermatologist = () =>
   SetMetadata(ROLES_KEY, ["dermatologist"] as BackendRole[]);
@@ -60,6 +62,24 @@ export class ConsultationsController {
     const dermatologistId = user?.id ?? "";
     const data = await this.consultationsService.reject(id, dermatologistId);
     if (!data) throw new ForbiddenException("Consultation not found or cannot be rejected");
+    return formatSuccess(data);
+  }
+
+  @Put(":id")
+  async updateClinical(
+    @Param("id") id: string,
+    @Req() req: Request,
+    @Body() dto: UpdateConsultationClinicalDto
+  ) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const dermatologistId = user?.id ?? "";
+    const data = await this.consultationsService.updateClinical(
+      id,
+      dermatologistId,
+      dto
+    );
+    if (!data)
+      throw new ForbiddenException("Consultation not found or access denied");
     return formatSuccess(data);
   }
 }

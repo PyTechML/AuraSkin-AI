@@ -65,10 +65,10 @@ export default function DermatologistEarningsPage() {
       <div className="space-y-6">
         <PanelPageHeader
           title="Earnings"
-          subtitle="Track your consultation revenue and payout history."
+          subtitle="Track consultation revenue and settlement status in your ledger."
         />
         <p className="text-sm text-muted-foreground">
-          Payouts are processed according to platform schedule.
+          Withdrawals are not available yet; figures are not a bank balance.
         </p>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {[1, 2, 3, 4].map((i) => (
@@ -85,10 +85,10 @@ export default function DermatologistEarningsPage() {
       <div className="space-y-6">
         <PanelPageHeader
           title="Earnings"
-          subtitle="Track your consultation revenue and payout history."
+          subtitle="Track consultation revenue and settlement status in your ledger."
         />
         <p className="text-sm text-muted-foreground">
-          Payouts are processed according to platform schedule.
+          Withdrawals are not available yet; figures are not a bank balance.
         </p>
         <Card className="border-border max-w-md">
           <CardContent className="py-6">
@@ -109,7 +109,10 @@ export default function DermatologistEarningsPage() {
   const monthlyRevenue = safeMoney(earnings.monthlyRevenue);
   const totalRevenue = safeMoney(earnings.totalRevenue);
   const pendingPayout = safeMoney(earnings.pendingPayout);
-  const completedConsultations = safeMoney(earnings.completedConsultations);
+  const completedConsultationCount = Math.max(
+    0,
+    Math.trunc(Number(earnings.completedConsultations) || 0)
+  );
   const transactions = Array.isArray(earnings.recentTransactions)
     ? earnings.recentTransactions
     : [];
@@ -118,28 +121,21 @@ export default function DermatologistEarningsPage() {
     <div className="space-y-6">
       <PanelPageHeader
         title="Earnings"
-        subtitle="Track your consultation revenue and payout history."
+        subtitle="Track consultation revenue and settlement status in your ledger."
       />
       <p className="text-sm text-muted-foreground">
-        Payouts are processed according to platform schedule.
+        Withdrawals are not available yet; figures are not a bank balance.
       </p>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="border-border partner-card-hover">
           <CardHeader className="pb-2">
             <CardTitle className="font-heading text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Wallet className="h-4 w-4" /> This month
+              <Wallet className="h-4 w-4" /> Total earnings
             </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold">${monthlyRevenue.toFixed(2)}</p>
-          </CardContent>
-        </Card>
-        <Card className="border-border partner-card-hover">
-          <CardHeader className="pb-2">
-            <CardTitle className="font-heading text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Wallet className="h-4 w-4" /> Total revenue
-            </CardTitle>
+            <CardDescription className="text-xs pt-0">
+              All amounts in your earnings ledger.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-semibold">${totalRevenue.toFixed(2)}</p>
@@ -148,8 +144,24 @@ export default function DermatologistEarningsPage() {
         <Card className="border-border partner-card-hover">
           <CardHeader className="pb-2">
             <CardTitle className="font-heading text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Wallet className="h-4 w-4" /> Pending payout
+              <Wallet className="h-4 w-4" /> Monthly earnings
             </CardTitle>
+            <CardDescription className="text-xs pt-0">
+              Paid / settled rows recorded this calendar month.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-semibold">${monthlyRevenue.toFixed(2)}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border partner-card-hover">
+          <CardHeader className="pb-2">
+            <CardTitle className="font-heading text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <Wallet className="h-4 w-4" /> Pending settlement
+            </CardTitle>
+            <CardDescription className="text-xs pt-0">
+              Ledger rows not yet settled (not withdrawable).
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-semibold">${pendingPayout.toFixed(2)}</p>
@@ -160,9 +172,14 @@ export default function DermatologistEarningsPage() {
             <CardTitle className="font-heading text-sm font-medium text-muted-foreground flex items-center gap-2">
               <CalendarCheck className="h-4 w-4" /> Completed consultations
             </CardTitle>
+            <CardDescription className="text-xs pt-0">
+              Count of completed visits—not a dollar amount.
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold">{Math.trunc(completedConsultations)}</p>
+            <p className="text-2xl font-semibold tabular-nums">
+              {completedConsultationCount}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -172,7 +189,9 @@ export default function DermatologistEarningsPage() {
           <CardTitle className="font-heading flex items-center gap-2">
             <Activity className="h-4 w-4" /> Recent activity
           </CardTitle>
-          <CardDescription>Completed consultation earnings entries.</CardDescription>
+          <CardDescription>
+            Recent consultation rows used to build your earnings view.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {transactions.length === 0 ? (

@@ -21,6 +21,9 @@ function emptyDashboardStats(): PartnerDashboardStats {
     revenueToday: 0,
     revenueThisWeek: 0,
     revenueThisMonth: 0,
+    totalRevenueDelivered: 0,
+    pendingOrdersValue: 0,
+    completedOrdersRevenueThisMonth: 0,
     pendingOrdersCount: 0,
     lowStockCount: 0,
     activityItems: [],
@@ -61,6 +64,10 @@ function normalizeDashboardStats(raw: Partial<PartnerDashboardStats> | null): Pa
     revenueToday: Number(raw.revenueToday) || 0,
     revenueThisWeek: Number(raw.revenueThisWeek) || 0,
     revenueThisMonth: Number(raw.revenueThisMonth) || 0,
+    totalRevenueDelivered: Number(raw.totalRevenueDelivered) || 0,
+    pendingOrdersValue: Number(raw.pendingOrdersValue) || 0,
+    completedOrdersRevenueThisMonth:
+      Number(raw.completedOrdersRevenueThisMonth) || 0,
     pendingOrdersCount: Number(raw.pendingOrdersCount) || 0,
     lowStockCount: Number(raw.lowStockCount) || 0,
     activityItems,
@@ -175,86 +182,132 @@ export default function StoreDashboardPage() {
       <Breadcrumb />
       <h1 className="font-heading text-2xl font-semibold">Store dashboard</h1>
       <p className="text-muted-foreground">
-        Monitor revenue performance, order flow, and store activity in real time.
+        Figures below are order revenue from delivered sales (and in-flight order
+        value where noted)—not a bank balance or withdrawable payout. Monitor
+        fulfillment and activity alongside these totals.
       </p>
 
-      {/* Revenue Snapshot */}
+      {/* Financial overview — completed vs in-flight */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="border-border partner-card-hover">
           <CardHeader className="pb-2">
             <CardTitle className="font-heading text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" /> Today
+              <TrendingUp className="h-4 w-4" /> Total revenue
             </CardTitle>
+            <CardDescription className="text-xs">
+              Lifetime total from delivered orders (completed transactions).
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold">${s.revenueToday.toFixed(2)}</p>
+            <p className="text-2xl font-semibold">
+              ${s.totalRevenueDelivered.toFixed(2)}
+            </p>
           </CardContent>
         </Card>
         <Card className="border-border partner-card-hover">
           <CardHeader className="pb-2">
             <CardTitle className="font-heading text-sm font-medium text-muted-foreground">
-              This week
+              Pending orders value
             </CardTitle>
+            <CardDescription className="text-xs">
+              Combined order total still in fulfillment (excludes delivered,
+              cancelled, and refunded).
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold">${s.revenueThisWeek.toFixed(2)}</p>
+            <p className="text-2xl font-semibold">
+              ${s.pendingOrdersValue.toFixed(2)}
+            </p>
           </CardContent>
         </Card>
         <Card className="border-border partner-card-hover">
           <CardHeader className="pb-2">
             <CardTitle className="font-heading text-sm font-medium text-muted-foreground">
-              This month
+              Completed orders revenue
             </CardTitle>
+            <CardDescription className="text-xs">
+              Delivered orders with a created date in this calendar month.
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold">${s.revenueThisMonth.toFixed(2)}</p>
+            <p className="text-2xl font-semibold">
+              ${s.completedOrdersRevenueThisMonth.toFixed(2)}
+            </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Revenue trend (Today / Week / Month bars) */}
+      {/* Delivered revenue trend (rolling windows by order created date) */}
       <Card className="border-border partner-card-hover">
         <CardHeader>
           <CardTitle className="font-heading flex items-center gap-2">
-            <TrendingUp className="h-4 w-4" /> Revenue trend
+            <TrendingUp className="h-4 w-4" /> Delivered revenue trend
           </CardTitle>
-          <CardDescription>Revenue comparison.</CardDescription>
+          <CardDescription>
+            Revenue from delivered orders only—by when the order was placed. Not
+            cash available for withdrawal.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-end gap-4 h-24">
-            <div className="flex-1 flex flex-col items-center gap-1">
-              <div
-                className="w-full min-h-[8px] rounded-t bg-accent/40"
-                style={{
-                  height: `${Math.min(
-                    100,
-                    (s.revenueToday / Math.max(s.revenueThisMonth, 1)) * 100
-                  )}%`,
-                }}
-              />
-              <span className="text-xs text-muted-foreground">Today</span>
-            </div>
-            <div className="flex-1 flex flex-col items-center gap-1">
-              <div
-                className="w-full min-h-[8px] rounded-t bg-accent/50"
-                style={{
-                  height: `${Math.min(
-                    100,
-                    (s.revenueThisWeek / Math.max(s.revenueThisMonth, 1)) * 100
-                  )}%`,
-                }}
-              />
-              <span className="text-xs text-muted-foreground">Week</span>
-            </div>
-            <div className="flex-1 flex flex-col items-center gap-1">
-              <div className="w-full min-h-[8px] rounded-t bg-accent" style={{ height: "100%" }} />
-              <span className="text-xs text-muted-foreground">Month</span>
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            Today: ${s.revenueToday.toFixed(2)} · Week: $
-            {s.revenueThisWeek.toFixed(2)} · Month: ${s.revenueThisMonth.toFixed(2)}
-          </p>
+          {(() => {
+            const maxPeriod = Math.max(
+              s.revenueToday,
+              s.revenueThisWeek,
+              s.revenueThisMonth,
+              1
+            );
+            return (
+              <>
+                <div className="flex items-end gap-4 h-24">
+                  <div className="flex-1 flex flex-col items-center gap-1">
+                    <div
+                      className="w-full min-h-[8px] rounded-t bg-accent/40"
+                      style={{
+                        height: `${Math.min(
+                          100,
+                          (s.revenueToday / maxPeriod) * 100
+                        )}%`,
+                      }}
+                    />
+                    <span className="text-xs text-muted-foreground">Today</span>
+                  </div>
+                  <div className="flex-1 flex flex-col items-center gap-1">
+                    <div
+                      className="w-full min-h-[8px] rounded-t bg-accent/50"
+                      style={{
+                        height: `${Math.min(
+                          100,
+                          (s.revenueThisWeek / maxPeriod) * 100
+                        )}%`,
+                      }}
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      Last 7 days
+                    </span>
+                  </div>
+                  <div className="flex-1 flex flex-col items-center gap-1">
+                    <div
+                      className="w-full min-h-[8px] rounded-t bg-accent"
+                      style={{
+                        height: `${Math.min(
+                          100,
+                          (s.revenueThisMonth / maxPeriod) * 100
+                        )}%`,
+                      }}
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      Last 30 days
+                    </span>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Today: ${s.revenueToday.toFixed(2)} · Last 7 days: $
+                  {s.revenueThisWeek.toFixed(2)} · Last 30 days: $
+                  {s.revenueThisMonth.toFixed(2)}
+                </p>
+              </>
+            );
+          })()}
         </CardContent>
       </Card>
 

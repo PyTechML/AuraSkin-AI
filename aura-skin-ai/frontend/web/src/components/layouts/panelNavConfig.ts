@@ -62,7 +62,7 @@ export const panelNavConfig: Record<PanelRole, PanelNavConfig> = {
       },
       {
         type: "link",
-        label: "Payouts",
+        label: "Withdrawals (soon)",
         href: "/store/payouts",
       },
       {
@@ -83,7 +83,7 @@ export const panelNavConfig: Record<PanelRole, PanelNavConfig> = {
           { label: "Inventory", href: "/store/inventory" },
           { label: "Assigned Users", href: "/store/assigned-users" },
           { label: "Analytics", href: "/store/analytics" },
-          { label: "Payouts", href: "/store/payouts" },
+          { label: "Withdrawals (soon)", href: "/store/payouts" },
         ],
       },
       {

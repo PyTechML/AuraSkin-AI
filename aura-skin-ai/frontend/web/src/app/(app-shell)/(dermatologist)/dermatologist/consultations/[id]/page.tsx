@@ -4,8 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@/providers/AuthProvider";
-import { getBookingsForPartner } from "@/services/apiPartner";
-import type { ConsultationBooking } from "@/types";
+import {
+  getDermatologistConsultationById,
+  getDermatologistPatientDisplayName,
+  updateDermatologistConsultation,
+} from "@/services/apiPartner";
+import type { NormalizedConsultation } from "@/types/consultation";
 import {
   Card,
   CardContent,
@@ -14,6 +18,9 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { usePanelToast } from "@/components/panel/PanelToast";
 import { ArrowLeft, User, Calendar, Clock } from "lucide-react";
 
 export default function DermatologistConsultationDetailPage() {
@@ -21,28 +28,84 @@ export default function DermatologistConsultationDetailPage() {
   const consultationId = params.id as string;
   const { session } = useAuth();
   const partnerId = session?.user?.id ?? "";
-  const [booking, setBooking] = useState<ConsultationBooking | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { addToast } = usePanelToast();
+  const [consultation, setConsultation] = useState<NormalizedConsultation | null>(
+    null
+  );
+  const [patientLabel, setPatientLabel] = useState("");
+  const [diagnosis, setDiagnosis] = useState("");
   const [notes, setNotes] = useState("");
+  const [treatmentPlan, setTreatmentPlan] = useState("");
+  const [followUpRequired, setFollowUpRequired] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!partnerId || !consultationId) {
       setLoading(false);
       return;
     }
+    let cancelled = false;
     setLoading(true);
     setError(null);
-    getBookingsForPartner(partnerId)
-      .then((list) => {
-        const found = list.find((b) => b.id === consultationId) ?? null;
-        setBooking(found);
+    getDermatologistConsultationById(consultationId)
+      .then((c) => {
+        if (cancelled) return;
+        setConsultation(c);
+        if (!c) return;
+        setDiagnosis(c.diagnosis ?? "");
+        setNotes(c.notes ?? "");
+        setTreatmentPlan(c.treatmentPlan ?? "");
+        setFollowUpRequired(Boolean(c.followUpRequired));
+        const pid = (c.patientId ?? "").trim();
+        return getDermatologistPatientDisplayName(pid).then((name) => {
+          if (cancelled) return;
+          const label =
+            (name ?? "").trim() ||
+            (pid ? `Patient ${pid}` : "Unknown patient");
+          setPatientLabel(label);
+        });
       })
-      .catch(() => setError("Failed to load consultation."))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) setError("Failed to load consultation.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [partnerId, consultationId]);
 
-  if (loading && !booking) {
+  async function handleSave() {
+    if (!consultationId) return;
+    setSaving(true);
+    try {
+      const updated = await updateDermatologistConsultation(consultationId, {
+        notes: notes ?? "",
+        diagnosis: diagnosis ?? "",
+        treatmentPlan: treatmentPlan ?? "",
+        followUpRequired,
+      });
+      if (updated) {
+        setConsultation(updated);
+        setDiagnosis(updated.diagnosis ?? "");
+        setNotes(updated.notes ?? "");
+        setTreatmentPlan(updated.treatmentPlan ?? "");
+        setFollowUpRequired(Boolean(updated.followUpRequired));
+        addToast("Consultation notes saved", "success");
+      } else {
+        addToast("Could not save consultation notes.", "error");
+      }
+    } catch {
+      addToast("Could not save consultation notes.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading && !consultation) {
     return (
       <div className="space-y-6">
         <div className="h-6 w-32 rounded bg-muted/60 animate-pulse" />
@@ -51,7 +114,7 @@ export default function DermatologistConsultationDetailPage() {
     );
   }
 
-  if (error || !booking) {
+  if (error || !consultation) {
     return (
       <div className="space-y-6">
         <Button variant="outline" size="sm" asChild>
@@ -71,6 +134,8 @@ export default function DermatologistConsultationDetailPage() {
     );
   }
 
+  const statusLabel = consultation.status ?? "";
+
   return (
     <div className="space-y-8">
       <Button variant="outline" size="sm" asChild>
@@ -82,7 +147,7 @@ export default function DermatologistConsultationDetailPage() {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="font-heading text-2xl font-semibold">
-          Consultation with {booking.userName ?? booking.userId}
+          Consultation with {patientLabel}
         </h1>
       </div>
 
@@ -96,24 +161,19 @@ export default function DermatologistConsultationDetailPage() {
           <CardContent className="space-y-3 text-sm">
             <div className="flex items-center gap-2">
               <User className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">
-                {booking.userName ?? booking.userId}
-              </span>
+              <span className="font-medium">{patientLabel}</span>
             </div>
             <div className="flex items-center gap-2">
               <Calendar className="h-4 w-4 text-muted-foreground" />
               <span>
-                {booking.date} · {booking.timeSlot}
+                {(consultation.date ?? "").trim() || "-"} ·{" "}
+                {(consultation.timeSlot ?? "").trim() || "-"}
               </span>
             </div>
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-muted-foreground" />
-              <span>Status: {booking.status}</span>
+              <span>Status: {statusLabel}</span>
             </div>
-            <p className="text-muted-foreground mt-2">
-              This is a demo view. Connect it to clinical records to show full
-              assessment context and images.
-            </p>
           </CardContent>
         </Card>
 
@@ -123,29 +183,66 @@ export default function DermatologistConsultationDetailPage() {
               Clinical notes
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Add clinical notes for this consultation (demo only; not persisted)."
-              rows={6}
-            />
-            <div className="flex gap-2">
-              <Button size="sm" disabled>
-                Save notes
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="consultation-diagnosis">Diagnosis</Label>
+              <Textarea
+                id="consultation-diagnosis"
+                value={diagnosis}
+                onChange={(e) => setDiagnosis(e.target.value)}
+                placeholder="Clinical diagnosis"
+                rows={3}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="consultation-notes">Notes</Label>
+              <Textarea
+                id="consultation-notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Consultation notes"
+                rows={4}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="consultation-treatment">Treatment plan</Label>
+              <Textarea
+                id="consultation-treatment"
+                value={treatmentPlan}
+                onChange={(e) => setTreatmentPlan(e.target.value)}
+                placeholder="Treatment plan and recommendations"
+                rows={4}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="consultation-followup"
+                checked={followUpRequired}
+                onCheckedChange={(v) => setFollowUpRequired(v === true)}
+              />
+              <Label
+                htmlFor="consultation-followup"
+                className="text-sm font-normal cursor-pointer"
+              >
+                Follow-up required
+              </Label>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button
+                size="sm"
+                type="button"
+                disabled={saving}
+                onClick={() => void handleSave()}
+              >
+                {saving ? "Saving…" : "Save notes"}
               </Button>
-              <Button size="sm" variant="outline" disabled>
+              <Button size="sm" variant="outline" disabled type="button">
                 Upload prescription
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              In a production system, notes and prescriptions would be saved to
-              a secure clinical backend.
-            </p>
           </CardContent>
         </Card>
       </div>
     </div>
   );
 }
-

@@ -108,7 +108,7 @@ export default function StoreOrdersPage() {
     const pending = orders.filter(
       (o) => !["delivered", "cancelled", "refunded"].includes(o.status)
     );
-    const revenueToday = todayOrders.reduce((s, o) => s + o.total, 0);
+    const orderValueToday = todayOrders.reduce((s, o) => s + o.total, 0);
     const total = orders.length;
     const cancelled = orders.filter(
       (o) => o.status === "cancelled" || o.status === "refunded"
@@ -118,7 +118,7 @@ export default function StoreOrdersPage() {
     return {
       todaysOrders: todayOrders.length,
       pendingCount: pending.length,
-      revenueToday,
+      orderValueToday,
       cancellationPct,
     };
   }, [orders, today]);
@@ -222,9 +222,14 @@ export default function StoreOrdersPage() {
         </Card>
         <Card className="border-border partner-card-hover">
           <CardContent className="pt-4">
-            <p className="text-sm font-label text-muted-foreground">Revenue today</p>
+            <p className="text-sm font-label text-muted-foreground">
+              Gross order value (today)
+            </p>
             <p className="text-2xl font-semibold">
-              ${kpis.revenueToday.toFixed(2)}
+              ${kpis.orderValueToday.toFixed(2)}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              All orders created today, any status—not withdrawable cash.
             </p>
           </CardContent>
         </Card>

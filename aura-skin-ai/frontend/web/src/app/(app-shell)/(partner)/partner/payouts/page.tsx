@@ -14,7 +14,7 @@ export default function PartnerPayoutsRedirectPage() {
     <div className="space-y-4">
       <div className="h-8 w-40 rounded bg-muted/40 animate-pulse" aria-hidden />
       <p className="text-sm text-muted-foreground">
-        This payouts page has moved. Redirecting you to{" "}
+        This withdrawals page has moved. Redirecting you to{" "}
         <span className="font-medium">/store/payouts</span>…
       </p>
     </div>

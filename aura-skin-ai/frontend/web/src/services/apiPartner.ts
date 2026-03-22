@@ -115,9 +115,18 @@ export async function getPartnerStore(partnerId: string): Promise<PartnerStore |
 }
 
 export interface PartnerDashboardStats {
+  /** Delivered orders only; created today. */
   revenueToday: number;
+  /** Delivered orders only; last 7 days by created_at. */
   revenueThisWeek: number;
+  /** Delivered orders only; last 30 days by created_at. */
   revenueThisMonth: number;
+  /** Lifetime delivered order totals (completed transaction value). */
+  totalRevenueDelivered: number;
+  /** In-flight order value (excludes delivered, cancelled, refunded). */
+  pendingOrdersValue: number;
+  /** Delivered orders with created_at in the current calendar month. */
+  completedOrdersRevenueThisMonth: number;
   pendingOrdersCount: number;
   lowStockCount: number;
   activityItems: { id: string; type: string; title: string; date: string }[];
@@ -522,9 +531,15 @@ export async function createSupportTicket(
 
 type BackendConsultationRow = {
   id: string;
+  user_id?: string | null;
+  dermatologist_id?: string | null;
   consultation_status?: string | null;
   slot_id?: string | null;
   patient_id?: string | null;
+  consultation_notes?: string | null;
+  diagnosis?: string | null;
+  treatment_plan?: string | null;
+  follow_up_required?: boolean | null;
   consultation_date?: string | null;
   updated_at?: string | null;
   created_at?: string | null;
@@ -678,6 +693,62 @@ function mapSlotTime(slot?: BackendSlotRow): string {
   return value || "TBD";
 }
 
+function dermatologistConsultationFromRow(
+  item: BackendConsultationRow,
+  slot?: BackendSlotRow
+): NormalizedConsultation {
+  const slotDate = slot?.slot_date ?? "";
+  const created = item.created_at ?? "";
+  return {
+    id: item.id,
+    status: mapConsultationStatus(item.consultation_status ?? ""),
+    date: slotDate || created,
+    timeSlot: mapSlotTime(slot),
+    patientId: (item.patient_id ?? item.user_id ?? "").trim(),
+    slotId: item.slot_id ?? "",
+    diagnosis: item.diagnosis ?? "",
+    notes: item.consultation_notes ?? "",
+    treatmentPlan: item.treatment_plan ?? "",
+    followUpRequired: Boolean(item.follow_up_required),
+    updatedAt: item.updated_at ?? "",
+  };
+}
+
+function normalizedStatusToBookingStatus(
+  status: NormalizedConsultation["status"]
+): ConsultationBooking["status"] {
+  if (status === "confirmed") return "accepted";
+  if (status === "cancelled") return "cancelled";
+  if (status === "completed") return "completed";
+  return "pending";
+}
+
+function backendRowToConsultationBooking(
+  row: BackendConsultationRow,
+  slot?: BackendSlotRow
+): ConsultationBooking {
+  const n = dermatologistConsultationFromRow(row, slot);
+  const dateRaw = n.date ?? "";
+  const date =
+    typeof dateRaw === "string" && dateRaw.length >= 10
+      ? dateRaw.slice(0, 10)
+      : dateRaw;
+  return {
+    id: n.id,
+    userId: n.patientId,
+    dermatologistId: row.dermatologist_id ?? "",
+    dermatologistName: "",
+    date,
+    timeSlot: n.timeSlot ?? "",
+    status: normalizedStatusToBookingStatus(n.status),
+    createdAt: row.created_at ?? "",
+    notes: n.notes ?? "",
+    diagnosis: n.diagnosis ?? "",
+    treatmentPlan: n.treatmentPlan ?? "",
+    followUpRequired: n.followUpRequired ?? false,
+  };
+}
+
 export async function getDermatologistConsultations(): Promise<NormalizedConsultation[]> {
   const [consultationsResponse, slotsResponse] = await Promise.all([
     apiGet<BackendConsultationRow[]>("/partner/dermatologist/consultations"),
@@ -689,15 +760,84 @@ export async function getDermatologistConsultations(): Promise<NormalizedConsult
 
   return consultations.map((item) => {
     const slot = item.slot_id ? slotById.get(item.slot_id) : undefined;
-    return {
-      id: item.id,
-      status: mapConsultationStatus(item.consultation_status ?? ""),
-      date: slot?.slot_date ?? item.created_at ?? "",
-      timeSlot: mapSlotTime(slot),
-      patientId: item.patient_id ?? "",
-      slotId: item.slot_id ?? "",
-    };
+    return dermatologistConsultationFromRow(item, slot);
   });
+}
+
+export async function getDermatologistConsultationById(
+  id: string
+): Promise<NormalizedConsultation | null> {
+  try {
+    const [consultationResponse, slotsResponse] = await Promise.all([
+      apiGet<BackendConsultationRow>(
+        `/partner/dermatologist/consultations/${encodeURIComponent(id)}`
+      ),
+      apiGet<BackendSlotRow[]>("/partner/dermatologist/slots").catch(() => []),
+    ]);
+    const consultation = consultationResponse as BackendConsultationRow;
+    if (!consultation?.id) return null;
+    const slots = Array.isArray(slotsResponse) ? slotsResponse : [];
+    const slot = consultation.slot_id
+      ? slots.find((s) => s.id === consultation.slot_id)
+      : undefined;
+    return dermatologistConsultationFromRow(consultation, slot);
+  } catch {
+    return null;
+  }
+}
+
+export async function updateDermatologistConsultation(
+  id: string,
+  payload: {
+    notes: string;
+    diagnosis: string;
+    treatmentPlan: string;
+    followUpRequired: boolean;
+  }
+): Promise<NormalizedConsultation | null> {
+  try {
+    const raw = await apiSend<BackendConsultationRow>(
+      `/partner/dermatologist/consultations/${encodeURIComponent(id)}`,
+      {
+        method: "PUT",
+        body: {
+          notes: payload.notes,
+          diagnosis: payload.diagnosis,
+          treatmentPlan: payload.treatmentPlan,
+          followUpRequired: payload.followUpRequired,
+        },
+      }
+    );
+    const slotsResponse = await apiGet<BackendSlotRow[]>(
+      "/partner/dermatologist/slots"
+    ).catch(() => []);
+    const slots = Array.isArray(slotsResponse) ? slotsResponse : [];
+    const row = raw as BackendConsultationRow;
+    const slot = row.slot_id ? slots.find((s) => s.id === row.slot_id) : undefined;
+    return dermatologistConsultationFromRow(row, slot);
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve a patient's display name for dermatologist UI (optional). */
+export async function getDermatologistPatientDisplayName(
+  userId: string
+): Promise<string | undefined> {
+  const id = userId.trim();
+  if (!id) return undefined;
+  try {
+    const profilesResponse = await apiGet<BackendProfileRow[]>(
+      `/profiles?id=eq.${encodeURIComponent(id)}`
+    );
+    const profiles = Array.isArray(profilesResponse) ? profilesResponse : [];
+    const p = profiles[0];
+    if (!p) return undefined;
+    const name = (p.full_name ?? p.name ?? "").trim();
+    return name || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function getDermatologistPatients(): Promise<NormalizedPatient[]> {
@@ -709,7 +849,7 @@ export async function getDermatologistPatients(): Promise<NormalizedPatient[]> {
     const groupedByPatient = new Map<string, BackendConsultationRow[]>();
 
     for (const consultation of consultations) {
-      const patientId = consultation.patient_id ?? "";
+      const patientId = (consultation.patient_id ?? consultation.user_id ?? "").trim();
       if (!patientId) continue;
       const bucket = groupedByPatient.get(patientId);
       if (bucket) {
@@ -824,8 +964,17 @@ export async function getBookingsForPartner(
 ): Promise<ConsultationBooking[]> {
   void partnerId;
   try {
-    const bookings = await apiGet<ConsultationBooking[]>("/partner/dermatologist/consultations");
-    return Array.isArray(bookings) ? bookings : [];
+    const [rows, slotsResponse] = await Promise.all([
+      apiGet<BackendConsultationRow[]>("/partner/dermatologist/consultations"),
+      apiGet<BackendSlotRow[]>("/partner/dermatologist/slots").catch(() => []),
+    ]);
+    const list = Array.isArray(rows) ? rows : [];
+    const slots = Array.isArray(slotsResponse) ? slotsResponse : [];
+    const slotById = new Map(slots.map((s) => [s.id, s]));
+    return list.map((row) => {
+      const slot = row.slot_id ? slotById.get(row.slot_id) : undefined;
+      return backendRowToConsultationBooking(row, slot);
+    });
   } catch {
     return [];
   }

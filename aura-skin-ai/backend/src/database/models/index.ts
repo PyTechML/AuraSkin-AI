@@ -291,7 +291,11 @@ export interface DbConsultation {
   slot_id: string;
   consultation_status: "pending" | "confirmed" | "completed" | "cancelled";
   consultation_notes: string | null;
+  diagnosis?: string | null;
+  treatment_plan?: string | null;
+  follow_up_required?: boolean | null;
   created_at?: string;
+  updated_at?: string;
 }
 
 /** Prescription. */
