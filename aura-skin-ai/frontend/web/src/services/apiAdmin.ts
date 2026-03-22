@@ -2,6 +2,7 @@ import { API_BASE } from "./apiBase";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import type { AdminStore } from "@/types/store";
 import type { AdminDermatologistVerification } from "@/types/dermatologist";
+import type { AdminDashboardResult } from "@/types/admin-dashboard";
 
 function getAuthHeaders(): Record<string, string> {
   const token = useAuthStore.getState().accessToken ?? getPersistedAccessToken();
@@ -337,6 +338,107 @@ export async function getAdminAnalytics(): Promise<AdminAnalytics | null> {
     return await apiGet<AdminAnalytics>("/admin/analytics");
   } catch {
     return null;
+  }
+}
+
+const emptyAdminDashboardResult = (): AdminDashboardResult => ({
+  recentActivity: [],
+  health: { database: true, redis: true, worker: true },
+  auditAlertCount: 0,
+  healthFromApi: false,
+  auditFromApi: false,
+});
+
+function mapDashboardActivityItem(
+  row: unknown
+): AdminDashboardResult["recentActivity"][number] | null {
+  if (!row || typeof row !== "object") return null;
+  const r = row as Record<string, unknown>;
+  const id = r.id != null ? String(r.id) : "";
+  if (!id) return null;
+  const type = r.type != null ? String(r.type) : "";
+  const createdAt =
+    typeof r.created_at === "string"
+      ? r.created_at
+      : typeof r.createdAt === "string"
+        ? r.createdAt
+        : "";
+  const message =
+    typeof r.message === "string" && r.message.trim() !== ""
+      ? r.message
+      : typeof r.description === "string"
+        ? r.description
+        : "";
+  return { id, type, message, createdAt };
+}
+
+function normalizeAdminDashboardPayload(
+  data: Record<string, unknown>
+): AdminDashboardResult {
+  const rawList = data.recentActivity;
+  const list = Array.isArray(rawList) ? rawList : [];
+  const mapped = list
+    .map((item) => mapDashboardActivityItem(item))
+    .filter((x): x is NonNullable<typeof x> => x != null);
+
+  mapped.sort((a, b) => {
+    if (a.createdAt === b.createdAt) return 0;
+    if (!a.createdAt) return 1;
+    if (!b.createdAt) return -1;
+    return a.createdAt < b.createdAt ? 1 : -1;
+  });
+
+  const recentActivity = mapped.slice(0, 10);
+
+  let healthFromApi = false;
+  let health: AdminDashboardResult["health"] = {
+    database: true,
+    redis: true,
+    worker: true,
+  };
+  const sh = data.systemHealth;
+  if (sh && typeof sh === "object" && !Array.isArray(sh)) {
+    const o = sh as Record<string, unknown>;
+    if ("database" in o || "redis" in o || "worker" in o) {
+      healthFromApi = true;
+      health = {
+        database: Boolean(o.database),
+        redis: Boolean(o.redis),
+        worker: Boolean(o.worker),
+      };
+    }
+  }
+
+  let auditFromApi = false;
+  let auditAlertCount = 0;
+  const as = data.auditSummary;
+  if (as && typeof as === "object" && !Array.isArray(as)) {
+    const ac = (as as Record<string, unknown>).alertCount;
+    if (typeof ac === "number" && Number.isFinite(ac)) {
+      auditFromApi = true;
+      auditAlertCount = Math.max(0, Math.floor(ac));
+    }
+  }
+
+  return {
+    recentActivity,
+    health,
+    auditAlertCount,
+    healthFromApi,
+    auditFromApi,
+  };
+}
+
+export async function getAdminDashboard(): Promise<AdminDashboardResult> {
+  try {
+    const data = await apiGet<unknown>("/admin/dashboard");
+    const rec =
+      data && typeof data === "object"
+        ? (data as Record<string, unknown>)
+        : {};
+    return normalizeAdminDashboardPayload(rec);
+  } catch {
+    return emptyAdminDashboardResult();
   }
 }
 

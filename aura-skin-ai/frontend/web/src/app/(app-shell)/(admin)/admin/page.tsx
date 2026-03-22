@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { getAdminAnalytics, getPendingInventory } from "@/services/apiAdmin";
+import {
+  getAdminAnalytics,
+  getAdminDashboard,
+  getPendingInventory,
+} from "@/services/apiAdmin";
+import type { AdminDashboardResult } from "@/types/admin-dashboard";
 import {
   AdminHeader,
   AdminPrimaryGrid,
@@ -35,9 +40,13 @@ export default function AdminDashboardPage() {
   const [dermCount, setDermCount] = useState<number>(0);
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [revenue, setRevenue] = useState<string>("—");
-  const [healthOk, setHealthOk] = useState<boolean>(true);
-  const [ruleEngineOk, setRuleEngineOk] = useState<boolean>(true);
-  const [auditAlertCount, setAuditAlertCount] = useState<number>(0);
+  const [dashboard, setDashboard] = useState<AdminDashboardResult>(() => ({
+    recentActivity: [],
+    health: { database: true, redis: true, worker: true },
+    auditAlertCount: 0,
+    healthFromApi: false,
+    auditFromApi: false,
+  }));
   const [activeSessions, setActiveSessions] = useState<number>(0);
   const [inactiveSessions, setInactiveSessions] = useState<number>(0);
   const [suspiciousSessions, setSuspiciousSessions] = useState<number>(0);
@@ -65,6 +74,7 @@ export default function AdminDashboardPage() {
       }
     });
     getPendingInventory().then((list) => setPendingCount(Array.isArray(list) ? list.length : 0));
+    getAdminDashboard().then(setDashboard);
   }, []);
 
   const metricCardsRow1 = [
@@ -79,12 +89,71 @@ export default function AdminDashboardPage() {
     { title: "Pending Approvals", value: pendingCount, icon: Clock, href: "/admin/products?status=pending", variant: "warning" as const },
   ];
 
-  const metricCardsRow2 = [
-    { title: "Revenue Snapshot", value: revenue, icon: TrendingUp, href: "/admin/analytics" },
-    { title: "Rule Engine Status", value: ruleEngineOk ? "Active" : "Issues", icon: Boxes, href: "/admin/rule-engine", variant: ruleEngineOk ? ("default" as const) : ("secondary" as const) },
-    { title: "System Health", value: healthOk ? "Operational" : "Degraded", icon: Activity, href: "/admin/system-health", variant: healthOk ? ("default" as const) : ("secondary" as const) },
-    { title: "Recent Audit Alerts", value: auditAlertCount, icon: ClipboardList, href: "/admin/audit-logs", variant: auditAlertCount > 0 ? ("warning" as const) : ("default" as const) },
-  ];
+  const metricCardsRow2 = useMemo(() => {
+    const { healthFromApi, auditFromApi, health, auditAlertCount } = dashboard;
+
+    let ruleValue: string;
+    let ruleVariant: "default" | "secondary" | "warning";
+    if (healthFromApi) {
+      ruleValue = health.worker ? "Active" : "Issues";
+      ruleVariant = health.worker ? "default" : "secondary";
+    } else {
+      ruleValue = "—";
+      ruleVariant = "secondary";
+    }
+
+    let sysValue: string;
+    let sysVariant: "default" | "secondary" | "warning";
+    if (healthFromApi) {
+      const ok = health.database && health.redis && health.worker;
+      sysValue = ok ? "Operational" : "Degraded";
+      sysVariant = ok ? "default" : "secondary";
+    } else {
+      sysValue = "—";
+      sysVariant = "secondary";
+    }
+
+    let auditValue: string | number;
+    let auditVariant: "default" | "secondary" | "warning";
+    if (auditFromApi) {
+      auditValue = auditAlertCount;
+      auditVariant = auditAlertCount > 0 ? "warning" : "default";
+    } else {
+      auditValue = "—";
+      auditVariant = "secondary";
+    }
+
+    return [
+      {
+        title: "Revenue Snapshot",
+        value: revenue,
+        icon: TrendingUp,
+        href: "/admin/analytics",
+        variant: "default" as const,
+      },
+      {
+        title: "Rule Engine Status",
+        value: ruleValue,
+        icon: Boxes,
+        href: "/admin/rule-engine",
+        variant: ruleVariant,
+      },
+      {
+        title: "System Health",
+        value: sysValue,
+        icon: Activity,
+        href: "/admin/system-health",
+        variant: sysVariant,
+      },
+      {
+        title: "Recent Audit Alerts",
+        value: auditValue,
+        icon: ClipboardList,
+        href: "/admin/audit-logs",
+        variant: auditVariant,
+      },
+    ];
+  }, [revenue, dashboard]);
 
   const metricCardsRow3 = [
     { title: "Active Sessions", value: activeSessions, icon: Monitor, href: "/admin/sessions" },
@@ -212,7 +281,39 @@ export default function AdminDashboardPage() {
             <p className="text-xs text-muted-foreground">Platform events and moderation actions</p>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground py-4 text-center">No recent events. Activity will appear here when available.</p>
+            {(() => {
+              const activity = Array.isArray(dashboard.recentActivity)
+                ? dashboard.recentActivity
+                : [];
+              if (activity.length === 0) {
+                return (
+                  <p className="text-sm text-muted-foreground py-4 text-center">
+                    No recent activity
+                  </p>
+                );
+              }
+              return (
+                <ul className="space-y-3 py-1">
+                  {activity.map((item) => (
+                    <li
+                      key={`${item.type}-${item.id}`}
+                      className="flex flex-col gap-0.5 border-b border-border/40 pb-3 last:border-0 last:pb-0"
+                    >
+                      <span className="text-sm font-medium text-foreground">
+                        {item.message.trim() !== ""
+                          ? item.message
+                          : item.type || "Event"}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {[item.type, item.createdAt ? new Date(item.createdAt).toLocaleString() : ""]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              );
+            })()}
           </CardContent>
         </Card>
       </AdminPrimaryGrid>
