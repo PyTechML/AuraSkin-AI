@@ -38,7 +38,6 @@ import { PanelTablePagination } from "@/components/panel/PanelTablePagination";
 import { PanelEmptyState } from "@/components/panel/PanelEmptyState";
 import { useClientTableSorting } from "@/hooks/useClientTableSorting";
 import { downloadCsv } from "@/lib/csvExport";
-import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 10;
 
@@ -63,7 +62,7 @@ export default function StoreAssignedUsersPage() {
     setLoading(true);
     setError(null);
     getAssignedUsers(partnerId)
-      .then(setUsers)
+      .then((data) => setUsers(Array.isArray(data) ? data : []))
       .catch(() => setError("Failed to load assigned users."))
       .finally(() => setLoading(false));
   }, [partnerId]);
@@ -127,11 +126,11 @@ export default function StoreAssignedUsersPage() {
   }, [drawerUserId, partnerId]);
 
   const handleExportCsv = () => {
-    const headers = ["Name", "Email", "Total spend", "Last order", "Dermatologist", "Status"];
+    const headers = ["Name", "Email", "Total orders", "Last order", "Dermatologist", "Status"];
     const rows = sortedData.map((u) => [
       u.name,
       u.email ?? "",
-      u.totalSpend != null ? u.totalSpend.toFixed(2) : "",
+      typeof u.totalOrders === "number" ? String(u.totalOrders) : "",
       u.lastPurchase ?? "",
       u.assignedDermatologistName ?? "",
       u.status,
@@ -304,7 +303,7 @@ export default function StoreAssignedUsersPage() {
           {filtered.length === 0 ? (
             <PanelEmptyState
               icon={<Users className="h-12 w-12" />}
-              title={users.length === 0 ? "No assigned users yet." : "No users match your filters."}
+              title={users.length === 0 ? "No customers yet" : "No users match your filters."}
               description={
                 users.length === 0
                   ? "Users will appear here when they purchase or book consultations."
@@ -318,7 +317,7 @@ export default function StoreAssignedUsersPage() {
                   <TableRow>
                     <SortHeader colKey="name" label="Name" />
                     <TableHead>Email</TableHead>
-                    <SortHeader colKey="totalSpend" label="Total spend" />
+                    <SortHeader colKey="totalOrders" label="Total orders" />
                     <SortHeader colKey="lastPurchase" label="Last order" />
                     <TableHead>Assigned dermatologist</TableHead>
                     <TableHead>Status</TableHead>
@@ -335,7 +334,7 @@ export default function StoreAssignedUsersPage() {
                       <TableCell className="font-medium">{u.name}</TableCell>
                       <TableCell>{u.email ?? "—"}</TableCell>
                       <TableCell>
-                        {u.totalSpend != null ? `$${u.totalSpend.toFixed(2)}` : "—"}
+                        {typeof u.totalOrders === "number" ? u.totalOrders : "—"}
                       </TableCell>
                       <TableCell>{u.lastPurchase ?? "—"}</TableCell>
                       <TableCell>{u.assignedDermatologistName ?? "—"}</TableCell>

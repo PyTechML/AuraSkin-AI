@@ -306,6 +306,8 @@ export interface AssignedUser {
   assignedDermatologistName?: string | null;
   status: string;
   totalSpend?: number;
+  /** Distinct orders at this store for this customer. */
+  totalOrders?: number;
 }
 
 export interface AssignedUserDetail extends AssignedUser {

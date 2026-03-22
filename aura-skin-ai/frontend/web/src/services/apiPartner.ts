@@ -848,17 +848,120 @@ export async function rescheduleBooking(
   return Promise.resolve(null);
 }
 
-export async function getAssignedUsers(partnerId: string): Promise<AssignedUser[]> {
-  // TODO: Replace with real assigned users endpoint, e.g. apiGet(`/partner/assigned-users?partnerId=${partnerId}`)
-  return Promise.resolve([]);
+type BackendAssignedUserRow = {
+  id?: string | null;
+  name?: string | null;
+  email?: string | null;
+  totalOrders?: number | null;
+  lastOrderDate?: string | null;
+  totalSpend?: number | null;
+  status?: string | null;
+};
+
+function formatAssignedUserDate(iso: string | null | undefined): string | undefined {
+  if (iso == null || String(iso).trim() === "") return undefined;
+  const t = new Date(String(iso)).getTime();
+  if (!Number.isFinite(t)) return undefined;
+  return new Date(t).toISOString().slice(0, 10);
 }
+
+function mapBackendAssignedUser(row: BackendAssignedUserRow): AssignedUser {
+  const id = String(row.id ?? "").trim();
+  const lastOrderDate = row.lastOrderDate != null ? String(row.lastOrderDate) : "";
+  return {
+    id,
+    name: String(row.name ?? "Unknown").trim() || "Unknown",
+    email: row.email != null ? String(row.email) : undefined,
+    lastPurchase: formatAssignedUserDate(lastOrderDate),
+    status: String(row.status ?? "Inactive"),
+    totalSpend: typeof row.totalSpend === "number" && Number.isFinite(row.totalSpend) ? row.totalSpend : Number(row.totalSpend) || 0,
+    totalOrders: typeof row.totalOrders === "number" && Number.isFinite(row.totalOrders) ? row.totalOrders : Number(row.totalOrders) || 0,
+  };
+}
+
+export async function getAssignedUsers(partnerId: string): Promise<AssignedUser[]> {
+  void partnerId;
+  try {
+    const data = await apiGet<unknown>("/partner/store/assigned-users");
+    const list = Array.isArray(data) ? data : [];
+    return list.map((item) => mapBackendAssignedUser((item ?? {}) as BackendAssignedUserRow));
+  } catch {
+    return [];
+  }
+}
+
+type BackendAssignedUserDetailRow = BackendAssignedUserRow & {
+  lastPurchase?: string | null;
+  purchaseHistory?: { orderId?: string; date?: string; total?: number }[] | null;
+  consultationHistory?: { bookingId?: string; date?: string; dermatologistName?: string }[] | null;
+  notes?: string | null;
+  lifetimeValue?: number | null;
+  activityTimeline?: { id?: string; type?: string; title?: string; date?: string }[] | null;
+};
 
 export async function getAssignedUserDetail(
   _partnerId: string,
   userId: string
 ): Promise<AssignedUserDetail | null> {
-  // TODO: Replace with real assigned user detail endpoint, e.g. apiGet(`/partner/assigned-users/${userId}`)
-  return Promise.resolve(null);
+  try {
+    const data = await apiGet<unknown>(
+      `/partner/store/assigned-users/${encodeURIComponent(userId)}`
+    );
+    if (data == null || typeof data !== "object") return null;
+    const row = data as BackendAssignedUserDetailRow;
+    const id = String(row.id ?? userId).trim() || userId;
+    const lastRaw = row.lastPurchase ?? row.lastOrderDate;
+    const purchaseHistoryRaw = Array.isArray(row.purchaseHistory) ? row.purchaseHistory : [];
+    const purchaseHistory = purchaseHistoryRaw.map((p) => ({
+      orderId: String(p?.orderId ?? ""),
+      date: String(p?.date ?? ""),
+      total: typeof p?.total === "number" && Number.isFinite(p.total) ? p.total : Number(p?.total) || 0,
+    }));
+    const consultationHistoryRaw = Array.isArray(row.consultationHistory)
+      ? row.consultationHistory
+      : [];
+    const consultationHistory = consultationHistoryRaw.map((c) => ({
+      bookingId: String(c?.bookingId ?? ""),
+      date: String(c?.date ?? ""),
+      dermatologistName: String(c?.dermatologistName ?? ""),
+    }));
+    const activityRaw = Array.isArray(row.activityTimeline) ? row.activityTimeline : [];
+    const activityTimeline = activityRaw.map((a) => ({
+      id: String(a?.id ?? ""),
+      type: String(a?.type ?? ""),
+      title: String(a?.title ?? ""),
+      date: String(a?.date ?? ""),
+    }));
+
+    const totalSpend =
+      typeof row.totalSpend === "number" && Number.isFinite(row.totalSpend)
+        ? row.totalSpend
+        : Number(row.totalSpend) || 0;
+    const lifetimeValue =
+      typeof row.lifetimeValue === "number" && Number.isFinite(row.lifetimeValue)
+        ? row.lifetimeValue
+        : totalSpend;
+
+    return {
+      ...mapBackendAssignedUser(row),
+      id,
+      lastPurchase: formatAssignedUserDate(
+        lastRaw != null && String(lastRaw).trim() !== "" ? String(lastRaw) : undefined
+      ),
+      totalSpend,
+      totalOrders:
+        typeof row.totalOrders === "number" && Number.isFinite(row.totalOrders)
+          ? row.totalOrders
+          : Number(row.totalOrders) || purchaseHistory.length,
+      purchaseHistory,
+      consultationHistory,
+      notes: String(row.notes ?? ""),
+      lifetimeValue,
+      activityTimeline: activityTimeline.length > 0 ? activityTimeline : undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Partner analytics from backend GET /partner/store/analytics. */

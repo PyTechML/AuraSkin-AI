@@ -1,4 +1,13 @@
-import { Controller, Get, Put, Body, Param, Req, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Put,
+  Body,
+  Param,
+  Req,
+  UseGuards,
+  NotFoundException,
+} from "@nestjs/common";
 import { Request } from "express";
 import { AuthGuard, AuthenticatedUser } from "../../../shared/guards/auth.guard";
 import { RoleGuard, ROLES_KEY } from "../../../shared/guards/role.guard";
@@ -15,6 +24,23 @@ const RequireStore = () => SetMetadata(ROLES_KEY, ["store"] as BackendRole[]);
 @RequireStore()
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
+
+  @Get("assigned-users")
+  async getAssignedUsers(@Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const storeId = user?.id ?? "";
+    const data = await this.ordersService.getAssignedUsersForStore(storeId);
+    return formatSuccess(data);
+  }
+
+  @Get("assigned-users/:userId")
+  async getAssignedUserDetail(@Param("userId") userId: string, @Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const storeId = user?.id ?? "";
+    const data = await this.ordersService.getAssignedUserDetailForStore(storeId, userId);
+    if (!data) throw new NotFoundException("Customer not found");
+    return formatSuccess(data);
+  }
 
   @Get("orders")
   async getOrders(@Req() req: Request) {

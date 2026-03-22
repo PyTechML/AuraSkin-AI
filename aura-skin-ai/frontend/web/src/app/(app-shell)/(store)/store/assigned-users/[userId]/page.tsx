@@ -96,7 +96,7 @@ export default function StoreAssignedUserDetailPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {user.purchaseHistory.length === 0 ? (
+            {!Array.isArray(user.purchaseHistory) || user.purchaseHistory.length === 0 ? (
               <p className="text-sm text-muted-foreground">No purchases yet.</p>
             ) : (
               <ul className="space-y-2">
