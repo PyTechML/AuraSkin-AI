@@ -47,8 +47,9 @@ let cached: EnvConfig | null = null;
 
 function parseQuestionnaireOnlyFlag(nodeEnv: string): boolean {
   const raw = process.env.ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT;
-  if (raw === "false") return false;
-  if (raw === "true") return true;
+  const normalized = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (normalized === "false") return false;
+  if (normalized === "true") return true;
   return nodeEnv !== "production";
 }
 

@@ -29,6 +29,9 @@ import { RoutineRepository } from "../repositories/routine.repository";
 import { AiReportService } from "./ai-report.service";
 import { loadEnv } from "../../../config/env";
 
+const ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE =
+  "Image-based analysis service is temporarily unavailable. Please try questionnaire-only submission or retry later.";
+
 /** Multer-style file from multipart upload (fieldname optional; we key by view). */
 export interface AssessmentUploadFile {
   fieldname?: string;
@@ -155,9 +158,19 @@ export class AssessmentService {
 
       const imageUrls = images.map((img) => img.image_url).filter((url) => typeof url === "string" && url.length > 0);
 
+      const redisAvailable = await this.redis.ping();
+      const aiConfigured = this.aiEngine.isConfigured();
+
+      if (!redisAvailable && !aiConfigured) {
+        await this.redis.setAssessmentProgress(assessmentId, "failed", 0, {
+          error: ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE,
+        });
+        throw new InternalServerErrorException(ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE);
+      }
+
       // Synchronous fallback mode (no Redis queue): run AI engine immediately and write report/routine.
       // This preserves the existing API contract and progress polling (progress is stored in-memory if Redis is absent).
-      const shouldRunSync = !dto?.forceQueue && this.aiEngine.isConfigured() && !(await this.redis.ping());
+      const shouldRunSync = !dto?.forceQueue && aiConfigured && !redisAvailable;
       if (shouldRunSync) {
         await this.redis.setAssessmentProgress(assessmentId, "processing", 10);
 
@@ -196,10 +209,19 @@ export class AssessmentService {
 
         const analyzed = await this.aiEngine.analyzeAssessment({ assessmentId, imageUrls });
         if (analyzed.status !== "ok" || !analyzed.predictions) {
+          const analyzedMessage = (analyzed.message ?? "").toLowerCase();
+          const shouldExposeUnavailable =
+            analyzedMessage.includes("unavailable") ||
+            analyzedMessage.includes("not configured") ||
+            analyzedMessage.includes("timeout") ||
+            analyzedMessage.includes("timed out");
+          const safeMessage = shouldExposeUnavailable
+            ? ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE
+            : "Unable to submit assessment. Please try again.";
           await this.redis.setAssessmentProgress(assessmentId, "failed", 0, {
-            error: analyzed.message ?? "Analysis failed. Please try again.",
+            error: safeMessage,
           });
-          throw new InternalServerErrorException("Unable to submit assessment. Please try again.");
+          throw new InternalServerErrorException(safeMessage);
         }
         await this.redis.setAssessmentProgress(assessmentId, "generating_report", 70);
 
@@ -301,15 +323,16 @@ export class AssessmentService {
       });
 
       if (!queued) {
+        const queueFailureMessage = ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE;
         await this.redis.setAssessmentProgress(assessmentId, "failed", 0, {
-          error: "Unable to start analysis. Please try again.",
+          error: queueFailureMessage,
         });
         this.logger.logAiProcessing({
           analysis_id: assessmentId,
           processing_stage: "enqueue_failed",
           success: false,
         });
-        throw new InternalServerErrorException("Unable to submit assessment. Please try again.");
+        throw new InternalServerErrorException(queueFailureMessage);
       }
 
       await this.redis.setAssessmentProgress(assessmentId, "queued", 0);
@@ -343,7 +366,12 @@ export class AssessmentService {
     dto: SubmitAssessmentDto
   ): Promise<{ assessment_id: string; report_id: string }> {
     if (!loadEnv().enableQuestionnaireOnlyAssessment) {
-      throw new ForbiddenException("This assessment option is not available.");
+      if (!process.env.ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT) {
+        throw new ForbiddenException(
+          "Questionnaire-only submission is disabled. Ask support to set ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT=true on the backend."
+        );
+      }
+      throw new ForbiddenException("Questionnaire-only submission is disabled for this environment.");
     }
     try {
       const assessment = await this.assessmentRepository.findByIdAndUser(assessmentId, userId);

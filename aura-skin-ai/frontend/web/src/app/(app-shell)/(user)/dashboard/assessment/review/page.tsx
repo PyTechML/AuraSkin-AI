@@ -22,6 +22,36 @@ import { Progress } from "@/components/ui/progress";
 
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 180; // ~6 min
+const ANALYSIS_UNAVAILABLE_BACKEND_MESSAGE =
+  "Image-based analysis service is temporarily unavailable. Please try questionnaire-only submission or retry later.";
+
+function mapSubmitErrorMessage(rawMessage: string): string {
+  const message = rawMessage.trim();
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes("failed to fetch") ||
+    lower.includes("networkerror") ||
+    lower.includes("network request failed") ||
+    lower.includes("load failed") ||
+    lower.includes("cors")
+  ) {
+    return "Network issue while submitting your assessment. Check your connection and try again.";
+  }
+
+  if (lower.includes(ANALYSIS_UNAVAILABLE_BACKEND_MESSAGE.toLowerCase())) {
+    return ANALYSIS_UNAVAILABLE_BACKEND_MESSAGE;
+  }
+
+  if (
+    lower.includes("questionnaire-only submission is disabled") ||
+    lower.includes("assessment option is not available")
+  ) {
+    return "Questionnaire-only submission is currently disabled. Please use live capture or try again after support enables it.";
+  }
+
+  return message || "Unable to submit assessment right now. Please try again.";
+}
 
 function buildCreateAssessmentPayload(data: AssessmentStepData): CreateAssessmentPayload {
   const skinType = data.skinTypeTone?.skinType;
@@ -195,10 +225,12 @@ export default function AssessmentReviewPage() {
       }, POLL_INTERVAL_MS);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Something went wrong. Please try again.";
-      setError(message);
       if (message === "Session expired. Please login again.") {
+        setError(message);
         useAuthStore.getState().logout();
         router.replace(`/login?redirect=${encodeURIComponent("/dashboard/assessment/review")}`);
+      } else {
+        setError(mapSubmitErrorMessage(message));
       }
     } finally {
       if (!pollTimerRef.current) {
