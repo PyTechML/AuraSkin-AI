@@ -58,11 +58,10 @@ export class AuthController {
 
   @Get("me")
   async me(@Headers("authorization") authHeader?: string) {
-    const token = authHeader?.startsWith("Bearer ")
-      ? authHeader.slice(7)
-      : undefined;
+    const raw = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
+    const token = raw?.trim() || undefined;
     if (!token) {
-      throw new UnauthorizedException("Missing authorization");
+      return formatSuccess(null);
     }
     const user = await this.authService.getUser(token);
     if (!user) {

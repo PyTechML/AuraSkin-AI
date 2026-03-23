@@ -42,27 +42,6 @@ export function AppShellLayout({ children }: { children: React.ReactNode }) {
     !!safeEnabledForRole[role] &&
     isRedirectAllowedForRole(pathname, role);
 
-  if (isPanel && loading) {
-    return (
-      <div className="min-h-screen flex flex-col bg-background">
-        <main className="flex-1 overflow-auto p-6">
-          <div className="space-y-6">
-            <div className="h-8 w-48 rounded bg-muted/60 animate-pulse" />
-            <div className="grid gap-4 md:grid-cols-2">
-              {[1, 2].map((i) => (
-                <div
-                  key={i}
-                  className="h-32 rounded-xl border border-border/60 bg-muted/40 animate-pulse"
-                />
-              ))}
-            </div>
-          </div>
-        </main>
-        <Footer />
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen flex flex-col bg-background">
       {!isPanel && <Navbar />}

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { ClientAuthGate } from "@/components/ui/ClientAuthGate";
@@ -34,6 +34,8 @@ const { fadeUp, fadeOnly, slideUp } = scrollReveal;
 export default function LandingPage() {
   const trustRef = useRef<HTMLElement>(null);
   const heroRef = useRef<HTMLElement>(null);
+  const heroIntroStartedRef = useRef(false);
+  const [heroIntroReady, setHeroIntroReady] = useState(false);
   const [heroMouse, setHeroMouse] = useState<MouseState>(null);
   const { scrollY } = useScroll();
   const heroBgY = useTransform(scrollY, [0, 600], [0, 120]);
@@ -49,6 +51,13 @@ export default function LandingPage() {
     setHeroMouse({ x: e.clientX, y: e.clientY });
   }, []);
   const onHeroMouseLeave = useCallback(() => setHeroMouse(null), []);
+
+  useEffect(() => {
+    if (heroIntroStartedRef.current) return;
+    heroIntroStartedRef.current = true;
+    const id = requestAnimationFrame(() => setHeroIntroReady(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   return (
     <div className="bg-background text-foreground">
@@ -76,29 +85,23 @@ export default function LandingPage() {
         </motion.div>
         <HeroShapes style={{ y: heroBgY, opacity: heroOpacity }} />
 
-        <div className="relative z-20 w-full max-w-3xl mx-auto px-4 text-center">
-          <motion.h1
-            className="font-brand text-6xl md:text-8xl font-bold tracking-tight text-foreground"
-            initial={{ opacity: 1, y: 0 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, ease: "easeOut" }}
-          >
+        <motion.div
+          className="relative z-20 w-full max-w-3xl mx-auto px-4 text-center"
+          initial={{ opacity: 0, filter: "blur(6px)" }}
+          animate={
+            heroIntroReady
+              ? { opacity: 1, filter: "blur(0px)" }
+              : { opacity: 0, filter: "blur(6px)" }
+          }
+          transition={{ duration: 0.6, ease: "easeOut" }}
+        >
+          <h1 className="font-brand text-6xl md:text-8xl font-bold tracking-tight text-foreground">
             AuraSkin AI
-          </motion.h1>
-          <motion.p
-            className="mt-5 text-muted-foreground text-xl md:text-2xl font-body max-w-xl mx-auto"
-            initial={{ opacity: 1 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.35, duration: 0.6, ease: "easeOut" }}
-          >
+          </h1>
+          <p className="mt-5 text-muted-foreground text-xl md:text-2xl font-body max-w-xl mx-auto">
             Clinical AI Skin Intelligence Built For You
-          </motion.p>
-          <motion.div
-            className="mt-10"
-            initial={{ opacity: 1 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.5, duration: 0.5 }}
-          >
+          </p>
+          <div className="mt-10">
             <CTAWithGlow>
               <ClientAuthGate
                 authenticated={
@@ -118,8 +121,8 @@ export default function LandingPage() {
                 }
               />
             </CTAWithGlow>
-          </motion.div>
-        </div>
+          </div>
+        </motion.div>
       </section>
 
       <div className="relative">

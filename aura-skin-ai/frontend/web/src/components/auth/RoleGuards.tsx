@@ -8,6 +8,8 @@ import { getRedirectPathForRole } from "@/store/authStore";
 import type { UserRole } from "@/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { PanelLayout } from "@/components/layouts/PanelLayout";
+import { AdminLayoutClient } from "@/components/admin/AdminLayoutClient";
 
 /** Paths under (user) that allow guest access without auth. */
 const USER_PUBLIC_PATH_PREFIXES = [
@@ -120,7 +122,11 @@ export function StoreGuard({ children }: GuardProps) {
   });
 
   if (loading) {
-    return <PanelSkeleton />;
+    return (
+      <PanelLayout role="STORE_PARTNER">
+        <PanelSkeleton />
+      </PanelLayout>
+    );
   }
 
   if (!isAuthenticated || role !== "STORE") {
@@ -201,7 +207,11 @@ export function AdminGuard({ children }: GuardProps) {
   }, [loading, isAuthenticated, role, router, pathname]);
 
   if (loading) {
-    return <PanelSkeleton />;
+    return (
+      <AdminLayoutClient>
+        <PanelSkeleton />
+      </AdminLayoutClient>
+    );
   }
 
   if (!isAuthenticated || role !== "ADMIN") {

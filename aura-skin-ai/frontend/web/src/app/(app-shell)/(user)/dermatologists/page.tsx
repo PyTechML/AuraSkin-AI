@@ -1,17 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useUserLocation } from "@/hooks/useUserLocation";
 import { getDermatologistsNearby, getDermatologists } from "@/services/api";
-import type { Dermatologist, Store } from "@/types";
+import type { Dermatologist } from "@/types";
+import type { LocationMapPoint } from "@/components/stores/LocationsMap";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { User, Star, MapPin } from "lucide-react";
-import { StoresMap } from "@/components/stores/StoresMap";
+
+const LocationsMap = dynamic(
+  () => import("@/components/stores/LocationsMap").then((m) => m.LocationsMap),
+  { ssr: false, loading: () => <div className="w-full h-64 bg-muted/40 rounded-xl animate-pulse" /> }
+);
 
 export default function DermatologistsPage() {
-  const { lat, lng, loading: locLoading, allowed } = useUserLocation();
+  const {
+    lat,
+    lng,
+    loading: locLoading,
+    allowed,
+    hasAccurateLocation,
+    refresh,
+  } = useUserLocation();
   const [dermatologists, setDermatologists] = useState<Dermatologist[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -21,7 +34,7 @@ export default function DermatologistsPage() {
       setLoading(true);
       setLoadError(null);
       try {
-        if (allowed && !locLoading) {
+        if (hasAccurateLocation && allowed && !locLoading) {
           const nearby = await getDermatologistsNearby(lat, lng);
           setDermatologists(nearby);
         } else {
@@ -36,7 +49,32 @@ export default function DermatologistsPage() {
       }
     };
     load();
-  }, [lat, lng, allowed, locLoading]);
+  }, [lat, lng, allowed, hasAccurateLocation, locLoading]);
+
+  const mapPoints = useMemo((): LocationMapPoint[] => {
+    return (Array.isArray(dermatologists) ? dermatologists : [])
+      .filter(
+        (d) =>
+          typeof d.clinicLat === "number" &&
+          Number.isFinite(d.clinicLat) &&
+          typeof d.clinicLng === "number" &&
+          Number.isFinite(d.clinicLng)
+      )
+      .map((d) => {
+        const clinicName =
+          d.clinicAddress?.split(",")[0]?.trim() || d.clinicAddress || undefined;
+        return {
+          id: d.id,
+          kind: "dermatologist" as const,
+          lat: d.clinicLat as number,
+          lng: d.clinicLng as number,
+          name: d.name ?? "Dermatologist",
+          clinicName,
+          specialization: d.specialty,
+          addressLine: d.clinicAddress,
+        };
+      });
+  }, [dermatologists]);
 
   return (
     <div className="space-y-8">
@@ -47,25 +85,10 @@ export default function DermatologistsPage() {
 
       <div className="max-w-4xl rounded-2xl border border-border/60 overflow-hidden">
         <div className="p-0">
-          <StoresMap
-            stores={
-              (Array.isArray(dermatologists) ? dermatologists : []).map((d) => ({
-                id: d.id,
-                name: d.name ?? "Dermatologist",
-                address: d.clinicAddress ?? "",
-                city: "",
-                lat: d.clinicLat ?? 37.785,
-                lng: d.clinicLng ?? -122.42,
-                image: "",
-                phone: "",
-                rating: d.rating ?? 0,
-                open: true,
-                specialties: [],
-                schedule: [],
-              })) as unknown as Store[]
-            }
-            userLat={allowed ? lat : undefined}
-            userLng={allowed ? lng : undefined}
+          <LocationsMap
+            points={mapPoints}
+            userLat={hasAccurateLocation ? lat : undefined}
+            userLng={hasAccurateLocation ? lng : undefined}
           />
         </div>
       </div>
@@ -83,10 +106,13 @@ export default function DermatologistsPage() {
 
       {allowed === false && !locLoading && !loadError && (
         <Card className="border-amber-500/30 bg-amber-500/5">
-          <CardContent className="py-4">
+          <CardContent className="py-4 flex items-center justify-between gap-4">
             <p className="text-sm text-amber-800 dark:text-amber-200">
               Enable location for personalized results.
             </p>
+            <Button variant="outline" size="sm" onClick={refresh}>
+              Enable location
+            </Button>
           </CardContent>
         </Card>
       )}

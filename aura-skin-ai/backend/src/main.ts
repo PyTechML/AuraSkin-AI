@@ -20,9 +20,22 @@ async function run(): Promise<void> {
     origin: process.env.CORS_ORIGIN ?? true,
     credentials: true,
   });
-  const port = process.env.PORT ?? 3001;
-  await app.listen(port);
-  logger.log(`Backend listening on port ${port}`);
+  const port = Number(process.env.PORT) || 3001;
+  try {
+    await app.listen(port);
+    logger.log(`Backend listening on port ${port}`);
+  } catch (listenErr: unknown) {
+    const code =
+      listenErr && typeof listenErr === "object" && "code" in listenErr
+        ? String((listenErr as { code?: string }).code)
+        : "";
+    if (code === "EADDRINUSE") {
+      logger.error(
+        `Port ${port} is already in use (EADDRINUSE). Stop the other Node/Nest process or change PORT in .env. See docs/local-dev.md.`
+      );
+    }
+    throw listenErr;
+  }
 }
 
 run().catch((err) => {

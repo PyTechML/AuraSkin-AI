@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useUserLocation } from "@/hooks/useUserLocation";
 import { getStoresNearby, getStores } from "@/services/api";
@@ -10,8 +10,8 @@ import { Button } from "@/components/ui/button";
 import { MapPin, Star } from "lucide-react";
 import dynamic from "next/dynamic";
 
-const MapContainer = dynamic(
-  () => import("@/components/stores/StoresMap").then((m) => m.StoresMap),
+const LocationsMap = dynamic(
+  () => import("@/components/stores/LocationsMap").then((m) => m.LocationsMap),
   { ssr: false, loading: () => <div className="w-full h-64 bg-muted/40 rounded-xl animate-pulse" /> }
 );
 
@@ -50,6 +50,28 @@ export default function StoresPage() {
     load();
   }, [lat, lng, allowed, hasAccurateLocation, locLoading]);
 
+  const mapPoints = useMemo(
+    () =>
+      stores
+        .filter(
+          (s) =>
+            typeof s.lat === "number" &&
+            Number.isFinite(s.lat) &&
+            typeof s.lng === "number" &&
+            Number.isFinite(s.lng)
+        )
+        .map((s) => ({
+          id: s.id,
+          kind: "store" as const,
+          lat: s.lat as number,
+          lng: s.lng as number,
+          name: s.name ?? "Store",
+          addressLine: s.location || s.address,
+          contact: s.contact,
+        })),
+    [stores]
+  );
+
   return (
     <div className="space-y-8">
       <h1 className="font-heading text-2xl font-semibold">Stores Near You</h1>
@@ -83,9 +105,9 @@ export default function StoresPage() {
 
       <div className="grid gap-8 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <div className="rounded-2xl border border-border/60 overflow-hidden mb-6">
-            <MapContainer
-              stores={stores}
+          <div className="mb-6">
+            <LocationsMap
+              points={mapPoints}
               userLat={hasAccurateLocation ? lat : undefined}
               userLng={hasAccurateLocation ? lng : undefined}
             />

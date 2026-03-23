@@ -86,8 +86,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         const payload = (await response.json().catch(() => ({}))) as {
-          data?: { id?: string; email?: string; fullName?: string | null; role?: string };
+          data?: { id?: string; email?: string; fullName?: string | null; role?: string } | null;
         };
+        if (payload && "data" in payload && payload.data === null) {
+          logout();
+          return;
+        }
         const me = payload?.data;
         const frontendRole = me?.role ? BACKEND_TO_FRONTEND_ROLE[me.role.toLowerCase()] : null;
         if (!me?.id || !me?.email || !frontendRole) {
