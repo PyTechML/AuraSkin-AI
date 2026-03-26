@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Report } from "@/types";
 import type { UserRoutineCurrent, UserDashboardMetrics } from "@/services/api";
 import type { User } from "@/types";
@@ -88,17 +88,25 @@ export function useDashboardJourney(
   routineSummary?: UserRoutineCurrent | null,
   metrics?: UserDashboardMetrics | null
 ): DashboardJourneyData & { greetingPrefix: string } {
+  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>("afternoon");
+  const [todayIso, setTodayIso] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTimeOfDay(getTimeOfDay());
+    setTodayIso(new Date().toISOString().slice(0, 10));
+  }, []);
+
   return useMemo(() => {
-    const timeOfDay = getTimeOfDay();
     const greetingPrefix = getGreetingPrefix(timeOfDay);
     const latestReport = reports[0];
     const reportCount = reports.length;
     const seed = reportCount * 7 + (latestReport ? new Date(latestReport.date).getDate() : 0);
 
     const lastAssessmentDate = latestReport?.date;
-    const nextAssessmentDays = lastAssessmentDate
-      ? daysUntil(new Date(new Date(lastAssessmentDate).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))
-      : 7;
+    const nextAssessmentDays =
+      todayIso && lastAssessmentDate
+        ? daysUntil(new Date(new Date(lastAssessmentDate).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))
+        : 7;
 
     const routinePercent =
       routineSummary?.adherence.percentLast7Days != null
@@ -144,5 +152,5 @@ export function useDashboardJourney(
       ctaLabel: ctaOption.label,
       ctaHref: ctaOption.href,
     };
-  }, [reports, user?.id, routineSummary, metrics]);
+  }, [reports, user?.id, routineSummary, metrics, timeOfDay, todayIso]);
 }

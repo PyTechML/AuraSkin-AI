@@ -22,31 +22,36 @@ export class ReportGenerator {
     if (primary) concerns.push(primary);
     if (secondary) concerns.push(secondary);
 
-    // Simple rule-based scores between 0 and 1
-    let acneScore = 0.1;
+    // Graduated rule-based scores between 0 and 1 (avoid binary jumps that produce repeated totals).
+    let acneScore = 0.22;
     if (concerns.some((c) => c.includes("acne") || c.includes("breakout"))) {
-      acneScore = 0.7;
+      acneScore = primary.includes("acne") || primary.includes("breakout") ? 0.62 : 0.5;
     }
 
-    let pigmentationScore = 0.1;
+    let pigmentationScore = 0.2;
     if (concerns.some((c) => c.includes("pigment") || c.includes("dark spot"))) {
-      pigmentationScore = 0.7;
+      pigmentationScore = primary.includes("pigment") || primary.includes("dark spot") ? 0.6 : 0.48;
     }
 
-    let hydrationScore = 0.5;
+    let hydrationScore = 0.56;
     if (skinType.includes("dry") || concerns.some((c) => c.includes("dry"))) {
       hydrationScore = 0.4;
     } else if (skinType.includes("oily")) {
       hydrationScore = 0.6;
     }
     if (lifestyle.includes("low water") || lifestyle.includes("dehydrated")) {
-      hydrationScore = Math.max(hydrationScore - 0.15, 0.1);
+      hydrationScore = Math.max(hydrationScore - 0.12, 0.1);
     }
 
     const hasSensitivity =
       sensitivity.includes("high") ||
       sensitivity.includes("sensitive") ||
       concerns.some((c) => c.includes("red") || c.includes("irritation"));
+
+    if (hasSensitivity) {
+      acneScore = Math.min(1, acneScore + 0.06);
+      hydrationScore = Math.max(0, hydrationScore - 0.06);
+    }
 
     const parts: string[] = [];
 

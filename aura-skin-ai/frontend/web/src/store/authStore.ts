@@ -36,8 +36,10 @@ export const useAuthStore = create<AuthState>()(
       login: (role: UserRole, email?: string, name?: string) => {
         const resolvedEmail = email ?? "";
         const resolvedName = name ?? "";
+        const fallbackId = "auth-context-missing";
         const base: User = {
-          id: resolvedEmail || resolvedName || `${role.toLowerCase()}-${Date.now()}`,
+          // Deterministic fallback ID avoids timestamp-based pseudo-identities across sessions.
+          id: resolvedEmail || resolvedName || fallbackId,
           email: resolvedEmail,
           name: resolvedName || role.toLowerCase(),
           role,

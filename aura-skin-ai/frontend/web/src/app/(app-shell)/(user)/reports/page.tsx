@@ -163,10 +163,14 @@ export default function ReportsPage() {
   const [actionDescription, setActionDescription] = useState<string>("");
 
   const [newTitle, setNewTitle] = useState("");
-  const [newDate, setNewDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [newDate, setNewDate] = useState<string>("");
   const [newNotes, setNewNotes] = useState("");
   const [newTag, setNewTag] = useState<ManualEntryTag>("Self Update");
   const [newDocumentName, setNewDocumentName] = useState<string>("");
+
+  useEffect(() => {
+    setNewDate(new Date().toISOString().slice(0, 10));
+  }, []);
 
   function openComingSoon(kind: "Download PDF" | "Share with Dermatologist", r: TimelineReport) {
     setActionTitle(kind);

@@ -369,6 +369,16 @@ export async function submitAssessment(payload: { assessmentId: string; city?: s
   return await apiPost<{ assessment_id: string; report_id: string | null }>("/user/assessment/submit", payload);
 }
 
+export interface AssessmentSubmitHealth {
+  mode: "QUEUE" | "SYNC_AI" | "QUESTIONNAIRE_ONLY";
+  healthy: boolean;
+  reasons: string[];
+}
+
+export async function getAssessmentSubmitHealth(): Promise<AssessmentSubmitHealth> {
+  return await apiGet<AssessmentSubmitHealth>("/user/assessment/submit-health");
+}
+
 /** Questionnaire-only assessment (no face images). Requires backend ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT. */
 export async function submitQuestionnaireAssessment(payload: {
   assessmentId: string;

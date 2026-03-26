@@ -43,13 +43,10 @@ function addDaysISO(dateStr: string, days: number): string | null {
   return d.toISOString().slice(0, 10);
 }
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function last7DaysISO(): string[] {
+function last7DaysISO(baseDayISO: string): string[] {
   const out: string[] = [];
-  const base = new Date();
+  const base = new Date(baseDayISO);
+  if (!Number.isFinite(base.getTime())) return out;
   base.setHours(0, 0, 0, 0);
   for (let i = 6; i >= 0; i -= 1) {
     const d = new Date(base);
@@ -100,7 +97,8 @@ export function ReportActionsSection({
   report: Report;
   previousReport: Report | null;
 }) {
-  const userId = useAuthStore((s) => s.user?.id) ?? "anon";
+  const userId = useAuthStore((s) => s.user?.id) ?? "";
+  const hasUserContext = userId.trim().length > 0;
 
   const [state, setState] = useState<ReportActionsStateV1>(() => defaultReportActionsState());
   const [notesEditing, setNotesEditing] = useState(false);
@@ -114,21 +112,34 @@ export function ReportActionsSection({
   const [actionDescription, setActionDescription] = useState<string>("");
 
   const storageKey = `${userId}:${report.id}`;
+  const [todayKey, setTodayKey] = useState<string>("");
 
   useEffect(() => {
+    setTodayKey(new Date().toISOString().slice(0, 10));
+  }, []);
+
+  useEffect(() => {
+    if (!hasUserContext) {
+      setState(defaultReportActionsState());
+      setNotesEditing(false);
+      setNoteDraft("");
+      setSymptomSelection([]);
+      setJustSavedNote(false);
+      return;
+    }
     const loaded = loadReportActionsState(userId, report.id);
     setState(loaded);
     setNotesEditing(false);
     setNoteDraft(loaded.personalNote);
     setSymptomSelection([]);
     setJustSavedNote(false);
-  }, [storageKey, userId, report.id]);
+  }, [hasUserContext, storageKey, userId, report.id]);
 
-  const todayKey = todayISO();
   const todayRoutine = state.routineByDate[todayKey] ?? { morning: false, evening: false, skipped: false };
 
   const weeklyPercent = useMemo(() => {
-    const days = last7DaysISO();
+    if (!todayKey) return 0;
+    const days = last7DaysISO(todayKey);
     let completed = 0;
     for (const day of days) {
       const entry = state.routineByDate[day];
@@ -138,7 +149,7 @@ export function ReportActionsSection({
       if (entry.evening) completed += 1;
     }
     return Math.round((completed / 14) * 100);
-  }, [state.routineByDate]);
+  }, [state.routineByDate, todayKey]);
 
   const [weeklyMeterValue, setWeeklyMeterValue] = useState(0);
   useEffect(() => {
@@ -164,7 +175,9 @@ export function ReportActionsSection({
 
   function persist(next: ReportActionsStateV1) {
     setState(next);
-    saveReportActionsState(userId, report.id, next);
+    if (hasUserContext) {
+      saveReportActionsState(userId, report.id, next);
+    }
   }
 
   function openComingSoon(kind: "Download PDF" | "Share with Dermatologist") {

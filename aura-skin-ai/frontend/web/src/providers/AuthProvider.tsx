@@ -161,10 +161,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [markAuthBootstrapComplete, reconcileWithMe]);
 
-  /** If persist hydration fails without notifying listeners, unblock the shell after a short wait. */
+  /** If persist hydration stalls, unblock shell quickly to avoid long skeleton renders. */
   useEffect(() => {
-    // Allow time for /auth/me retries so we do not mark ready before bootstrap finishes.
-    const safetyMs = 10_000;
+    // Keep this short for first-paint stability; reconciliation still continues in background.
+    const safetyMs = 1_500;
     const id = window.setTimeout(() => {
       if (useAuthStore.getState()._hasHydrated) return;
       void (async () => {

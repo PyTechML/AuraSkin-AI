@@ -14,7 +14,12 @@ export const usePartnerStore = create<PartnerState>((set) => ({
   storeId: null,
   dermatologyLinked: false,
   setPartnerContext: (userId: string, role: string) => {
-    const storeId = getPartnerStoreId(userId, role);
+    let storeId: string | null = null;
+    try {
+      storeId = getPartnerStoreId(userId, role);
+    } catch {
+      storeId = null;
+    }
     const dermatologyLinked = role === "DERMATOLOGIST" || role === "STORE";
     set({ storeId, dermatologyLinked });
   },

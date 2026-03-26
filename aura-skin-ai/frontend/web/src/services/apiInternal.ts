@@ -22,7 +22,9 @@ function getErrorMessage(res: Response, json: Record<string, unknown>): string {
   if (res.status === 401) {
     return "Session expired. Please login again.";
   }
-  return (json?.message as string) ?? `Request failed: ${res.status}`;
+  const code = typeof json?.code === "string" ? json.code : "UNKNOWN_BACKEND_ERROR";
+  const message = (json?.message as string) ?? `Request failed: ${res.status}`;
+  return `[${code}] ${message} (status=${res.status})`;
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {

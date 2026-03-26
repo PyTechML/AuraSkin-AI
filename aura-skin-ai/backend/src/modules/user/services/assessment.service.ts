@@ -31,6 +31,38 @@ import { loadEnv } from "../../../config/env";
 
 const ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE =
   "Image-based analysis service is temporarily unavailable. Please try questionnaire-only submission or retry later.";
+const WORKER_UNHEALTHY_MESSAGE =
+  "Assessment processing worker is temporarily unavailable. Please retry shortly.";
+const ERRORS = {
+  ANALYSIS_UNAVAILABLE: "ASSESSMENT_ANALYSIS_UNAVAILABLE",
+  WORKER_UNHEALTHY: "ASSESSMENT_WORKER_UNHEALTHY",
+  MODE_UNHEALTHY: "ASSESSMENT_MODE_UNHEALTHY",
+  SUBMIT_FAILED: "ASSESSMENT_SUBMIT_FAILED",
+  INVALID_IMAGES: "ASSESSMENT_INVALID_IMAGES",
+} as const;
+
+const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+
+const computeSkinScore = (
+  acneScore: number | null,
+  pigmentationScore: number | null,
+  hydrationScore: number | null
+): number => {
+  const components: Array<{ value: number; weight: number }> = [];
+  if (typeof acneScore === "number") {
+    components.push({ value: 1 - clamp01(acneScore), weight: 0.33 });
+  }
+  if (typeof pigmentationScore === "number") {
+    components.push({ value: 1 - clamp01(pigmentationScore), weight: 0.33 });
+  }
+  if (typeof hydrationScore === "number") {
+    components.push({ value: clamp01(hydrationScore), weight: 0.34 });
+  }
+  if (components.length === 0) return 50;
+  const weightedSum = components.reduce((sum, c) => sum + c.value * c.weight, 0);
+  const totalWeight = components.reduce((sum, c) => sum + c.weight, 0);
+  return Math.max(0, Math.min(100, Math.round((weightedSum / totalWeight) * 100)));
+};
 
 /** Multer-style file from multipart upload (fieldname optional; we key by view). */
 export interface AssessmentUploadFile {
@@ -55,6 +87,60 @@ export class AssessmentService {
     private readonly routineRepository: RoutineRepository,
     private readonly aiReportService: AiReportService
   ) {}
+
+  async getSubmitHealth(): Promise<{
+    mode: "QUEUE" | "SYNC_AI" | "QUESTIONNAIRE_ONLY";
+    healthy: boolean;
+    reasons: string[];
+  }> {
+    const env = loadEnv();
+    const reasons: string[] = [];
+    const redisAvailable = await this.redis.ping();
+    const aiConfigured = this.aiEngine.isConfigured();
+    if (env.assessmentMode === "QUEUE") {
+      if (!redisAvailable) reasons.push("REDIS_UNAVAILABLE");
+      const heartbeat = this.parseHeartbeatTimestamp(await this.redis.getWorkerHeartbeat());
+      if (!heartbeat || Date.now() - heartbeat > env.workerHeartbeatMaxAgeMs) reasons.push("WORKER_UNHEALTHY");
+    }
+    if (env.assessmentMode === "SYNC_AI" && !aiConfigured) reasons.push("AI_ENGINE_UNAVAILABLE");
+    if (env.assessmentMode === "QUESTIONNAIRE_ONLY" && !env.enableQuestionnaireOnlyAssessment) {
+      reasons.push("QUESTIONNAIRE_MODE_DISABLED");
+    }
+    return { mode: env.assessmentMode, healthy: reasons.length === 0, reasons };
+  }
+
+  private parseHeartbeatTimestamp(raw: string | null): number | null {
+    if (!raw) return null;
+    const ts = Date.parse(raw);
+    return Number.isFinite(ts) ? ts : null;
+  }
+
+  private async ensureQueueHealthOrThrow(assessmentId: string): Promise<void> {
+    const env = loadEnv();
+    const heartbeatRaw = await this.redis.getWorkerHeartbeat();
+    const heartbeatTs = this.parseHeartbeatTimestamp(heartbeatRaw);
+    const isFresh = typeof heartbeatTs === "number" && Date.now() - heartbeatTs <= env.workerHeartbeatMaxAgeMs;
+    if (!isFresh) {
+      await this.redis.setAssessmentProgress(assessmentId, "failed", 0, {
+        error: WORKER_UNHEALTHY_MESSAGE,
+      });
+      throw new InternalServerErrorException({
+        code: ERRORS.WORKER_UNHEALTHY,
+        message: WORKER_UNHEALTHY_MESSAGE,
+      });
+    }
+  }
+
+  private async setFailedProgress(
+    assessmentId: string,
+    code: string,
+    message: string
+  ): Promise<never> {
+    await this.redis.setAssessmentProgress(assessmentId, "failed", 0, {
+      error: `[${code}] ${message}`,
+    });
+    throw new InternalServerErrorException({ code, message });
+  }
 
   async create(userId: string, dto: CreateAssessmentDto): Promise<{ assessment_id: string }> {
     try {
@@ -157,20 +243,35 @@ export class AssessmentService {
       }
 
       const imageUrls = images.map((img) => img.image_url).filter((url) => typeof url === "string" && url.length > 0);
-
+      const env = loadEnv();
       const redisAvailable = await this.redis.ping();
       const aiConfigured = this.aiEngine.isConfigured();
 
-      if (!redisAvailable && !aiConfigured) {
-        await this.redis.setAssessmentProgress(assessmentId, "failed", 0, {
-          error: ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE,
-        });
-        throw new InternalServerErrorException(ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE);
+      if (env.assessmentMode === "QUEUE" && !redisAvailable) {
+        await this.setFailedProgress(
+          assessmentId,
+          ERRORS.MODE_UNHEALTHY,
+          "Assessment mode is QUEUE but Redis is unavailable. Contact support."
+        );
+      }
+      if (env.assessmentMode === "SYNC_AI" && !aiConfigured) {
+        await this.setFailedProgress(
+          assessmentId,
+          ERRORS.MODE_UNHEALTHY,
+          "Assessment mode is SYNC_AI but AI engine is unavailable. Contact support."
+        );
+      }
+      if (env.assessmentMode === "QUESTIONNAIRE_ONLY") {
+        await this.setFailedProgress(
+          assessmentId,
+          ERRORS.MODE_UNHEALTHY,
+          "Scan-based submission is disabled in questionnaire-only mode."
+        );
       }
 
       // Synchronous fallback mode (no Redis queue): run AI engine immediately and write report/routine.
       // This preserves the existing API contract and progress polling (progress is stored in-memory if Redis is absent).
-      const shouldRunSync = !dto?.forceQueue && aiConfigured && !redisAvailable;
+      const shouldRunSync = env.assessmentMode === "SYNC_AI";
       if (shouldRunSync) {
         await this.redis.setAssessmentProgress(assessmentId, "processing", 10);
 
@@ -218,10 +319,7 @@ export class AssessmentService {
           const safeMessage = shouldExposeUnavailable
             ? ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE
             : "Unable to submit assessment. Please try again.";
-          await this.redis.setAssessmentProgress(assessmentId, "failed", 0, {
-            error: safeMessage,
-          });
-          throw new InternalServerErrorException(safeMessage);
+          await this.setFailedProgress(assessmentId, ERRORS.SUBMIT_FAILED, safeMessage);
         }
         await this.redis.setAssessmentProgress(assessmentId, "generating_report", 70);
 
@@ -250,11 +348,7 @@ export class AssessmentService {
           { acne_score, oil_level, pigmentation, confidence, zones }
         );
 
-        const ac = typeof acne_score === "number" ? acne_score : 0;
-        const pig = typeof pigmentation_score === "number" ? pigmentation_score : 0;
-        const hyd = typeof hydration_score === "number" ? hydration_score : 0.5;
-        let skin_score = Math.round((1 - ac) * 33 + (1 - pig) * 33 + Math.min(1, hyd) * 34);
-        skin_score = Math.max(0, Math.min(100, skin_score));
+        const skin_score = computeSkinScore(acne_score, pigmentation_score, hydration_score);
 
         const report = await this.reportRepository.create({
           user_id: userId,
@@ -275,11 +369,23 @@ export class AssessmentService {
             await this.redis.setAssessmentProgress(assessmentId, "completed", 100, { report_id: fallback.id });
             return { assessment_id: assessmentId, report_id: fallback.id };
           }
-          await this.redis.setAssessmentProgress(assessmentId, "failed", 0, {
-            error: "Failed to create report. Please try again.",
-          });
-          throw new InternalServerErrorException("Unable to submit assessment. Please try again.");
+          await this.setFailedProgress(
+            assessmentId,
+            ERRORS.SUBMIT_FAILED,
+            "Unable to create report. Please retry."
+          );
         }
+        const reportId = report?.id;
+        if (!reportId) {
+          await this.redis.setAssessmentProgress(assessmentId, "failed", 0, {
+            error: `[${ERRORS.SUBMIT_FAILED}] Report creation returned no identifier. Please retry.`,
+          });
+          throw new InternalServerErrorException({
+            code: ERRORS.SUBMIT_FAILED,
+            message: "Report creation returned no identifier. Please retry.",
+          });
+        }
+        const finalReportId: string = reportId;
 
         // Routine generation (backend routine-engine)
         const concerns = [assessment.primary_concern, assessment.secondary_concern].filter(
@@ -297,7 +403,7 @@ export class AssessmentService {
         try {
           await this.routineRepository.createRoutinePlan({
             user_id: userId,
-            report_id: report.id,
+              report_id: finalReportId,
             morning_routine: routine.morningRoutine,
             night_routine: routine.nightRoutine,
             lifestyle_food_advice: routine.lifestyle.foodAdvice,
@@ -308,12 +414,13 @@ export class AssessmentService {
           // best-effort
         }
 
-        await this.redis.setAssessmentProgress(assessmentId, "completed", 100, { report_id: report.id });
-        return { assessment_id: assessmentId, report_id: report.id };
+        await this.redis.setAssessmentProgress(assessmentId, "completed", 100, { report_id: finalReportId });
+        return { assessment_id: assessmentId, report_id: finalReportId };
       }
 
       // Normal mode: enqueue to Redis queue for Python worker.
-      const queued = await enqueueAssessmentProcessing(this.redis, {
+      await this.ensureQueueHealthOrThrow(assessmentId);
+      const queueResult = await enqueueAssessmentProcessing(this.redis, {
         assessmentId,
         userId,
         imageUrls,
@@ -322,17 +429,19 @@ export class AssessmentService {
         longitude: dto.longitude,
       });
 
-      if (!queued) {
+      if (queueResult === "already_processing") {
+        await this.redis.setAssessmentProgress(assessmentId, "queued", 5);
+        return { assessment_id: assessmentId, report_id: null };
+      }
+
+      if (queueResult !== "queued") {
         const queueFailureMessage = ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE;
-        await this.redis.setAssessmentProgress(assessmentId, "failed", 0, {
-          error: queueFailureMessage,
-        });
         this.logger.logAiProcessing({
           analysis_id: assessmentId,
           processing_stage: "enqueue_failed",
           success: false,
         });
-        throw new InternalServerErrorException(queueFailureMessage);
+        await this.setFailedProgress(assessmentId, ERRORS.ANALYSIS_UNAVAILABLE, queueFailureMessage);
       }
 
       await this.redis.setAssessmentProgress(assessmentId, "queued", 0);
@@ -352,7 +461,10 @@ export class AssessmentService {
     } catch (err) {
       if (err instanceof HttpException) throw err;
       this.logger.log("Assessment submit error", { error: String(err), event_type: "assessment_submit_error" });
-      throw new InternalServerErrorException("Unable to submit assessment. Please try again.");
+      throw new InternalServerErrorException({
+        code: ERRORS.SUBMIT_FAILED,
+        message: "Unable to submit assessment. Please try again.",
+      });
     }
   }
 
@@ -365,12 +477,8 @@ export class AssessmentService {
     userId: string,
     dto: SubmitAssessmentDto
   ): Promise<{ assessment_id: string; report_id: string }> {
-    if (!loadEnv().enableQuestionnaireOnlyAssessment) {
-      if (!process.env.ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT) {
-        throw new ForbiddenException(
-          "Questionnaire-only submission is disabled. Ask support to set ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT=true on the backend."
-        );
-      }
+    const env = loadEnv();
+    if (!env.enableQuestionnaireOnlyAssessment) {
       throw new ForbiddenException("Questionnaire-only submission is disabled for this environment.");
     }
     try {
@@ -380,7 +488,10 @@ export class AssessmentService {
       const images = await this.assessmentRepository.getImagesByAssessmentId(assessmentId);
       if (images.length > 0) {
         throw new BadRequestException(
-          "This assessment has face images. Use the standard submit flow for scan-based analysis."
+          {
+            code: ERRORS.INVALID_IMAGES,
+            message: "This assessment has face images. Use the standard submit flow for scan-based analysis.",
+          }
         );
       }
 
@@ -414,7 +525,10 @@ export class AssessmentService {
         error: String(err),
         event_type: "assessment_questionnaire_submit_error",
       });
-      throw new InternalServerErrorException("Unable to submit assessment. Please try again.");
+      throw new InternalServerErrorException({
+        code: ERRORS.SUBMIT_FAILED,
+        message: "Unable to submit assessment. Please try again.",
+      });
     }
   }
 }

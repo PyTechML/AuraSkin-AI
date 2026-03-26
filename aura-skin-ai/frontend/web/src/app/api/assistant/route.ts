@@ -567,6 +567,7 @@ async function proxyToNest(opts: {
   payload: AssistantRequestPayload;
   timeoutMs: number;
   rateLimits: { maxPerMinute: number; maxPerHour: number };
+  authorization?: string | null;
 }): Promise<AssistantResponsePayload | null> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), Math.max(200, opts.timeoutMs));
@@ -576,6 +577,7 @@ async function proxyToNest(opts: {
       headers: {
         "Content-Type": "application/json",
         "x-auraskin-assistant-proxy": "1",
+        ...(opts.authorization ? { Authorization: opts.authorization } : {}),
       },
       body: JSON.stringify({
         ...opts.payload,
@@ -701,6 +703,7 @@ export async function POST(req: Request) {
 
   const state = getAssistantServerState();
   const now = Date.now();
+  const authHeader = req.headers.get("authorization");
 
   const identity =
     payload.userId ||
@@ -788,6 +791,7 @@ export async function POST(req: Request) {
       maxPerMinute: state.settings.maxPerMinute ?? 10,
       maxPerHour: state.settings.maxPerHour ?? 100,
     },
+    authorization: authHeader,
   });
   if (proxied) {
     const tokenApprox =

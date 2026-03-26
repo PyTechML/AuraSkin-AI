@@ -1,11 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  getBookingsForPartner,
-  updateBookingStatus,
-  rescheduleBooking,
-} from "@/services/apiPartner";
+import { getBookingsForPartner } from "@/services/apiPartner";
 import { useAuth } from "@/providers/AuthProvider";
 import type { ConsultationBooking } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,15 +46,6 @@ export default function PartnerBookingsPage() {
       new Date(b.date) < new Date()
   );
 
-  const handleStatus = async (id: string, status: ConsultationBooking["status"]) => {
-    try {
-      await updateBookingStatus(id, status);
-      load();
-    } catch {
-      setError("Failed to update booking.");
-    }
-  };
-
   if (loading) {
     return (
       <div className="space-y-6">
@@ -92,8 +79,11 @@ export default function PartnerBookingsPage() {
     <div className="space-y-8">
       <h1 className="font-heading text-2xl font-semibold">Consultations</h1>
       <p className="text-muted-foreground">
-        Manage consultation requests. Accept, decline, or reschedule.
+        View consultation requests. Status update actions are temporarily disabled in production.
       </p>
+      <div className="rounded-lg border border-amber-400/40 bg-amber-100/40 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+        Booking action controls are currently unavailable. Use dermatologist consultation tools for live workflow updates.
+      </div>
 
       <div className="space-y-6">
         <div>
@@ -136,10 +126,10 @@ export default function PartnerBookingsPage() {
                         </Badge>
                         {b.status === "pending" && (
                           <>
-                            <Button size="sm" onClick={() => handleStatus(b.id, "accepted")}>
+                            <Button size="sm" disabled title="Temporarily unavailable">
                               Accept
                             </Button>
-                            <Button size="sm" variant="outline" onClick={() => handleStatus(b.id, "declined")}>
+                            <Button size="sm" variant="outline" disabled title="Temporarily unavailable">
                               Decline
                             </Button>
                           </>

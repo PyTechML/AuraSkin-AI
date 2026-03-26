@@ -151,8 +151,11 @@ export default function StoreSupportPage() {
       <div className="space-y-2">
         <h1 className="font-heading text-2xl font-semibold">Contact support</h1>
         <p className="text-muted-foreground">
-          Submit support requests or explore common help topics.
+          Support ticketing is in preview mode and currently unavailable for production submissions.
         </p>
+      </div>
+      <div className="rounded-lg border border-amber-400/40 bg-amber-100/40 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+        Ticket creation and SLA metrics shown below are preview-only until backend support services are enabled.
       </div>
 
       <PanelStagger className="grid gap-4 md:grid-cols-3">
@@ -264,14 +267,14 @@ export default function StoreSupportPage() {
               <p className="text-xs text-muted-foreground">
                 File attachment (connect backend).
               </p>
-              <Button type="submit" disabled={submitting || !subject.trim() || !message.trim()}>
+              <Button type="submit" disabled>
                 {submitting ? (
                   <>
                     <span className="animate-spin mr-2 inline-block h-3 w-3 rounded-full border-2 border-current border-t-transparent" />
                     Submitting…
                   </>
                 ) : (
-                  "Submit ticket"
+                  "Submit ticket (unavailable)"
                 )}
               </Button>
             </form>
@@ -309,7 +312,7 @@ export default function StoreSupportPage() {
               <CardTitle className="font-heading text-sm">Support status</CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
-              <p>Responses within 1–2 business days. For urgent order or payout issues, use high priority.</p>
+              <p>Live response SLA is not available yet. Use your internal escalation channel for urgent issues.</p>
             </CardContent>
           </Card>
 
@@ -320,7 +323,7 @@ export default function StoreSupportPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
-              <p>No active incidents. All systems operational.</p>
+              <p>Live incident status feed is not connected in this environment.</p>
             </CardContent>
           </Card>
         </div>

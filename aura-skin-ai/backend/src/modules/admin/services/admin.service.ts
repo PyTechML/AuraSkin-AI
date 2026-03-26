@@ -58,13 +58,13 @@ export class AdminService {
         .select("id", { count: "exact", head: true })
         .eq("role", "USER"),
       supabase
-        .from("stores")
+        .from("store_profiles")
         .select("id", { count: "exact", head: true })
-        .eq("status", "PENDING"),
+        .eq("approval_status", "pending"),
       supabase
-        .from("dermatologists")
+        .from("dermatologist_verification")
         .select("id", { count: "exact", head: true })
-        .eq("status", "PENDING"),
+        .eq("verification_status", "pending"),
       supabase.from("products").select("id", { count: "exact", head: true }),
       supabase.from("orders").select("id", { count: "exact", head: true }),
       supabase

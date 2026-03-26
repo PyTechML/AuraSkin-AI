@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Max, Min } from "class-validator";
+import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Max, Min } from "class-validator";
 import { Type } from "class-transformer";
 
 export class SubmitAssessmentDto {
@@ -31,5 +31,7 @@ export class SubmitAssessmentDto {
    * When false/omitted, backend may run synchronous analysis if queue is unavailable.
    */
   @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
   forceQueue?: boolean;
 }

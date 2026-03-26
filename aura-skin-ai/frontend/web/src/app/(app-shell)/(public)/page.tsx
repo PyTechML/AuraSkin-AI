@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback } from "react";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { ClientAuthGate } from "@/components/ui/ClientAuthGate";
@@ -34,8 +34,6 @@ const { fadeUp, fadeOnly, slideUp } = scrollReveal;
 export default function LandingPage() {
   const trustRef = useRef<HTMLElement>(null);
   const heroRef = useRef<HTMLElement>(null);
-  const heroIntroStartedRef = useRef(false);
-  const [heroIntroReady, setHeroIntroReady] = useState(false);
   const [heroMouse, setHeroMouse] = useState<MouseState>(null);
   const { scrollY } = useScroll();
   const heroBgY = useTransform(scrollY, [0, 600], [0, 120]);
@@ -51,13 +49,6 @@ export default function LandingPage() {
     setHeroMouse({ x: e.clientX, y: e.clientY });
   }, []);
   const onHeroMouseLeave = useCallback(() => setHeroMouse(null), []);
-
-  useEffect(() => {
-    if (heroIntroStartedRef.current) return;
-    heroIntroStartedRef.current = true;
-    const id = requestAnimationFrame(() => setHeroIntroReady(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
 
   return (
     <div className="bg-background text-foreground">
@@ -87,12 +78,8 @@ export default function LandingPage() {
 
         <motion.div
           className="relative z-20 w-full max-w-3xl mx-auto px-4 text-center"
-          initial={{ opacity: 0, filter: "blur(6px)" }}
-          animate={
-            heroIntroReady
-              ? { opacity: 1, filter: "blur(0px)" }
-              : { opacity: 0, filter: "blur(6px)" }
-          }
+          initial={{ opacity: 1, filter: "blur(0px)" }}
+          animate={{ opacity: 1, filter: "blur(0px)" }}
           transition={{ duration: 0.6, ease: "easeOut" }}
         >
           <h1 className="font-brand text-6xl md:text-8xl font-bold tracking-tight text-foreground">

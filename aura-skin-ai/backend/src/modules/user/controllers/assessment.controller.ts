@@ -1,4 +1,5 @@
 import {
+  UnauthorizedException,
   BadRequestException,
   Body,
   Controller,
@@ -40,10 +41,18 @@ export class AssessmentController {
     private readonly assessmentProgressService: AssessmentProgressService
   ) {}
 
+  private getRequiredUserId(req: Request): string {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id?.trim();
+    if (!userId) {
+      throw new UnauthorizedException("Authenticated user context is required.");
+    }
+    return userId;
+  }
+
   @Post("assessment")
   async create(@Req() req: Request, @Body() dto: CreateAssessmentDto) {
-    const user = (req as Request & { user?: AuthenticatedUser }).user;
-    const userId = user?.id ?? "";
+    const userId = this.getRequiredUserId(req);
     const data = await this.assessmentService.create(userId, dto);
     return formatSuccess({ success: true, ...data });
   }
@@ -67,8 +76,7 @@ export class AssessmentController {
     @Req() req: Request,
     @Query("assessmentId") assessmentId: string
   ) {
-    const user = (req as Request & { user?: AuthenticatedUser }).user;
-    const userId = user?.id ?? "";
+    const userId = this.getRequiredUserId(req);
     if (!assessmentId || typeof assessmentId !== "string") {
       throw new BadRequestException("assessmentId is required");
     }
@@ -84,8 +92,7 @@ export class AssessmentController {
   @Post("assessment/submit")
   @HttpCode(HttpStatus.ACCEPTED)
   async submit(@Req() req: Request, @Body() dto: SubmitAssessmentDto) {
-    const user = (req as Request & { user?: AuthenticatedUser }).user;
-    const userId = user?.id ?? "";
+    const userId = this.getRequiredUserId(req);
     const data = await this.assessmentService.submit(dto.assessmentId, userId, dto);
     return formatSuccess({ success: true, ...data });
   }
@@ -94,8 +101,7 @@ export class AssessmentController {
   @Post("assessment/submit-questionnaire")
   @HttpCode(HttpStatus.OK)
   async submitQuestionnaire(@Req() req: Request, @Body() dto: SubmitAssessmentDto) {
-    const user = (req as Request & { user?: AuthenticatedUser }).user;
-    const userId = user?.id ?? "";
+    const userId = this.getRequiredUserId(req);
     const data = await this.assessmentService.submitQuestionnaire(dto.assessmentId, userId, dto);
     return formatSuccess({ success: true, ...data });
   }
@@ -104,25 +110,28 @@ export class AssessmentController {
   @HttpCode(HttpStatus.ACCEPTED)
   async submitLive(@Req() req: Request, @Body() dto: SubmitAssessmentDto) {
     // Backward-compatible alias for live-camera flow. Keeps submit contract unchanged.
-    const user = (req as Request & { user?: AuthenticatedUser }).user;
-    const userId = user?.id ?? "";
+    const userId = this.getRequiredUserId(req);
     const data = await this.assessmentService.submit(dto.assessmentId, userId, dto);
     return formatSuccess({ success: true, ...data });
   }
 
   @Get("assessment/progress/:id")
   async getProgress(@Req() req: Request, @Param("id") assessmentId: string) {
-    const user = (req as Request & { user?: AuthenticatedUser }).user;
-    const userId = user?.id ?? "";
+    const userId = this.getRequiredUserId(req);
     const data = await this.assessmentProgressService.getProgress(assessmentId, userId);
     return formatSuccess({ progress: data.progress, stage: data.stage, report_id: data.report_id, error: data.error });
   }
 
   @Get("assessment/status/:id")
   async getStatus(@Req() req: Request, @Param("id") assessmentId: string) {
-    const user = (req as Request & { user?: AuthenticatedUser }).user;
-    const userId = user?.id ?? "";
+    const userId = this.getRequiredUserId(req);
     const data = await this.assessmentProgressService.getProgress(assessmentId, userId);
     return formatSuccess({ progress: data.progress, stage: data.stage, report_id: data.report_id, error: data.error });
+  }
+
+  @Get("assessment/submit-health")
+  async getSubmitHealth() {
+    const health = await this.assessmentService.getSubmitHealth();
+    return formatSuccess(health);
   }
 }

@@ -98,8 +98,11 @@ export default function DermatologistSupportPage() {
     <div className="space-y-8">
       <PanelPageHeader
         title="Support"
-        subtitle="Submit tickets or explore common support topics."
+        subtitle="Support ticketing is preview-only and unavailable for production submissions."
       />
+      <div className="rounded-lg border border-amber-400/40 bg-amber-100/40 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+        This page is currently informational. Ticket submission and live queue processing are not connected.
+      </div>
 
       <PanelSectionReveal>
       <div className="grid gap-6 lg:grid-cols-2">
@@ -108,7 +111,7 @@ export default function DermatologistSupportPage() {
             <CardTitle className="font-heading flex items-center gap-2">
               <MessageSquare className="h-4 w-4" /> New ticket
             </CardTitle>
-            <CardDescription>Priority and file attachment (UI). Our support team typically responds within one business day.</CardDescription>
+            <CardDescription>Priority and file attachment UI preview. Live submission is disabled.</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4" id="support-form">
@@ -154,8 +157,8 @@ export default function DermatologistSupportPage() {
               <p className="text-xs text-muted-foreground">
                 File attachment (connect backend).
               </p>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Submitting…" : "Submit ticket"}
+              <Button type="submit" disabled>
+                {submitting ? "Submitting…" : "Submit ticket (unavailable)"}
               </Button>
             </form>
           </CardContent>

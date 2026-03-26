@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { RedisService } from "../../../redis/redis.service";
 import { AssessmentRepository } from "../repositories/assessment.repository";
+import { ReportRepository } from "../repositories/report.repository";
 
 export interface ProgressResponse {
   progress: number;
@@ -13,7 +14,8 @@ export interface ProgressResponse {
 export class AssessmentProgressService {
   constructor(
     private readonly redis: RedisService,
-    private readonly assessmentRepository: AssessmentRepository
+    private readonly assessmentRepository: AssessmentRepository,
+    private readonly reportRepository: ReportRepository
   ) {}
 
   async getProgress(assessmentId: string, userId: string): Promise<ProgressResponse> {
@@ -22,6 +24,10 @@ export class AssessmentProgressService {
       return { progress: 0, stage: "pending" };
     }
     const data = await this.redis.getAssessmentProgress(assessmentId);
+    const report = await this.reportRepository.findByAssessmentIdAndUser(assessmentId, userId);
+    if (report?.id && (!data || data.stage !== "completed")) {
+      return { progress: 100, stage: "completed", report_id: report.id };
+    }
     if (!data) {
       return { progress: 0, stage: "pending" };
     }

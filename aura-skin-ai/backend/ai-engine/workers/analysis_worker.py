@@ -20,6 +20,25 @@ AI_WORKER_HEARTBEAT_KEY = "ai:worker:last_heartbeat"
 HEARTBEAT_TTL_SEC = 120
 PROCESSING_TIMEOUT_SEC = 600  # 10 minutes
 
+
+def clamp01(value: float) -> float:
+    return float(max(0.0, min(1.0, value)))
+
+
+def compute_skin_score(acne_score, pigmentation_score, hydration_score) -> int:
+    components = []
+    if acne_score is not None:
+        components.append((1.0 - clamp01(float(acne_score)), 0.33))
+    if pigmentation_score is not None:
+        components.append((1.0 - clamp01(float(pigmentation_score)), 0.33))
+    if hydration_score is not None:
+        components.append((clamp01(float(hydration_score)), 0.34))
+    if not components:
+        return 50
+    weighted_sum = sum(value * weight for value, weight in components)
+    total_weight = sum(weight for _, weight in components)
+    return int(max(0, min(100, round((weighted_sum / total_weight) * 100.0))))
+
 def set_heartbeat(redis_client):
     try:
         redis_client.setex(
@@ -116,12 +135,7 @@ def run_job(payload: dict, redis_client, supabase):
         )
         derm_rows = recommend_dermatologists(city=city, latitude=lat, longitude=lng, limit=5)
 
-        # Skin health index 0-100 from sub-scores (same formula as dashboard-metrics fallback)
-        ac = float(acne_score) if acne_score is not None else 0.0
-        pig = float(pigmentation_score) if pigmentation_score is not None else 0.0
-        hyd = float(hydration_score) if hydration_score is not None else 0.5
-        skin_score_val = round((1 - ac) * 33 + (1 - pig) * 33 + min(1.0, hyd) * 34)
-        skin_score_val = max(0, min(100, skin_score_val))
+        skin_score_val = compute_skin_score(acne_score, pigmentation_score, hydration_score)
 
         report_data = {
             "user_id": user_id,
@@ -148,10 +162,24 @@ def run_job(payload: dict, redis_client, supabase):
             },
         )
         r = supabase.table("reports").insert(report_data).execute()
-        if not r.data or len(r.data) == 0:
-            set_progress(redis_client, assessment_id, 0, "failed", error="Failed to create report.")
+        report_id = None
+        if r.data and len(r.data) > 0:
+            report_id = r.data[0]["id"]
+        else:
+            existing = (
+                supabase.table("reports")
+                .select("id")
+                .eq("assessment_id", assessment_id)
+                .eq("user_id", user_id)
+                .limit(1)
+                .maybe_single()
+                .execute()
+            )
+            if existing.data and existing.data.get("id"):
+                report_id = existing.data.get("id")
+        if not report_id:
+            set_progress(redis_client, assessment_id, 0, "failed", error="Report generation failed. Please try again.")
             return
-        report_id = r.data[0]["id"]
         for row in product_rows:
             supabase.table("recommended_products").insert({
                 "report_id": report_id,
@@ -236,7 +264,7 @@ def run_job(payload: dict, redis_client, supabase):
             }
         )
     except Exception as e:
-        set_progress(redis_client, assessment_id, 0, "failed", error="Analysis failed. Please try again.")
+        set_progress(redis_client, assessment_id, 0, "failed", error="Assessment analysis failed. Please try again.")
         try:
             redis_client.incr(AI_WORKER_FAILED_KEY)
         except Exception:

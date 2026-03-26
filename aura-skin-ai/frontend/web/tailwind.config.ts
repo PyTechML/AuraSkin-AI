@@ -48,20 +48,20 @@ const config: Config = {
   				'cursive'
   			],
   			heading: [
-  				'var(--font-brand)',
-  				'cursive'
+				'var(--font-space-grotesk)',
+				'sans-serif'
   			],
   			accent: [
-  				'var(--font-brand)',
-  				'cursive'
+				'var(--font-playfair)',
+				'serif'
   			],
   			body: [
-  				'var(--font-brand)',
-  				'cursive'
+				'var(--font-inter)',
+				'sans-serif'
   			],
   			label: [
-  				'var(--font-brand)',
-  				'cursive'
+				'var(--font-inter)',
+				'sans-serif'
   			]
   		},
   		backdropBlur: {

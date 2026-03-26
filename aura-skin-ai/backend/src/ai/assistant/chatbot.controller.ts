@@ -1,13 +1,33 @@
-import { Controller, Post, Body, Get } from "@nestjs/common";
+import { Controller, Post, Body, Get, UseGuards, Req, SetMetadata } from "@nestjs/common";
+import type { Request } from "express";
 import { ChatbotService } from "./chatbot.service";
+import { AuthGuard, type AuthenticatedUser } from "../../shared/guards/auth.guard";
+import { RoleGuard, ROLES_KEY } from "../../shared/guards/role.guard";
+import type { BackendRole } from "../../shared/constants/roles";
+
+const RequireAssistantRole = () =>
+  SetMetadata(ROLES_KEY, ["user", "admin", "store", "dermatologist"] as BackendRole[]);
+
+function toFrontendRole(role: BackendRole): "USER" | "ADMIN" | "STORE" | "DERMATOLOGIST" {
+  if (role === "admin") return "ADMIN";
+  if (role === "store") return "STORE";
+  if (role === "dermatologist") return "DERMATOLOGIST";
+  return "USER";
+}
 
 @Controller("assistant")
+@UseGuards(AuthGuard, RoleGuard)
+@RequireAssistantRole()
 export class ChatbotController {
   constructor(private readonly chatbotService: ChatbotService) {}
 
   @Post()
-  async postMessage(@Body() body: unknown) {
+  async postMessage(@Req() req: Request, @Body() body: unknown) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
     const payload = body as Parameters<ChatbotService["handleRequest"]>[0];
+    if (user?.id) payload.userId = user.id;
+    if (user?.email) payload.userEmail = user.email;
+    if (user?.role) payload.role = toFrontendRole(user.role);
     return this.chatbotService.handleRequest(payload);
   }
 

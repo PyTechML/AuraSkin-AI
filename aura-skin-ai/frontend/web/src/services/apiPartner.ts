@@ -96,13 +96,13 @@ function normalizeInventoryStatus(raw?: string | null): ProductApprovalStatus {
   return "DRAFT";
 }
 
-// Fallback IDs when real partner context (store/dermatologist profile id from auth) is not yet available. Prefer using authenticated partner id from API.
-const DEFAULT_STORE_ID = "s1";
-const DEFAULT_DERM_ID = "derm-1";
-
 /** Resolve store ID for a partner (STORE → store id, DERMATOLOGIST → linked or same id). */
 export function getPartnerStoreId(partnerId: string, _role?: string): string {
-  return partnerId === "derm-1" ? DEFAULT_DERM_ID : partnerId === "store-1" ? DEFAULT_STORE_ID : DEFAULT_STORE_ID;
+  const normalized = partnerId.trim();
+  if (!normalized) {
+    throw new Error("Missing authenticated partner context.");
+  }
+  return normalized;
 }
 
 export async function getPartnerStore(partnerId: string): Promise<PartnerStore | null> {
@@ -225,8 +225,8 @@ export async function addOrderNote(
 }
 
 export async function getPartnerPayouts(partnerId: string): Promise<Payout[]> {
-  // TODO: Replace with real payouts endpoint, e.g. apiGet(`/partner/payouts?partnerId=${partnerId}`)
-  return Promise.resolve([]);
+  void partnerId;
+  throw new Error("Payout workflow is not available in production yet.");
 }
 
 export async function getPartnerBalance(partnerId: string): Promise<{
@@ -234,12 +234,8 @@ export async function getPartnerBalance(partnerId: string): Promise<{
   availableBalance: number;
   pendingSettlement: number;
 }> {
-  // TODO: Replace with real balance endpoint, e.g. apiGet(`/partner/balance?partnerId=${partnerId}`)
-  return Promise.resolve({
-    totalEarnings: 0,
-    availableBalance: 0,
-    pendingSettlement: 0,
-  });
+  void partnerId;
+  throw new Error("Balance workflow is not available in production yet.");
 }
 
 type BackendDermatologistEarningsAggregate = {
@@ -344,8 +340,9 @@ export async function requestWithdrawal(
   partnerId: string,
   amount: number
 ): Promise<Payout | null> {
-  // TODO: Replace with real withdrawal request endpoint, e.g. apiPost(`/partner/payouts`, { partnerId, amount })
-  return Promise.resolve(null);
+  void partnerId;
+  void amount;
+  throw new Error("Withdrawal workflow is not available in production yet.");
 }
 
 export interface PartnerBankAccount {
@@ -357,20 +354,17 @@ export interface PartnerBankAccount {
 export async function getPartnerBankAccount(
   partnerId: string
 ): Promise<PartnerBankAccount | null> {
-  // TODO: Replace with real bank account fetch endpoint, e.g. apiGet(`/partner/bank-account?partnerId=${partnerId}`)
-  return Promise.resolve(null);
+  void partnerId;
+  throw new Error("Bank account workflow is not available in production yet.");
 }
 
 export async function updatePartnerBankAccount(
   partnerId: string,
   data: { bankName: string; accountNumber: string; routingNumber: string }
 ): Promise<PartnerBankAccount> {
-  // TODO: Replace with real bank account update endpoint, e.g. apiPost(`/partner/bank-account`, { partnerId, ...data })
-  return Promise.resolve({
-    bankName: data.bankName,
-    accountNumberLast4: data.accountNumber.slice(-4),
-    routingNumber: data.routingNumber,
-  });
+  void partnerId;
+  void data;
+  throw new Error("Bank account workflow is not available in production yet.");
 }
 
 export async function getPartnerNotifications(
@@ -498,8 +492,8 @@ export async function deleteNotification(id: string): Promise<void> {
 }
 
 export async function getSupportTickets(partnerId: string): Promise<SupportTicket[]> {
-  // TODO: Replace with real support tickets endpoint, e.g. apiGet(`/partner/support/tickets?partnerId=${partnerId}`)
-  return Promise.resolve([]);
+  void partnerId;
+  throw new Error("Support ticket workflow is not available in production yet.");
 }
 
 export interface CreateSupportTicketPayload {
@@ -513,20 +507,9 @@ export async function createSupportTicket(
   partnerId: string,
   payload: CreateSupportTicketPayload
 ): Promise<SupportTicket> {
-  const now = new Date().toISOString();
-  // TODO: Replace with real support ticket creation endpoint, e.g. apiPost(`/partner/support/tickets`, { partnerId, ...payload })
-  return Promise.resolve({
-    id: `ticket-${Date.now()}`,
-    partnerId,
-    subject: payload.subject,
-    priority: payload.priority,
-    status: "open",
-    createdAt: now,
-    updatedAt: now,
-    messages: [
-      { from: "partner", text: payload.message, at: now },
-    ],
-  });
+  void partnerId;
+  void payload;
+  throw new Error("Support ticket workflow is not available in production yet.");
 }
 
 type BackendConsultationRow = {
@@ -984,8 +967,9 @@ export async function updateBookingStatus(
   id: string,
   status: ConsultationBooking["status"]
 ): Promise<ConsultationBooking | null> {
-  // TODO: Replace with real booking status update endpoint, e.g. apiPost(`/partner/dermatologist/consultations/${id}/status`, { status })
-  return Promise.resolve(null);
+  void id;
+  void status;
+  throw new Error("Booking status updates are not available in production yet.");
 }
 
 export async function rescheduleBooking(
@@ -993,8 +977,10 @@ export async function rescheduleBooking(
   date: string,
   timeSlot: string
 ): Promise<ConsultationBooking | null> {
-  // TODO: Replace with real reschedule booking endpoint, e.g. apiPost(`/partner/dermatologist/consultations/${id}/reschedule`, { date, timeSlot })
-  return Promise.resolve(null);
+  void id;
+  void date;
+  void timeSlot;
+  throw new Error("Booking reschedule is not available in production yet.");
 }
 
 type BackendAssignedUserRow = {
@@ -1396,11 +1382,9 @@ export async function archiveProduct(
   productId: string,
   _partnerId: string
 ): Promise<PartnerProduct | null> {
-  // TODO: Replace with real archive endpoint, e.g. apiPost(`/partner/store/products/${productId}/archive`, { partnerId: _partnerId })
-  const existing = await getPartnerProductById(productId, _partnerId);
-  if (!existing) return Promise.resolve(null);
-  const archived: PartnerProduct = { ...existing, approvalStatus: "ARCHIVED" };
-  return Promise.resolve(archived);
+  void productId;
+  void _partnerId;
+  throw new Error("ARCHIVE_PRODUCT_NOT_AVAILABLE: Product archive is not live in production yet.");
 }
 
 /** Soft-delete: marks product as DELETED; removed from store list, order history preserved. */
@@ -1418,20 +1402,7 @@ export async function duplicateProduct(
   productId: string,
   partnerId: string
 ): Promise<PartnerProduct | null> {
-  const existing = await getPartnerProductById(productId, partnerId);
-  if (!existing) return Promise.resolve(null);
-  const id = `prod-${Date.now()}`;
-  const copy: PartnerProduct = {
-    ...existing,
-    id,
-    name: `${existing.name} (Copy)`,
-    salesCount: 0,
-    viewsCount: 0,
-    approvalStatus: "DRAFT",
-    rejectionReason: undefined,
-    submittedAt: undefined,
-    approvedAt: undefined,
-  };
-  // TODO: Replace with real duplicate endpoint, e.g. apiPost(`/partner/store/products/${productId}/duplicate`, { partnerId })
-  return Promise.resolve(copy);
+  void productId;
+  void partnerId;
+  throw new Error("DUPLICATE_PRODUCT_NOT_AVAILABLE: Product duplicate is not live in production yet.");
 }

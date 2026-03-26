@@ -24,6 +24,25 @@ function getEnvFirst(keys: string[]): string {
   throw new Error(`Missing required env: one of ${keys.join(", ")}`);
 }
 
+function getEnvIntOptional(
+  key: string,
+  defaultValue: string,
+  opts?: { min?: number; max?: number }
+): number {
+  const raw = getEnvOptional(key, defaultValue);
+  const parsed = parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid numeric env: ${key}=${raw}`);
+  }
+  if (typeof opts?.min === "number" && parsed < opts.min) {
+    throw new Error(`Invalid numeric env: ${key} must be >= ${opts.min}`);
+  }
+  if (typeof opts?.max === "number" && parsed > opts.max) {
+    throw new Error(`Invalid numeric env: ${key} must be <= ${opts.max}`);
+  }
+  return parsed;
+}
+
 export interface EnvConfig {
   port: number;
   nodeEnv: string;
@@ -41,6 +60,8 @@ export interface EnvConfig {
   logAggregatorUrl: string | undefined;
   /** Questionnaire-only assessment (no face scan). Default off in production unless explicitly enabled. */
   enableQuestionnaireOnlyAssessment: boolean;
+  assessmentMode: "QUEUE" | "SYNC_AI" | "QUESTIONNAIRE_ONLY";
+  workerHeartbeatMaxAgeMs: number;
 }
 
 let cached: EnvConfig | null = null;
@@ -53,11 +74,49 @@ function parseQuestionnaireOnlyFlag(nodeEnv: string): boolean {
   return nodeEnv !== "production";
 }
 
+function parseAssessmentMode(): "QUEUE" | "SYNC_AI" | "QUESTIONNAIRE_ONLY" {
+  const raw = process.env.ASSESSMENT_MODE;
+  const normalized = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+  if (!normalized) return "QUEUE";
+  if (normalized === "QUEUE" || normalized === "SYNC_AI" || normalized === "QUESTIONNAIRE_ONLY") {
+    return normalized;
+  }
+  throw new Error(`Invalid ASSESSMENT_MODE: ${raw}`);
+}
+
+function assertAssessmentEnvContract(config: {
+  nodeEnv: string;
+  assessmentMode: "QUEUE" | "SYNC_AI" | "QUESTIONNAIRE_ONLY";
+  redisUrl?: string;
+  aiEngineUrl?: string;
+  enableQuestionnaireOnlyAssessment: boolean;
+}): void {
+  if (
+    config.nodeEnv === "production" &&
+    config.aiEngineUrl &&
+    /localhost|127\.0\.0\.1/i.test(config.aiEngineUrl)
+  ) {
+    throw new Error("Invalid AI_ENGINE_URL for production: localhost/127.0.0.1 is not allowed");
+  }
+  if (config.assessmentMode === "QUEUE" && !config.redisUrl) {
+    throw new Error("Invalid assessment config: ASSESSMENT_MODE=QUEUE requires REDIS_URL");
+  }
+  if (config.assessmentMode === "SYNC_AI" && !config.aiEngineUrl) {
+    throw new Error("Invalid assessment config: ASSESSMENT_MODE=SYNC_AI requires AI_ENGINE_URL");
+  }
+  if (config.assessmentMode === "QUESTIONNAIRE_ONLY" && !config.enableQuestionnaireOnlyAssessment) {
+    throw new Error(
+      "Invalid assessment config: ASSESSMENT_MODE=QUESTIONNAIRE_ONLY requires ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT=true"
+    );
+  }
+}
+
 export function loadEnv(): EnvConfig {
   if (cached) return cached;
   const nodeEnv = getEnvOptional("NODE_ENV", "development");
+  const assessmentMode = parseAssessmentMode();
   cached = {
-    port: parseInt(getEnvOptional("PORT", "3001"), 10),
+    port: getEnvIntOptional("PORT", "3001", { min: 1, max: 65535 }),
     nodeEnv,
     supabaseUrl: getEnv("SUPABASE_URL"),
     supabaseAnonKey: getEnv("SUPABASE_ANON_KEY"),
@@ -72,6 +131,12 @@ export function loadEnv(): EnvConfig {
     sentryDsn: process.env.SENTRY_DSN && process.env.SENTRY_DSN !== "" ? process.env.SENTRY_DSN : undefined,
     logAggregatorUrl: process.env.LOG_AGGREGATOR_URL && process.env.LOG_AGGREGATOR_URL !== "" ? process.env.LOG_AGGREGATOR_URL : undefined,
     enableQuestionnaireOnlyAssessment: parseQuestionnaireOnlyFlag(nodeEnv),
+    assessmentMode,
+    workerHeartbeatMaxAgeMs: getEnvIntOptional("WORKER_HEARTBEAT_MAX_AGE_MS", "120000", {
+      min: 10_000,
+      max: 3_600_000,
+    }),
   };
+  assertAssessmentEnvContract(cached);
   return cached;
 }

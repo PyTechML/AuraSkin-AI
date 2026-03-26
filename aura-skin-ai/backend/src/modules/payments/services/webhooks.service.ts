@@ -247,7 +247,8 @@ export class WebhooksService {
         user_id: userId,
         dermatologist_id: dermatologistId,
         slot_id: slotId,
-        consultation_status: "confirmed",
+        // Keep dermatologist approval loop deterministic: payment creates pending request, dermatologist confirms.
+        consultation_status: "pending",
       })
       .select()
       .single();

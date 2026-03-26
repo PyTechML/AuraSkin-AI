@@ -15,6 +15,11 @@ import { AiReportService } from "./ai-report.service";
 
 const PRODUCT_RECOMMENDATION_LIMIT = 5;
 const DERMATOLOGIST_RECOMMENDATION_LIMIT = 5;
+const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+const computeSkinScore = (acneScore: number, pigmentationScore: number, hydrationScore: number): number => {
+  const weighted = (1 - clamp01(acneScore)) * 0.33 + (1 - clamp01(pigmentationScore)) * 0.33 + clamp01(hydrationScore) * 0.34;
+  return Math.max(0, Math.min(100, Math.round(weighted * 100)));
+};
 
 /** Report with optional assessment-derived fields for API response. */
 export interface ReportForUser extends DbReport {
@@ -296,11 +301,11 @@ export class ReportService {
     const fromLlm = [llm.skinReport?.trim(), llm.routine?.trim()].filter(Boolean).join("\n\n");
     const recommendedRoutine = fromLlm.length > 0 ? fromLlm : generated.recommended_routine;
 
-    const ac = generated.acne_score;
-    const pig = generated.pigmentation_score;
-    const hyd = generated.hydration_score;
-    let skin_score = Math.round((1 - ac) * 33 + (1 - pig) * 33 + Math.min(1, hyd) * 34);
-    skin_score = Math.max(0, Math.min(100, skin_score));
+    const skin_score = computeSkinScore(
+      generated.acne_score,
+      generated.pigmentation_score,
+      generated.hydration_score
+    );
 
     const report = await this.reportRepository.create({
       user_id: assessment.user_id,

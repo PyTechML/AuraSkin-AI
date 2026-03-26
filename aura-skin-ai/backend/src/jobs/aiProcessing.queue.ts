@@ -28,13 +28,15 @@ export interface AiProcessingJob {
  * Enqueue an assessment for AI processing. Returns true if queued, false if Redis unavailable.
  * Worker (Python) reads from same Redis list and updates progress in Redis.
  */
+export type EnqueueAssessmentResult = "queued" | "already_processing" | "unavailable";
+
 export async function enqueueAssessmentProcessing(
   redis: RedisService,
   job: AiProcessingJobPayload
-): Promise<boolean> {
+): Promise<EnqueueAssessmentResult> {
   const lockAcquired = await redis.acquireAssessmentLock(job.assessmentId);
   if (!lockAcquired) {
-    return false;
+    return "already_processing";
   }
 
   const jobId = randomUUID();
@@ -52,7 +54,7 @@ export async function enqueueAssessmentProcessing(
   const queued = await redis.pushAssessmentJob(payload);
   if (!queued) {
     await redis.releaseAssessmentLock(job.assessmentId);
-    return false;
+    return "unavailable";
   }
-  return true;
+  return "queued";
 }

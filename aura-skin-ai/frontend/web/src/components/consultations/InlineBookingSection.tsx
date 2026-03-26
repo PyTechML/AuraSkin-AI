@@ -50,6 +50,9 @@ export function RecommendedApproachWithInlineBooking(props: {
   dermatologistId: string;
   dermatologistName: string;
 }) {
+  const simEnabled =
+    process.env.NODE_ENV !== "production" &&
+    process.env.NEXT_PUBLIC_ENABLE_CONSULTATION_SIM === "true";
   const user = useAuthStore((s) => s.user);
   const userId = user?.id;
   const userName = user?.name ?? "";
@@ -130,9 +133,15 @@ export function RecommendedApproachWithInlineBooking(props: {
             onClick={() => setIsOpen((v) => !v)}
             aria-expanded={isOpen}
             aria-controls="inline-booking"
+            disabled={!simEnabled}
           >
-            Book Consultation
+            {simEnabled ? "Book Consultation" : "Booking Unavailable"}
           </button>
+          {!simEnabled ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Live consultation booking uses the payment and consultation flow. Demo simulation is disabled in this environment.
+            </p>
+          ) : null}
         </div>
       </div>
 

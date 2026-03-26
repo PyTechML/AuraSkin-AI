@@ -7,6 +7,7 @@ import type { BackendRole } from "../../../shared/constants/roles";
 import { formatSuccess } from "../../../shared/utils/responseFormatter";
 import { getSupabaseClient } from "../../../database/supabase.client";
 import { RedisService } from "../../../redis/redis.service";
+import { loadEnv } from "../../../config/env";
 
 const RequireAdmin = () => SetMetadata(ROLES_KEY, ["admin"] as BackendRole[]);
 
@@ -22,6 +23,7 @@ export interface SystemHealthResponse {
   total_assessments: number;
   total_reports: number;
   total_orders: number;
+  dependency_reasons?: string[];
 }
 
 @Controller("admin")
@@ -33,6 +35,7 @@ export class AdminSystemHealthController {
 
   @Get("system-health")
   async getSystemHealth() {
+    const env = loadEnv();
     const [dbStatus, redisOk, queueLength, heartbeat, counts] = await Promise.all([
       this.checkDatabase(),
       this.redis.ping(),
@@ -55,7 +58,7 @@ export class AdminSystemHealthController {
       const last = new Date(heartbeat).getTime();
       const now = Date.now();
       const ageSec = Number.isFinite(last) ? (now - last) / 1000 : Number.POSITIVE_INFINITY;
-      if (ageSec > 120) {
+      if (ageSec > env.workerHeartbeatMaxAgeMs / 1000) {
         worker_status = "offline";
       } else {
         worker_status = "idle";
@@ -76,6 +79,11 @@ export class AdminSystemHealthController {
       total_assessments: counts.total_assessments,
       total_reports: counts.total_reports,
       total_orders: counts.total_orders,
+      dependency_reasons: [
+        ...(dbStatus !== "ok" ? ["DATABASE_UNHEALTHY"] : []),
+        ...(!redisOk ? ["REDIS_UNAVAILABLE"] : []),
+        ...(worker_status === "offline" || worker_status === "unreachable" ? ["WORKER_UNHEALTHY"] : []),
+      ],
     };
 
     return formatSuccess(body);

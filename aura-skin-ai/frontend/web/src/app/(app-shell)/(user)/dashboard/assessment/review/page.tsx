@@ -14,6 +14,7 @@ import {
   getAssessmentProgress,
   getAssessmentStatus,
   getReportByAssessmentId,
+  getAssessmentSubmitHealth,
   type CreateAssessmentPayload,
 } from "@/services/api";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,18 @@ const ANALYSIS_UNAVAILABLE_BACKEND_MESSAGE =
 function mapSubmitErrorMessage(rawMessage: string): string {
   const message = rawMessage.trim();
   const lower = message.toLowerCase();
+  const codeMatch = message.match(/^\[([A-Z0-9_]+)\]\s*/);
+  const code = codeMatch?.[1] ?? "";
+
+  if (code === "ASSESSMENT_WORKER_UNHEALTHY") {
+    return "Assessment processing is temporarily unavailable. Please try again in a few minutes.";
+  }
+  if (code === "ASSESSMENT_ANALYSIS_UNAVAILABLE") {
+    return ANALYSIS_UNAVAILABLE_BACKEND_MESSAGE;
+  }
+  if (code === "ASSESSMENT_INVALID_IMAGES") {
+    return "This assessment already has uploaded images. Use scan-based submit, or start a new questionnaire-only assessment.";
+  }
 
   if (
     lower.includes("failed to fetch") ||
@@ -104,6 +117,7 @@ export default function AssessmentReviewPage() {
   const [progress, setProgress] = useState<number | null>(null);
   const [stage, setStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [submitDisabledReason, setSubmitDisabledReason] = useState<string | null>(null);
   const [currentAssessmentId, setCurrentAssessmentId] = useState<string | null>(null);
   const attemptsRef = useRef(0);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -122,6 +136,29 @@ export default function AssessmentReviewPage() {
   };
 
   useEffect(() => {
+    getAssessmentSubmitHealth()
+      .then((health) => {
+        if (health.healthy) {
+          setSubmitDisabledReason(null);
+          return;
+        }
+        const reason = health.reasons[0] ?? "SERVICE_UNAVAILABLE";
+        if (reason === "WORKER_UNHEALTHY") {
+          setSubmitDisabledReason("Assessment worker is currently unavailable. Please try again shortly.");
+        } else if (reason === "REDIS_UNAVAILABLE" || reason === "AI_ENGINE_UNAVAILABLE") {
+          setSubmitDisabledReason(ANALYSIS_UNAVAILABLE_BACKEND_MESSAGE);
+        } else {
+          setSubmitDisabledReason("Assessment submit is temporarily unavailable.");
+        }
+      })
+      .catch(() => {
+        setSubmitDisabledReason(
+          "Assessment submit health is currently unknown. Please retry in a moment or contact support if this persists."
+        );
+      });
+  }, []);
+
+  useEffect(() => {
     return () => {
       stopPolling();
     };
@@ -138,6 +175,10 @@ export default function AssessmentReviewPage() {
     }
 
     setError(null);
+    if (submitDisabledReason && !isQuestionnaire) {
+      setError(submitDisabledReason);
+      return;
+    }
     setSubmitting(true);
     setProgress(0);
     setStage("Creating assessment…");
@@ -195,7 +236,7 @@ export default function AssessmentReviewPage() {
 
         if (result.error) {
           stopPolling();
-          setError(result.error);
+          setError(mapSubmitErrorMessage(result.error));
           setSubmitting(false);
           return;
         }
@@ -360,12 +401,17 @@ export default function AssessmentReviewPage() {
           {error}
         </div>
       )}
+      {submitDisabledReason && (
+        <div className="rounded-lg border border-amber-400/40 bg-amber-100/40 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+          {submitDisabledReason}
+        </div>
+      )}
 
       <div className="flex gap-3">
         <Button variant="outline" asChild disabled={submitting}>
           <Link href="/start-assessment">Edit assessment</Link>
         </Button>
-        <Button onClick={handleSubmit} disabled={submitting}>
+        <Button onClick={handleSubmit} disabled={submitting || (!!submitDisabledReason && !(submissionMode === "questionnaire" || data.imageUpload?.skipped))}>
           {submitting ? "Submitting…" : "Submit assessment"}
         </Button>
       </div>

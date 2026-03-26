@@ -36,7 +36,9 @@ function now() {
 }
 
 function canUseDOM(): boolean {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+  const simEnabled = process.env.NEXT_PUBLIC_ENABLE_CONSULTATION_SIM === "true";
+  const isProduction = process.env.NODE_ENV === "production";
+  return !isProduction && simEnabled && typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
 function safeParse<T>(raw: string | null): T | null {

@@ -18,8 +18,10 @@ function isChunkLoadMessage(message: string): boolean {
  */
 export function RuntimeRecovery() {
   useEffect(() => {
+    const isDev = process.env.NODE_ENV !== "production";
     const tryReload = () => {
       if (typeof window === "undefined") return;
+      if (isDev) return;
       if (sessionStorage.getItem(CHUNK_RELOAD_KEY) === "1") return;
       sessionStorage.setItem(CHUNK_RELOAD_KEY, "1");
       window.location.reload();

@@ -49,7 +49,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${playfair.variable} ${inter.variable} ${spaceGrotesk.variable} ${kaushanScript.variable} ${kaushanScript.className}`}
+      className={`${playfair.variable} ${inter.variable} ${spaceGrotesk.variable} ${kaushanScript.variable}`}
       suppressHydrationWarning
     >
       <head>
