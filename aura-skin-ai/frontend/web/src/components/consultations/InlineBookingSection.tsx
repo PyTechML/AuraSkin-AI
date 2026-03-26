@@ -133,15 +133,9 @@ export function RecommendedApproachWithInlineBooking(props: {
             onClick={() => setIsOpen((v) => !v)}
             aria-expanded={isOpen}
             aria-controls="inline-booking"
-            disabled={!simEnabled}
           >
-            {simEnabled ? "Book Consultation" : "Booking Unavailable"}
+            Book Consultation
           </button>
-          {!simEnabled ? (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Live consultation booking uses the payment and consultation flow. Demo simulation is disabled in this environment.
-            </p>
-          ) : null}
         </div>
       </div>
 
