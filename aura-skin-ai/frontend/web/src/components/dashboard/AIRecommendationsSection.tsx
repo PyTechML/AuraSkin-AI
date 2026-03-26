@@ -134,7 +134,6 @@ export function AIRecommendationsSection({
                   >
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
                       <ImageIcon className="h-10 w-10 text-muted-foreground/60" aria-hidden />
-                      <span className="text-xs font-label text-muted-foreground/80">Placeholder</span>
                     </div>
                   </div>
                   <CardHeader className="font-heading pb-1">
