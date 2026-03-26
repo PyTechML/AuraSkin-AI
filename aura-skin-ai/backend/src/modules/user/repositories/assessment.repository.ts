@@ -68,6 +68,16 @@ export class AssessmentRepository {
     return data as DbAssessment;
   }
 
+  async findByIds(ids: string[]): Promise<DbAssessment[]> {
+    if (ids.length === 0) return [];
+    const supabase = getSupabaseClient();
+    const { data, error } = await this.withDbMetrics<DbAssessment[]>("assessments", () =>
+      supabase.from("assessments").select("*").in("id", ids).then((r) => ({ data: (r.data as DbAssessment[]) ?? [], error: r.error }))
+    );
+    if (error) return [];
+    return data ?? [];
+  }
+
   async findByIdAndUser(id: string, userId: string): Promise<DbAssessment | null> {
     const supabase = getSupabaseClient();
     const { data, error } = await this.withDbMetrics<DbAssessment>("assessments", () =>

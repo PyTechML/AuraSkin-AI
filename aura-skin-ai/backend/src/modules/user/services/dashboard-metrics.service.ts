@@ -14,40 +14,26 @@ export class DashboardMetricsService {
   async getMetrics(userId: string): Promise<UserDashboardMetricsDto> {
     const supabase = getSupabaseClient();
 
-    // Prefer using skin_score when available, but be resilient during migrations
-    // (some deployments may not have reports.skin_score yet).
-    type ReportRow = {
-      id: string;
-      skin_score?: number | null;
-      acne_score: number | null;
-      pigmentation_score: number | null;
-      hydration_score: number | null;
-      created_at: string;
-    };
-    let reports: ReportRow[] | null = null;
-    let reportsError: unknown | null = null;
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const fromStr = weekAgo.toISOString().slice(0, 10);
 
-    const withSkinScore = await supabase
-      .from("reports")
-      .select("id, skin_score, acne_score, pigmentation_score, hydration_score, created_at")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
-
-    if (withSkinScore.error) {
-      // Postgres undefined_column (42703) or PostgREST wrapper errors should fall back.
-      const withoutSkinScore = await supabase
+    // Parallelize independent queries
+    const [reportsResult, logsResult] = await Promise.all([
+      supabase
         .from("reports")
-        .select("id, acne_score, pigmentation_score, hydration_score, created_at")
+        .select("id, skin_score, acne_score, pigmentation_score, hydration_score, created_at")
         .eq("user_id", userId)
-        .order("created_at", { ascending: false });
-      reports = ((withoutSkinScore.data ?? null) as unknown as ReportRow[] | null) ?? null;
-      reportsError = withoutSkinScore.error ?? withSkinScore.error;
-    } else {
-      reports = ((withSkinScore.data ?? null) as unknown as ReportRow[] | null) ?? null;
-      reportsError = null;
-    }
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("routine_logs")
+        .select("id")
+        .eq("user_id", userId)
+        .gte("date", fromStr)
+        .eq("status", "completed"),
+    ]);
 
-    const reportsList = (reports ?? []) as Array<{
+    let reportsList = (reportsResult.data ?? []) as Array<{
       id: string;
       skin_score?: number | null;
       acne_score: number | null;
@@ -55,7 +41,17 @@ export class DashboardMetricsService {
       hydration_score: number | null;
       created_at: string;
     }>;
-    const reportsCount = reportsError ? 0 : reportsList.length;
+
+    if (reportsResult.error) {
+      const fallbackResult = await supabase
+        .from("reports")
+        .select("id, acne_score, pigmentation_score, hydration_score, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+      reportsList = (fallbackResult.data ?? []) as any[];
+    }
+
+    const reportsCount = reportsList.length;
     const latestReport = reportsList[0] ?? null;
 
     let skinHealthIndex = 0;
@@ -63,6 +59,13 @@ export class DashboardMetricsService {
     let recommendedProducts = 0;
 
     if (latestReport) {
+      // Fetch count for latest report
+      const { count } = await supabase
+        .from("recommended_products")
+        .select("id", { count: "exact", head: true })
+        .eq("report_id", latestReport.id);
+      recommendedProducts = count ?? 0;
+
       const rawScore = latestReport.skin_score;
       if (typeof rawScore === "number" && rawScore >= 0 && rawScore <= 100) {
         skinHealthIndex = Math.round(rawScore);
@@ -70,17 +73,9 @@ export class DashboardMetricsService {
         const ac = latestReport.acne_score ?? 0;
         const pig = latestReport.pigmentation_score ?? 0;
         const hyd = latestReport.hydration_score ?? 0.5;
-        skinHealthIndex = Math.round(
-          (1 - ac) * 33 + (1 - pig) * 33 + Math.min(1, hyd) * 34
-        );
+        skinHealthIndex = Math.round((1 - ac) * 33 + (1 - pig) * 33 + Math.min(1, hyd) * 34);
         skinHealthIndex = Math.max(0, Math.min(100, skinHealthIndex));
       }
-
-      const { count } = await supabase
-        .from("recommended_products")
-        .select("id", { count: "exact", head: true })
-        .eq("report_id", latestReport.id);
-      recommendedProducts = count ?? 0;
 
       if (reportsList.length >= 2) {
         const prev = reportsList[1];
@@ -100,23 +95,9 @@ export class DashboardMetricsService {
       }
     }
 
-    let routineAdherence = 0;
-    try {
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      const fromStr = weekAgo.toISOString().slice(0, 10);
-      const { data: logs } = await supabase
-        .from("routine_logs")
-        .select("id")
-        .eq("user_id", userId)
-        .gte("date", fromStr)
-        .eq("status", "completed");
-      const completed = (logs ?? []).length;
-      const expected = 7 * 2;
-      routineAdherence = expected > 0 ? Math.round((completed / expected) * 100) : 0;
-    } catch {
-      routineAdherence = 0;
-    }
+    const completed = (logsResult.data ?? []).length;
+    const expected = 7 * 2;
+    const routineAdherence = expected > 0 ? Math.round((completed / expected) * 100) : 0;
 
     return {
       skinHealthIndex,

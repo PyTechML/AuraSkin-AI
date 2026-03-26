@@ -77,6 +77,7 @@ export interface Product {
   name: string;
   description: string;
   category: string;
+  storeId?: string;
   imageUrl?: string;
   fullDescription?: string;
   keyIngredients?: string[];

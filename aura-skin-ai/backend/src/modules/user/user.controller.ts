@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Put, Req, UseGuards } from "@nestjs/common";
 import { Request } from "express";
 import { AuthGuard, AuthenticatedUser } from "../../shared/guards/auth.guard";
 import { RoleGuard } from "../../shared/guards/role.guard";
@@ -8,6 +8,7 @@ import type { BackendRole } from "../../shared/constants/roles";
 import { UserService } from "./services/user.service";
 import { DashboardMetricsService } from "./services/dashboard-metrics.service";
 import { formatSuccess } from "../../shared/utils/responseFormatter";
+import { UpdateUserProfileDto } from "./dto";
 
 const RequireUser = () => SetMetadata(ROLES_KEY, ["user"] as BackendRole[]);
 
@@ -49,6 +50,22 @@ export class UserController {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const userId = user?.id ?? "";
     const data = await this.userService.getOrderById(id, userId);
+    return formatSuccess(data);
+  }
+
+  @Get("consultations")
+  async getConsultations(@Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const data = await this.userService.getConsultations(userId);
+    return formatSuccess(data);
+  }
+
+  @Put("profile")
+  async updateProfile(@Req() req: Request, @Body() dto: UpdateUserProfileDto) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const data = await this.userService.updateProfile(userId, dto);
     return formatSuccess(data);
   }
 }

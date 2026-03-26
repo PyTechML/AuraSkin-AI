@@ -4,8 +4,9 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ImageIcon, ShoppingCart, Zap } from "lucide-react";
+import { ImageIcon, ShoppingCart } from "lucide-react";
 import { useCartStore } from "@/store/cartStore";
+import { useToastStore } from "@/store/toastStore";
 import { useRouter } from "next/navigation";
 import type { Product } from "@/types";
 
@@ -16,11 +17,13 @@ interface UserProductCardProps {
 
 export function UserProductCard({ product, variant = "default" }: UserProductCardProps) {
   const addItem = useCartStore((s) => s.addItem);
+  const addToast = useToastStore((s) => s.addToast);
   const router = useRouter();
 
   const handleAddToCart = (e: React.MouseEvent) => {
     e.preventDefault();
     addItem(product.id, 1);
+    addToast(`${product.name} added to cart`);
   };
 
   const handleBuyNow = (e: React.MouseEvent) => {
@@ -35,7 +38,6 @@ export function UserProductCard({ product, variant = "default" }: UserProductCar
           <div className="relative w-full aspect-[4/3] flex-shrink-0 bg-muted/80 overflow-hidden">
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
               <ImageIcon className="h-10 w-10 text-muted-foreground/60" aria-hidden />
-              <span className="text-xs font-label text-muted-foreground/80">Image placeholder</span>
             </div>
             {product.matchPercent != null && (
               <Badge className="absolute top-2 right-2 bg-accent/90 text-white">
@@ -58,6 +60,9 @@ export function UserProductCard({ product, variant = "default" }: UserProductCar
               <ShoppingCart className="h-3.5 w-3.5 mr-1" />
               Add
             </Button>
+            <Button variant="outline" size="sm" className="flex-1" asChild>
+              <Link href={`/shop/${product.id}`}>View Product</Link>
+            </Button>
             <Button size="sm" className="flex-1" onClick={handleBuyNow}>
               Buy Now
             </Button>
@@ -73,7 +78,6 @@ export function UserProductCard({ product, variant = "default" }: UserProductCar
         <div className="relative w-full aspect-[4/3] flex-shrink-0 bg-muted/80 overflow-hidden">
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
             <ImageIcon className="h-10 w-10 text-muted-foreground/60" aria-hidden />
-            <span className="text-xs font-label text-muted-foreground/80">Image placeholder</span>
           </div>
           {product.matchPercent != null && (
             <Badge className="absolute top-2 right-2 bg-accent/90 text-white">

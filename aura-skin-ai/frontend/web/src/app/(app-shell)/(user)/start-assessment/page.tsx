@@ -29,8 +29,6 @@ const IMAGE_VIEWS: { key: string; label: string }[] = [
   { key: "front_face", label: "Front face" },
   { key: "left_profile", label: "Left profile" },
   { key: "right_profile", label: "Right profile" },
-  { key: "upward_angle", label: "Upward angle" },
-  { key: "downward_angle", label: "Downward angle" },
 ];
 
 const stepConfig = [
@@ -81,7 +79,7 @@ const stepConfig = [
     key: "imageUpload" as const,
     title: "Image Upload",
     schema: z.object({
-      fileNames: z.array(z.string()).length(5, "Upload all 5 face images"),
+      fileNames: z.array(z.string()).length(3, "Capture all 3 face angles"),
     }),
   },
 ];
@@ -162,87 +160,203 @@ function StepForm({
   const [cameraState, setCameraState] = useState<CameraState>("idle");
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [captureIndex, setCaptureIndex] = useState(0);
+  const [detecting, setDetecting] = useState(false);
+  const [statusMsg, setStatusMsg] = useState("Initializing detector...");
+  const [isCapturing, setIsCapturing] = useState(false);
   const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const detectorRef = useRef<any>(null);
+  const requestRef = useRef<number | null>(null);
+  const pendingCaptureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const invalidTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    let active = true;
+    async function loadDetector() {
+      try {
+        await import("@tensorflow/tfjs-core");
+        await import("@tensorflow/tfjs-backend-webgl");
+        const faceLandmarksDetection = await import("@tensorflow-models/face-landmarks-detection");
+        const detector = await faceLandmarksDetection.createDetector(
+          faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+          {
+            runtime: "tfjs",
+            refineLandmarks: true,
+            maxFaces: 2, // Detect multiples to show error
+          }
+        );
+        if (active) {
+          detectorRef.current = detector;
+          setStatusMsg("Ready to scan");
+        }
+      } catch (e) {
+        console.error("Detector load failed", e);
+        if (active) setStatusMsg("Detector load failed");
+      }
+    }
+    if (step.key === "imageUpload") {
+      loadDetector();
+    }
     return () => {
+      active = false;
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
+      if (invalidTimeoutRef.current) clearTimeout(invalidTimeoutRef.current);
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
       }
     };
-  }, []);
+  }, [step.key]);
+
+  const clearInvalidTimeout = () => {
+    if (invalidTimeoutRef.current) clearTimeout(invalidTimeoutRef.current);
+    invalidTimeoutRef.current = null;
+  };
+
+  const armInvalidTimeout = () => {
+    clearInvalidTimeout();
+    invalidTimeoutRef.current = setTimeout(() => {
+      setStatusMsg("Timed out — please ensure your face is visible and try again.");
+      setCameraError("Timed out after 20 seconds. Please try again.");
+      stopCamera();
+    }, 20_000);
+  };
+
+  const clearPendingAutoCapture = () => {
+    if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
+    pendingCaptureTimeoutRef.current = null;
+    setIsCapturing(false);
+  };
 
   const startCamera = async () => {
     if (step.key !== "imageUpload") return;
     setCameraError(null);
     setCameraState("starting");
     try {
-      const stream =
-        (await navigator.mediaDevices?.getUserMedia?.({
-          video: { facingMode: "user" },
-          audio: false,
-        })) ?? null;
-      if (!stream) {
-        setCameraState("unsupported");
-        setCameraError("Camera is not available on this device.");
-        return;
-      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: 640, height: 480 },
+        audio: false,
+      });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => undefined);
+        await videoRef.current.play();
+        setCameraState("active");
+        setDetecting(true);
+        armInvalidTimeout();
+        startDetectionLoop();
       }
-      setCameraState("active");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      const denied = message.toLowerCase().includes("denied") || message.toLowerCase().includes("permission");
-      setCameraState(denied ? "denied" : "error");
-      setCameraError(
-        denied
-          ? "Camera permission was denied. You can allow it in browser settings and try again."
-          : "Unable to start camera. Please retry or use a different browser."
-      );
+      setCameraState("error");
+      setCameraError("Unable to start camera. Please ensure permissions are granted.");
     }
   };
 
+  const startDetectionLoop = () => {
+    if (!detectorRef.current || !videoRef.current || !detecting) return;
+    const run = async () => {
+      if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) return;
+      const faces = await detectorRef.current.estimateFaces(videoRef.current);
+      
+      if (faces.length === 0) {
+        setStatusMsg("No face detected");
+      } else if (faces.length > 1) {
+        setStatusMsg("Multiple faces detected. Please ensure only you are in frame.");
+      } else {
+        const face = faces[0];
+        const keypoints = face.keypoints;
+        // Simple orientation logic based on keypoints
+        const leftEye = keypoints[33];
+        const rightEye = keypoints[263];
+        const nose = keypoints[1];
+        
+        if (leftEye && rightEye && nose) {
+          const eyeDist = rightEye.x - leftEye.x;
+          const noseFromLeft = nose.x - leftEye.x;
+          const ratio = noseFromLeft / eyeDist; // ~0.5 is front
+
+          const target = IMAGE_VIEWS[captureIndex];
+          let detected = false;
+
+          if (target.key === "front_face") {
+            if (ratio > 0.4 && ratio < 0.6) {
+              setStatusMsg("Front face detected - Hold still...");
+              detected = true;
+            } else {
+              setStatusMsg("Position your face to the center");
+            }
+          } else if (target.key === "left_profile") {
+            if (ratio < 0.25) {
+              setStatusMsg("Left profile detected - Hold still...");
+              detected = true;
+            } else {
+              setStatusMsg("Turn your head to the right (left profile)");
+            }
+          } else if (target.key === "right_profile") {
+            if (ratio > 0.75) {
+              setStatusMsg("Right profile detected - Hold still...");
+              detected = true;
+            } else {
+              setStatusMsg("Turn your head to the left (right profile)");
+            }
+          }
+
+          if (detected && !isCapturing) {
+            // We have a valid face orientation — reset the invalid timer and auto-capture after a short hold.
+            armInvalidTimeout();
+            setIsCapturing(true);
+            clearPendingAutoCapture();
+            pendingCaptureTimeoutRef.current = setTimeout(() => {
+              captureCurrentFrame();
+              clearPendingAutoCapture();
+            }, 900);
+          }
+        }
+      }
+      requestRef.current = requestAnimationFrame(run);
+    };
+    requestRef.current = requestAnimationFrame(run);
+  };
+
   const stopCamera = () => {
+    setDetecting(false);
+    if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    clearPendingAutoCapture();
+    clearInvalidTimeout();
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
     }
     setCameraState("idle");
   };
 
   const captureCurrentFrame = () => {
-    if (cameraState !== "active") return;
     const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const view = IMAGE_VIEWS[captureIndex];
-    if (!video || !canvas || !view) return;
-    const width = video.videoWidth || 1280;
-    const height = video.videoHeight || 720;
-    canvas.width = width;
-    canvas.height = height;
+    if (!video || captureIndex >= IMAGE_VIEWS.length) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.drawImage(video, 0, 0, width, height);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
-    const file = dataUrlToFile(dataUrl, `${view.key}.jpg`);
-    if (!file) return;
-    const next = [...files];
-    next[captureIndex] = file;
-    setFiles(next);
-    const nextNames = [...fileNames];
-    nextNames[captureIndex] = file.name;
-    setFileNames(nextNames);
-    form.setValue("fileNames", nextNames, { shouldValidate: true });
-    setCaptureIndex((prev) => Math.min(prev + 1, IMAGE_VIEWS.length - 1));
+    ctx.drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg");
+    const file = dataUrlToFile(dataUrl, `${IMAGE_VIEWS[captureIndex].key}.jpg`);
+    if (file) {
+      const nextFiles = [...files];
+      nextFiles[captureIndex] = file;
+      setFiles(nextFiles);
+      const nextNames = [...fileNames];
+      nextNames[captureIndex] = file.name;
+      setFileNames(nextNames);
+      form.setValue("fileNames", nextNames, { shouldValidate: true });
+      if (captureIndex < IMAGE_VIEWS.length - 1) {
+        setCaptureIndex(captureIndex + 1);
+        armInvalidTimeout();
+      } else {
+        stopCamera();
+        setStatusMsg("All angles captured successfully!");
+      }
+    }
   };
 
   return (
@@ -415,7 +529,7 @@ function StepForm({
             <div className="space-y-4">
               <Label>Start Live Assessment</Label>
               <p className="text-sm text-muted-foreground">
-                Use live camera capture for each angle. Only images with a detectable face will be accepted.
+                Use live camera capture for 3 angles (front, left, right). Auto-capture triggers when the correct angle is detected.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button type="button" onClick={startCamera} disabled={cameraState === "starting" || cameraState === "active"}>
@@ -423,9 +537,6 @@ function StepForm({
                 </Button>
                 {cameraState === "active" && (
                   <>
-                    <Button type="button" variant="outline" onClick={captureCurrentFrame}>
-                      Capture {IMAGE_VIEWS[captureIndex]?.label ?? "angle"}
-                    </Button>
                     <Button type="button" variant="ghost" onClick={stopCamera}>
                       Stop Camera
                     </Button>
@@ -435,8 +546,13 @@ function StepForm({
               {(cameraError || cameraState === "unsupported") && (
                 <p className="text-sm text-destructive">{cameraError ?? "Camera unavailable."}</p>
               )}
-              <div className="overflow-hidden rounded-md border bg-black/5">
+              <div className="overflow-hidden rounded-md border bg-black/5 relative">
                 <video ref={videoRef} className="aspect-video w-full object-cover" muted playsInline />
+                {cameraState === "active" && (
+                  <div className="absolute bottom-4 left-4 right-4 bg-black/60 text-white p-2 rounded text-center text-sm backdrop-blur-sm">
+                    {statusMsg}
+                  </div>
+                )}
               </div>
               <canvas ref={canvasRef} className="hidden" />
               <div className="grid gap-3">
@@ -450,9 +566,9 @@ function StepForm({
                   </div>
                 ))}
               </div>
-              {files.filter(Boolean).length < 5 && (
+              {files.filter(Boolean).length < 3 && (
                 <p className="text-sm text-destructive">
-                  {5 - files.filter(Boolean).length} more image(s) required.
+                  {3 - files.filter(Boolean).length} more image(s) required.
                 </p>
               )}
               {showQuestionnaireSkip && onContinueWithoutScan && (
@@ -477,7 +593,7 @@ function StepForm({
             <Button
               type="submit"
               disabled={
-                (step.key === "imageUpload" && files.filter(Boolean).length < 5) ||
+                (step.key === "imageUpload" && files.filter(Boolean).length < 3) ||
                 (step.key !== "imageUpload" && !form.formState.isValid)
               }
             >

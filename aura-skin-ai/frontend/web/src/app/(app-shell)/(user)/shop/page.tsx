@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Sparkles } from "lucide-react";
+import { PANEL_LIVE_POLL_INTERVAL_MS } from "@/lib/panelPolling";
 
 const SKIN_TYPES = ["Dry", "Oily", "Combination", "Normal", "Sensitive"];
 const CONCERNS = ["Acne", "Dryness", "Hyperpigmentation", "Fine lines", "Sensitivity", "Dullness"];
@@ -40,22 +41,22 @@ export default function ShopPage() {
     let alive = true;
     let interval: ReturnType<typeof setInterval> | undefined;
 
-    const load = () => {
-      setAiLoading(true);
+    const load = (isInitial = false) => {
+      if (isInitial) setAiLoading(true);
       getAiRecommendedProducts()
         .then((products) => {
           if (alive) setAiProducts(Array.isArray(products) ? products : []);
         })
         .catch(() => {
-          if (alive) setAiProducts([]);
+          // Keep last known recommendations to avoid flicker on transient failures.
         })
         .finally(() => {
           if (alive) setAiLoading(false);
         });
     };
 
-    load();
-    interval = setInterval(load, 10_000);
+    load(true);
+    interval = setInterval(() => load(false), PANEL_LIVE_POLL_INTERVAL_MS);
 
     const onVisibility = () => {
       if (document.visibilityState === "visible") {

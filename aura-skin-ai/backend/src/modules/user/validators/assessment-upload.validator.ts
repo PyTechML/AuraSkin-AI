@@ -1,7 +1,7 @@
 /**
  * Validation for assessment image uploads.
  * Allowed: JPG, PNG. Max 5MB per file.
- * Required: 5 angles — front_face, left_profile, right_profile, upward_angle, downward_angle.
+ * Required: 3 angles — front_face, left_profile, right_profile.
  */
 
 export const ASSESSMENT_IMAGE_MAX_BYTES = 5 * 1024 * 1024; // 5MB
@@ -11,16 +11,12 @@ export const ASSESSMENT_IMAGE_ALLOWED_MIMES = ["image/jpeg", "image/png"] as con
 export type AssessmentImageView =
   | "front_face"
   | "left_profile"
-  | "right_profile"
-  | "upward_angle"
-  | "downward_angle";
+  | "right_profile";
 
 export const ASSESSMENT_IMAGE_VIEWS: AssessmentImageView[] = [
   "front_face",
   "left_profile",
   "right_profile",
-  "upward_angle",
-  "downward_angle",
 ];
 
 export function isAllowedMime(mimetype: string): boolean {

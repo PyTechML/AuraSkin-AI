@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getProductById, getSimilarProducts, getStores } from "@/services/api";
+import { getProductById, getSimilarProducts, getStoreById } from "@/services/api";
 import { UserProductDetailsActions } from "@/components/products/UserProductDetailsActions";
 import { UserProductCard } from "@/components/products/UserProductCard";
 import { notFound } from "next/navigation";
@@ -28,8 +28,7 @@ export default async function UserProductPage({
   const usage = product.usage ?? "";
   const safetyNotes = product.safetyNotes ?? "";
   const similarProducts = await getSimilarProducts(product.id, 4);
-  const stores = await getStores();
-  const firstStore = stores[0];
+  const store = product.storeId ? await getStoreById(product.storeId) : null;
 
   return (
     <div className="bg-background text-foreground min-h-[60vh] w-full">
@@ -54,14 +53,21 @@ export default async function UserProductPage({
           <div className="lg:col-span-5">
             <div
               className="relative w-full aspect-[4/3] lg:aspect-square max-h-[480px] lg:max-h-none bg-muted/80 overflow-hidden rounded-2xl border border-border"
-              aria-hidden
             >
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
-                <ImageIcon className="h-16 w-16 text-muted-foreground/60" aria-hidden />
-                <span className="text-sm font-label text-muted-foreground/80">
-                  Image placeholder
-                </span>
-              </div>
+              {product.imageUrl ? (
+                <img
+                  src={product.imageUrl}
+                  alt={product.name}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              ) : (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
+                  <ImageIcon className="h-16 w-16 text-muted-foreground/60" aria-hidden />
+                  <span className="text-sm font-label text-muted-foreground/80">
+                    No image available
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -117,17 +123,17 @@ export default async function UserProductPage({
                 </li>
               </ul>
             </div>
-            {firstStore && (
+            {store && (
               <div className="rounded-2xl border border-border/60 bg-muted/10 p-5 lg:p-6">
                 <h3 className="font-heading text-sm font-semibold text-foreground uppercase tracking-wide flex items-center gap-2 mb-2">
                   <MapPin className="h-4 w-4 text-accent" aria-hidden />
                   Available at
                 </h3>
                 <Link
-                  href={`/stores/${firstStore.id}`}
+                  href={`/stores/${store.id}`}
                   className="text-sm font-body text-accent hover:underline"
                 >
-                  {firstStore.name}
+                  {store.name}
                 </Link>
               </div>
             )}

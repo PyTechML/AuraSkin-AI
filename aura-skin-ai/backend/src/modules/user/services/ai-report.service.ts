@@ -6,6 +6,7 @@ interface AiAnalysisInput {
   acne_score?: number | null;
   oil_level?: number | null;
   pigmentation?: number | null;
+  hydration_score?: number | null;
   confidence?: number | null;
   zones?: Record<string, number> | null;
 }
@@ -13,6 +14,11 @@ interface AiAnalysisInput {
 interface UserAnswerInput {
   skinType?: string | null;
   concerns?: string[];
+  userName?: string | null;
+  age?: number | null;
+  gender?: string | null;
+  sleepHours?: number | null;
+  sunExposure?: string | null;
 }
 
 /** Extra fields for questionnaire-only assessments (no vision). */
@@ -21,6 +27,11 @@ export interface QuestionnaireContextInput {
   concerns?: string[];
   lifestyleFactors?: string | null;
   sensitivityLevel?: string | null;
+  userName?: string | null;
+  age?: number | null;
+  gender?: string | null;
+  sleepHours?: number | null;
+  sunExposure?: string | null;
 }
 
 export interface GeneratedAiReport {
@@ -61,10 +72,36 @@ export class AiReportService {
   private fallback(answers: UserAnswerInput, analysis: AiAnalysisInput): GeneratedAiReport {
     const concernText = (answers.concerns ?? []).join(", ") || "general skin health";
     const confidence = analysis.confidence ?? 0;
+    const sleepText =
+      typeof answers.sleepHours === "number" && Number.isFinite(answers.sleepHours)
+        ? `${answers.sleepHours}h/night`
+        : "unknown";
+    const sunText = answers.sunExposure ? String(answers.sunExposure) : "unknown";
+    const hydrationScore =
+      typeof analysis.hydration_score === "number" && Number.isFinite(analysis.hydration_score)
+        ? Math.round(analysis.hydration_score * 100)
+        : null;
     return {
-      skinReport: `Your assessment indicates focus areas around ${concernText}. Confidence score is ${Math.round(confidence * 100)}%.`,
-      routine: "Use a gentle cleanser, moisturizer, SPF in the morning, and a non-irritating night routine.",
-      productSuggestions: ["Gentle cleanser", "Barrier-support moisturizer", "Broad-spectrum SPF 50"],
+      skinReport: [
+        `Your assessment indicates focus areas around ${concernText}.`,
+        `Confidence score: ${Math.round(confidence * 100)}%.`,
+        `Lifestyle context: sleep ${sleepText}, sun exposure ${sunText}.`,
+        hydrationScore != null ? `Hydration score: ${hydrationScore}/100.` : null,
+      ]
+        .filter((x): x is string => typeof x === "string" && x.length > 0)
+        .join(" "),
+      routine: [
+        "AM: gentle cleanser → moisturizer → broad-spectrum SPF.",
+        "PM: gentle cleanser → targeted treatment for your concerns → moisturizer.",
+        "Avoid harsh scrubs and over-exfoliation while your barrier is rebuilding.",
+      ].join("\n"),
+      productSuggestions: [
+        "Gentle cleanser",
+        "Barrier-support moisturizer",
+        "Broad-spectrum SPF 50",
+        "Targeted treatment for your top concern (e.g., niacinamide / salicylic acid / azelaic acid)",
+        "Hydrating serum (e.g., hyaluronic acid)",
+      ],
     };
   }
 
@@ -83,12 +120,20 @@ export class AiReportService {
     }
 
     try {
+      const ageText = answers.age ? `${answers.age}-year-old ` : "";
+      const genderText = answers.gender ? `${answers.gender} ` : "";
+      const personalGreeting = answers.userName ? `Address the user as ${answers.userName}. ` : "Provide a personalized assessment. ";
+
       const prompt = [
-        "You are a skincare report assistant.",
-        "Return strict JSON with keys: skinReport, routine, productSuggestions.",
-        `Skin type: ${answers.skinType ?? "unknown"}`,
-        `Concerns: ${(answers.concerns ?? []).join(", ") || "unknown"}`,
-        `Analysis: ${JSON.stringify(analysis)}`,
+        "You are a professional skincare consultant.",
+        personalGreeting,
+        "Return structured JSON with keys: skinReport (a narrative analysis), routine (step-by-step), productSuggestions (5 generic types).",
+        `User Profile: ${ageText}${genderText}with ${answers.skinType ?? "unknown"} skin.`,
+        `Primary Concerns: ${(answers.concerns ?? []).join(", ") || "none specified"}.`,
+        `Lifestyle: sleep=${answers.sleepHours ?? "unknown"} hours/night, sun_exposure=${answers.sunExposure ?? "unknown"}.`,
+        `Confidence score (0–1): ${confidence}.`,
+        `Objective Analysis Data: ${JSON.stringify(analysis)}`,
+        "Keep the tone encouraging, professional, and clinical but accessible.",
       ].join("\n");
       const completion = await this.openai.chat.completions.create({
         model: this.model || "gpt-4o-mini",
@@ -144,14 +189,23 @@ export class AiReportService {
       `Concerns: ${(questionnaire.concerns ?? []).join(", ") || "unknown"}`,
       questionnaire.sensitivityLevel ? `Sensitivity: ${questionnaire.sensitivityLevel}` : null,
       questionnaire.lifestyleFactors ? `Lifestyle / questionnaire notes: ${questionnaire.lifestyleFactors}` : null,
+      questionnaire.sunExposure ? `Sun exposure: ${questionnaire.sunExposure}` : null,
+      questionnaire.sleepHours != null ? `Sleep: ${questionnaire.sleepHours}h/night` : null,
       `Derived scores (0–1): ${JSON.stringify(analysis)}`,
     ].filter((x): x is string => typeof x === "string" && x.length > 0);
 
     const runLlm = async (): Promise<GeneratedAiReport> => {
+      const ageText = questionnaire.age ? `${questionnaire.age}-year-old ` : "";
+      const genderText = questionnaire.gender ? `${questionnaire.gender} ` : "";
+      const personalGreeting = questionnaire.userName ? `Address the user as ${questionnaire.userName}. ` : "Provide a personalized assessment. ";
+
       const prompt = [
-        "You are a skincare report assistant. The user did not submit face photos; base guidance only on the questionnaire and derived scores.",
-        "Return strict JSON with keys: skinReport, routine, productSuggestions (productSuggestions are generic labels only, not product database IDs).",
+        "You are a professional skincare consultant. This is a questionnaire-only assessment.",
+        personalGreeting,
+        "Return structured JSON with keys: skinReport, routine, productSuggestions.",
+        `User Profile: ${ageText}${genderText}with ${questionnaire.skinType ?? "unknown"} skin.`,
         ...ctxLines,
+        "Explain that this is a preliminary analysis based on their self-reported data.",
       ].join("\n");
       const completion = await this.openai!.chat.completions.create({
         model: this.model || "gpt-4o-mini",

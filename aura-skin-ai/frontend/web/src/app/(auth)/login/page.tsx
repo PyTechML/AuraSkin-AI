@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
+import { supabase } from "@/lib/supabase";
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -87,6 +88,25 @@ function LoginForm() {
   });
 
   const requestedRole = watch("requested_role") ?? "USER";
+
+  const handleSocialLogin = async (provider: "google" | "apple") => {
+    setApiError(null);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: `${window.location.origin}/api/auth/callback?requested_role=${requestedRole}`,
+          queryParams: {
+            access_type: "offline",
+            prompt: "consent",
+          },
+        },
+      });
+      if (error) throw error;
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : "OAuth sign-in failed");
+    }
+  };
 
   const onSubmit = async (data: FormData) => {
     if (isSubmitting) return;
@@ -276,16 +296,14 @@ function LoginForm() {
           <div className="flex-1 h-px bg-border/40" />
         </div>
 
-        {/* Social login — disabled until OAuth backend ready */}
+        {/* Social login */}
         <div className="mt-4 flex gap-3">
           <Button
             type="button"
             variant="glass"
-            className="flex-1 gap-2 opacity-60 cursor-not-allowed"
-            disabled
-            aria-disabled
-            aria-label="Continue with Google (coming soon)"
-            title="OAuth coming soon"
+            className="flex-1 gap-2"
+            onClick={() => handleSocialLogin("google")}
+            aria-label="Continue with Google"
           >
             <GoogleIcon className="h-4 w-4 shrink-0" />
             Continue with Google
@@ -293,11 +311,9 @@ function LoginForm() {
           <Button
             type="button"
             variant="glass"
-            className="flex-1 gap-2 opacity-60 cursor-not-allowed"
-            disabled
-            aria-disabled
-            aria-label="Continue with Apple (coming soon)"
-            title="OAuth coming soon"
+            className="flex-1 gap-2"
+            onClick={() => handleSocialLogin("apple")}
+            aria-label="Continue with Apple"
           >
             <AppleIcon className="h-4 w-4 shrink-0" />
             Continue with Apple

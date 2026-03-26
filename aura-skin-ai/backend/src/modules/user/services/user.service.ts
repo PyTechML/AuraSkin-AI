@@ -2,10 +2,12 @@ import { Injectable } from "@nestjs/common";
 import { getSupabaseClient } from "../../../database/supabase.client";
 import type {
   DbAssessment,
+  DbConsultationBooking,
   DbDermatologist,
   DbOrder,
   DbReport,
 } from "../../../database/models";
+import type { UpdateUserProfileDto } from "../dto/update-user-profile.dto";
 
 export interface UserDashboardDto {
   assessmentStatus: {
@@ -23,6 +25,48 @@ export interface UserDashboardDto {
 
 @Injectable()
 export class UserService {
+  async updateProfile(
+    userId: string,
+    dto: UpdateUserProfileDto
+  ): Promise<{ id: string; email: string | null; full_name: string | null }> {
+    const supabase = getSupabaseClient();
+    const payload: Record<string, unknown> = {};
+    if (typeof dto.full_name === "string") {
+      const trimmed = dto.full_name.trim();
+      payload.full_name = trimmed.length > 0 ? trimmed : null;
+    }
+    if (typeof dto.email === "string") {
+      const trimmed = dto.email.trim().toLowerCase();
+      payload.email = trimmed.length > 0 ? trimmed : null;
+    }
+    if (Object.keys(payload).length === 0) {
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, email, full_name")
+        .eq("id", userId)
+        .single();
+      return {
+        id: (data as any)?.id ?? userId,
+        email: (data as any)?.email ?? null,
+        full_name: (data as any)?.full_name ?? null,
+      };
+    }
+    const { data, error } = await supabase
+      .from("profiles")
+      .update(payload)
+      .eq("id", userId)
+      .select("id, email, full_name")
+      .single();
+    if (error || !data) {
+      return { id: userId, email: null, full_name: null };
+    }
+    return {
+      id: (data as any).id,
+      email: (data as any).email ?? null,
+      full_name: (data as any).full_name ?? null,
+    };
+  }
+
   async getOrders(userId: string): Promise<DbOrder[]> {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
@@ -44,6 +88,17 @@ export class UserService {
       .single();
     if (error || !data) return null;
     return data as DbOrder;
+  }
+
+  async getConsultations(userId: string): Promise<DbConsultationBooking[]> {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("consultation_bookings")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+    if (error) return [];
+    return (data as DbConsultationBooking[]) ?? [];
   }
 
   async getDashboard(userId: string): Promise<UserDashboardDto> {

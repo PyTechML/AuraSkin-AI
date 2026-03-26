@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { getReports } from "@/services/api";
+import { getReports, updateUserProfile } from "@/services/api";
 import type { ProfileMeta, Report } from "@/types";
 
 const skinGoalValues = [
@@ -130,6 +130,7 @@ export default function ProfilePage() {
 
   const [reports, setReports] = useState<Report[]>([]);
   const [hasSaved, setHasSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     getReports().then(setReports);
@@ -181,14 +182,23 @@ export default function ProfilePage() {
     ...buildProfileMetaFromForm(form.getValues()),
   });
 
-  const onSubmit = (data: FormData) => {
-    updateProfile({
-      name: data.name,
-      email: data.email,
-      profileMeta: buildProfileMetaFromForm(data),
-    });
-    setHasSaved(true);
-    setTimeout(() => setHasSaved(false), 2500);
+  const onSubmit = async (data: FormData) => {
+    setSaveError(null);
+    try {
+      const result = await updateUserProfile({
+        full_name: data.name,
+        email: data.email,
+      });
+      updateProfile({
+        name: result.full_name ?? data.name,
+        email: result.email ?? data.email,
+        profileMeta: buildProfileMetaFromForm(data),
+      });
+      setHasSaved(true);
+      setTimeout(() => setHasSaved(false), 2500);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Unable to save profile right now.");
+    }
   };
 
   const toggleGoal = (goal: SkinGoalValue) => {
@@ -228,7 +238,7 @@ export default function ProfilePage() {
             <CardHeader>
               <CardTitle className="font-heading">Account details</CardTitle>
               <CardDescription>
-                Update your name and email. Changes are stored locally for this demo and used to personalize your hub.
+                Update your name and email. Changes are saved to your account and reflected across panels.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -254,10 +264,11 @@ export default function ProfilePage() {
                 <Button type="submit">Save changes</Button>
                 {hasSaved && (
                   <span className="text-xs text-emerald-500">
-                    Profile preferences updated (demo only).
+                    Profile updated.
                   </span>
                 )}
               </div>
+              {saveError && <p className="text-sm text-destructive">{saveError}</p>}
             </CardContent>
           </Card>
 
@@ -299,7 +310,7 @@ export default function ProfilePage() {
                         Sensitivity level
                       </p>
                       <p className="rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-sm">
-                        Calibrated from your answers (demo view).
+                        {latestReport.sensitivityLevel ?? "To be refined"}
                       </p>
                     </div>
                     <div className="space-y-1.5">
@@ -307,7 +318,7 @@ export default function ProfilePage() {
                         Routine stage
                       </p>
                       <p className="rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-sm">
-                        Establishing a consistent baseline
+                        {routineConsistencyLabel}
                       </p>
                     </div>
                   </>

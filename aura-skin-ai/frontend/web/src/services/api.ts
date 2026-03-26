@@ -350,8 +350,8 @@ export async function createAssessment(payload: CreateAssessmentPayload): Promis
   return await apiPost<{ assessment_id: string }>("/user/assessment", payload);
 }
 
-/** Assessment: upload 5 images. files: [front_face, left_profile, right_profile, upward_angle, downward_angle]. */
-const ASSESSMENT_IMAGE_VIEWS = ["front_face", "left_profile", "right_profile", "upward_angle", "downward_angle"] as const;
+/** Assessment: upload 3 images. files: [front_face, left_profile, right_profile]. */
+const ASSESSMENT_IMAGE_VIEWS = ["front_face", "left_profile", "right_profile"] as const;
 
 export async function uploadAssessmentImages(assessmentId: string, files: File[]): Promise<{ success: boolean }> {
   const form = new FormData();
@@ -610,6 +610,30 @@ export async function createCheckoutSession(payload: {
   return await apiPost("/payments/create-checkout", payload);
 }
 
+export async function createUpiPayment(payload: {
+  product_id: string;
+  quantity: number;
+  store_id?: string;
+}): Promise<{ upi_url: string; payment_id: string; amount: number }> {
+  return await apiPost("/payments/upi", payload);
+}
+
+export async function createCodPayment(payload: {
+  product_id: string;
+  quantity: number;
+  store_id?: string;
+  shipping_address?: string;
+}): Promise<{ order_id: string; status: string }> {
+  return await apiPost("/payments/cod", payload);
+}
+
+export async function updateUserProfile(payload: {
+  full_name?: string;
+  email?: string;
+}): Promise<{ id: string; email: string | null; full_name: string | null }> {
+  return await apiPost("/user/profile", payload);
+}
+
 export async function getOrders(userId: string): Promise<Order[]> {
   try {
     return await apiGet<Order[]>("/user/orders");
@@ -726,6 +750,38 @@ export async function getBookings(userId: string): Promise<ConsultationBooking[]
     return await apiGet<ConsultationBooking[]>("/user/consultations");
   } catch {
     return [];
+  }
+}
+
+export interface PublicSlot {
+  id: string;
+  slot_date: string;
+  start_time: string;
+  end_time: string;
+  status: string;
+}
+
+export async function getDermatologistSlotsPublic(
+  dermatologistId: string
+): Promise<PublicSlot[]> {
+  try {
+    return await apiGet<PublicSlot[]>(`/dermatologists/${dermatologistId}/slots`);
+  } catch {
+    return [];
+  }
+}
+
+export async function createConsultationPayment(
+  dermatologistId: string,
+  slotId: string
+): Promise<{ checkout_url?: string; upi_url?: string; payment_id?: string } | null> {
+  try {
+    return await apiPost<{ checkout_url?: string; upi_url?: string; payment_id?: string }>(
+      "/payments/consultation",
+      { dermatologist_id: dermatologistId, slot_id: slotId }
+    );
+  } catch {
+    return null;
   }
 }
 

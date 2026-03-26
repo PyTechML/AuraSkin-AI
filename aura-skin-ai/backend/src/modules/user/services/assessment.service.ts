@@ -28,6 +28,7 @@ import { ReportRepository } from "../repositories/report.repository";
 import { RoutineRepository } from "../repositories/routine.repository";
 import { AiReportService } from "./ai-report.service";
 import { loadEnv } from "../../../config/env";
+import { getSupabaseClient } from "../../../database/supabase.client";
 
 const ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE =
   "Image-based analysis service is temporarily unavailable. Please try questionnaire-only submission or retry later.";
@@ -63,6 +64,29 @@ const computeSkinScore = (
   const totalWeight = components.reduce((sum, c) => sum + c.weight, 0);
   return Math.max(0, Math.min(100, Math.round((weightedSum / totalWeight) * 100)));
 };
+
+function parseLifestyleFactors(lifestyle: string | null): {
+  age?: number;
+  gender?: string;
+  sleepHours?: number;
+  sunExposure?: string;
+} {
+  if (!lifestyle) return {};
+  const parts = lifestyle.split(" | ");
+  const result: { age?: number; gender?: string; sleepHours?: number; sunExposure?: string } = {};
+  for (const p of parts) {
+    if (p.startsWith("Age: ")) result.age = parseInt(p.replace("Age: ", ""), 10);
+    if (p.startsWith("Gender: ")) result.gender = p.replace("Gender: ", "");
+    if (p.startsWith("Sun: ")) result.sunExposure = p.replace("Sun: ", "");
+    if (p.startsWith("Sun exposure: ")) result.sunExposure = p.replace("Sun exposure: ", "");
+    if (p.startsWith("Sleep: ")) {
+      const raw = p.replace("Sleep: ", "");
+      const match = raw.match(/([0-9]+(\.[0-9]+)?)/);
+      if (match?.[1]) result.sleepHours = parseFloat(match[1]);
+    }
+  }
+  return result;
+}
 
 /** Multer-style file from multipart upload (fieldname optional; we key by view). */
 export interface AssessmentUploadFile {
@@ -238,7 +262,7 @@ export class AssessmentService {
       const hasAll = ASSESSMENT_IMAGE_VIEWS.every((v) => types.has(v));
       if (!hasAll) {
         throw new BadRequestException(
-          "Please upload all five face images (front, left profile, right profile, upward, downward) before submitting."
+          "Please upload all three face images (front, left profile, right profile) before submitting."
         );
       }
 
@@ -337,6 +361,15 @@ export class AssessmentService {
         const zones =
           p.zones && typeof p.zones === "object" ? (p.zones as Record<string, number>) : null;
 
+        const supabase = getSupabaseClient();
+        const { data: userData } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", userId)
+          .single();
+        const userName = (userData as { full_name?: string } | null)?.full_name ?? null;
+        const { age, gender, sleepHours, sunExposure } = parseLifestyleFactors(assessment.lifestyle_factors);
+
         const generated = await this.aiReportService.generate(
           userId,
           {
@@ -344,8 +377,13 @@ export class AssessmentService {
             concerns: [assessment.primary_concern, assessment.secondary_concern].filter(
               (c): c is string => typeof c === "string" && c.length > 0
             ),
+            userName,
+            age,
+            gender,
+            sleepHours,
+            sunExposure,
           },
-          { acne_score, oil_level, pigmentation, confidence, zones }
+          { acne_score, oil_level, pigmentation, hydration_score, confidence, zones }
         );
 
         const skin_score = computeSkinScore(acne_score, pigmentation_score, hydration_score);
@@ -387,23 +425,53 @@ export class AssessmentService {
         }
         const finalReportId: string = reportId;
 
-        // Routine generation (backend routine-engine)
+        // Ensure SYNC_AI path produces DB-backed recommendations (products + dermatologists)
+        try {
+          await this.reportService.populateRecommendationsForReport(
+            finalReportId,
+            assessment,
+            { acne_score, pigmentation_score, hydration_score },
+            { city: dto.city, userLat: dto.latitude, userLng: dto.longitude }
+          );
+        } catch {
+          // best-effort
+        }
+
+        // Routine generation after recommendations so we can include DB-backed product names.
         const concerns = [assessment.primary_concern, assessment.secondary_concern].filter(
           (c): c is string => typeof c === "string" && c.length > 0
         );
-        const routine = generateRoutinePlan({
-          skin_type: assessment.skin_type,
-          concerns,
-          image_analysis: {
-            acne_score,
-            pigmentation_score,
-            hydration_score,
-          },
-        });
         try {
+          const recProducts = await this.reportRepository.getRecommendedProducts(finalReportId);
+          const byCategory = (recProducts ?? [])
+            .map((r) => (r as any).product)
+            .filter(Boolean)
+            .reduce(
+              (acc, p: any) => {
+                const c = String(p.category ?? "").toLowerCase();
+                if (!acc.cleanser && c.includes("cleanser")) acc.cleanser = p.name;
+                if (!acc.serum && c.includes("serum")) acc.serum = p.name;
+                if (!acc.moisturizer && (c.includes("moistur") || c.includes("cream") || c.includes("lotion"))) acc.moisturizer = p.name;
+                if (!acc.sunscreen && (c.includes("sunscreen") || c.includes("spf"))) acc.sunscreen = p.name;
+                return acc;
+              },
+              { cleanser: null as string | null, serum: null as string | null, moisturizer: null as string | null, sunscreen: null as string | null }
+            );
+          const lifestyle = parseLifestyleFactors(assessment.lifestyle_factors);
+          const routine = generateRoutinePlan({
+            skin_type: assessment.skin_type,
+            concerns,
+            image_analysis: {
+              acne_score,
+              pigmentation_score,
+              hydration_score,
+            },
+            lifestyle: { sleep_hours: lifestyle.sleepHours ?? null, sun_exposure: lifestyle.sunExposure ?? null },
+            product_names: byCategory,
+          });
           await this.routineRepository.createRoutinePlan({
             user_id: userId,
-              report_id: finalReportId,
+            report_id: finalReportId,
             morning_routine: routine.morningRoutine,
             night_routine: routine.nightRoutine,
             lifestyle_food_advice: routine.lifestyle.foodAdvice,

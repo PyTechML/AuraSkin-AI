@@ -22,12 +22,15 @@ function isSafeRedirect(path: string): boolean {
   return true;
 }
 
+import { useToastStore } from "@/store/toastStore";
+
 export function AddToCartButton({ productId, productName, quantity, redirectPath: redirectPathProp }: AddToCartButtonProps) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const addItem = useCartStore((s) => s.addItem);
+  const addToast = useToastStore((s) => s.addToast);
   const [added, setAdded] = useState(false);
 
-  const redirectPath = redirectPathProp ?? `/product/${productId}`;
+  const redirectPath = redirectPathProp ?? `/shop/${productId}`;
   const loginHref = isSafeRedirect(redirectPath)
     ? `/login?redirect=${encodeURIComponent(redirectPath)}`
     : "/login";
@@ -42,6 +45,7 @@ export function AddToCartButton({ productId, productName, quantity, redirectPath
 
   const handleAdd = () => {
     addItem(productId, quantity ?? 1);
+    addToast(`${productName ?? "Product"} added to cart`);
     setAdded(true);
     setTimeout(() => setAdded(false), 2000);
   };

@@ -3,8 +3,9 @@
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { getReportById, getReports } from "@/services/api";
-import type { Report } from "@/types";
+import { getReportWithRecommendations, getReports } from "@/services/api";
+import type { Report, Product } from "@/types";
+import { UserProductCard } from "@/components/products/UserProductCard";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CardSkeleton } from "@/components/ui/skeleton-primitives";
@@ -17,6 +18,7 @@ export default function ReportDetailPage() {
   const reportIdRaw = params?.id;
   const reportId = Array.isArray(reportIdRaw) ? reportIdRaw[0] : reportIdRaw;
   const [report, setReport] = useState<Report | null>(null);
+  const [recommendations, setRecommendations] = useState<Product[]>([]);
   const [previousReport, setPreviousReport] = useState<Report | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -33,9 +35,28 @@ export default function ReportDetailPage() {
 
     const load = async () => {
       try {
-        const current = await getReportById(reportId);
+        const result = await getReportWithRecommendations(reportId);
         if (!alive) return;
-        setReport(current);
+        if (result) {
+          setReport(result.report);
+          // Map recommended products to Product UI shape
+          const products = result.recommendedProducts
+            .map((item) => {
+              const p = item.product;
+              if (!p) return null;
+              return {
+                id: p.id,
+                name: p.name ?? "Unknown Product",
+                description: p.description ?? "",
+                category: "Skincare", // Default or extract if available
+                imageUrl: (p as any).image_url ?? (p as any).imageUrl,
+                price: (p as any).price,
+                brand: (p as any).brand,
+              } as Product;
+            })
+            .filter((p): p is Product => p !== null);
+          setRecommendations(products);
+        }
 
         const all = await getReports();
         if (!alive) return;
@@ -108,6 +129,17 @@ export default function ReportDetailPage() {
           <AssessmentResultPanel report={report} />
         </CardContent>
       </Card>
+
+      {recommendations.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="font-heading text-xl font-semibold">Recommended for You</h2>
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {recommendations.map((p) => (
+              <UserProductCard key={p.id} product={p} />
+            ))}
+          </div>
+        </section>
+      )}
 
       <ReportActionsSection report={report} previousReport={previousReport} />
     </div>

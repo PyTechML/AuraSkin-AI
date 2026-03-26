@@ -6,6 +6,16 @@ export interface RoutineEngineInput {
     pigmentation_score?: number | null;
     hydration_score?: number | null;
   };
+  lifestyle?: {
+    sleep_hours?: number | null;
+    sun_exposure?: string | null;
+  };
+  product_names?: {
+    cleanser?: string | null;
+    serum?: string | null;
+    moisturizer?: string | null;
+    sunscreen?: string | null;
+  };
 }
 
 export interface RoutinePlanOutput {
@@ -24,6 +34,9 @@ export function generateRoutinePlan(input: RoutineEngineInput): RoutinePlanOutpu
   const acneScore = input.image_analysis?.acne_score ?? null;
   const pigmentationScore = input.image_analysis?.pigmentation_score ?? null;
   const hydrationScore = input.image_analysis?.hydration_score ?? null;
+  const sleepHours = input.lifestyle?.sleep_hours ?? null;
+  const sunExposure = (input.lifestyle?.sun_exposure ?? "").toLowerCase();
+  const productNames = input.product_names ?? {};
 
   const morning: string[] = [];
   const night: string[] = [];
@@ -32,7 +45,11 @@ export function generateRoutinePlan(input: RoutineEngineInput): RoutinePlanOutpu
   const sleep: string[] = [];
 
   // Core cleansing and protection
-  morning.push("Cleanse with a gentle, non-stripping cleanser");
+  morning.push(
+    productNames.cleanser
+      ? `Cleanse with ${productNames.cleanser}`
+      : "Cleanse with a gentle, non-stripping cleanser"
+  );
   if (skinType.includes("oily")) {
     morning.push("Use a lightweight, oil-control moisturizer");
   } else if (skinType.includes("dry")) {
@@ -40,16 +57,28 @@ export function generateRoutinePlan(input: RoutineEngineInput): RoutinePlanOutpu
   } else {
     morning.push("Use a balanced moisturizer suited for normal/combination skin");
   }
-  morning.push("Apply broad-spectrum SPF 30+ every morning as the last step");
+  morning.push(
+    productNames.sunscreen
+      ? `Apply ${productNames.sunscreen} as the last step (broad-spectrum SPF)`
+      : "Apply broad-spectrum SPF 30+ every morning as the last step"
+  );
 
   // Targeted morning treatments
   if (pigmentationScore !== null && pigmentationScore >= 0.6) {
-    morning.push("Use a brightening serum (vitamin C, niacinamide) to target dark spots");
+    morning.push(
+      productNames.serum
+        ? `Use ${productNames.serum} to target dark spots`
+        : "Use a brightening serum (vitamin C, niacinamide) to target dark spots"
+    );
   }
 
   // Night routine base
   night.push("Double cleanse in the evening if you wore sunscreen or makeup");
-  night.push("Apply a hydrating serum to replenish moisture overnight");
+  night.push(
+    productNames.serum
+      ? `Apply ${productNames.serum} to support hydration and tone overnight`
+      : "Apply a hydrating serum to replenish moisture overnight"
+  );
 
   const hasAcneConcern =
     concerns.some((c) => c.includes("acne") || c.includes("breakout")) ||
@@ -64,6 +93,9 @@ export function generateRoutinePlan(input: RoutineEngineInput): RoutinePlanOutpu
   }
 
   night.push("Finish with a moisturizer appropriate for your skin type");
+  if (productNames.moisturizer) {
+    night.push(`Moisturizer: ${productNames.moisturizer}`);
+  }
 
   const hasDrynessConcern =
     skinType.includes("dry") ||
@@ -90,9 +122,23 @@ export function generateRoutinePlan(input: RoutineEngineInput): RoutinePlanOutpu
 
   hydration.push("Aim for steady water intake across the day rather than large infrequent amounts.");
   hydration.push("Limit extremely dehydrating habits (very high caffeine, smoking, heavy alcohol).");
+  if (hydrationScore !== null && hydrationScore < 0.5) {
+    hydration.push("Because your hydration score is low, add more water-rich foods and consider a humidifier at night.");
+  }
 
-  sleep.push("Target 7–8 hours of consistent sleep where possible.");
+  if (typeof sleepHours === "number" && Number.isFinite(sleepHours) && sleepHours > 0) {
+    if (sleepHours < 7) {
+      sleep.push(`Try to increase sleep from ${sleepHours}h toward 7–8h when possible — skin recovery improves with consistency.`);
+    } else {
+      sleep.push(`Maintain your sleep consistency (~${sleepHours}h/night) to support skin repair.`);
+    }
+  } else {
+    sleep.push("Target 7–8 hours of consistent sleep where possible.");
+  }
   sleep.push("Maintain a regular wind-down routine and avoid blue light right before bed.");
+  if (sunExposure.includes("high")) {
+    morning.push("Reapply sunscreen every 2–3 hours when outdoors, especially with high sun exposure.");
+  }
 
   return {
     morningRoutine: morning,

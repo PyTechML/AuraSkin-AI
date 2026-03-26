@@ -61,4 +61,52 @@ export class CheckoutController {
     );
     return formatSuccess(data);
   }
+
+  @Post("upi")
+  async upi(
+    @Req() req: Request,
+    @Body() dto: CreateCheckoutDto
+  ) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const data = await this.checkoutService.createUpiSession(
+      userId,
+      dto.product_id,
+      dto.quantity,
+      dto.store_id
+    );
+    return formatSuccess(data);
+  }
+
+  @Post("cod")
+  async cod(
+    @Req() req: Request,
+    @Body() dto: CreateCheckoutDto & { shipping_address?: string }
+  ) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const data = await this.checkoutService.createCodSession(
+      userId,
+      dto.product_id,
+      dto.quantity,
+      dto.store_id,
+      dto.shipping_address ?? ""
+    );
+    return formatSuccess(data);
+  }
+
+  @Post("upi-consultation")
+  async upiConsultation(
+    @Req() req: Request,
+    @Body() dto: ConsultationPaymentDto
+  ) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const data = await this.checkoutService.createUpiConsultationSession(
+      userId,
+      dto.dermatologist_id,
+      dto.slot_id
+    );
+    return formatSuccess(data);
+  }
 }

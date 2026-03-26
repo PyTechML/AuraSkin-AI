@@ -169,8 +169,8 @@ export default function AssessmentReviewPage() {
     const isQuestionnaire =
       submissionMode === "questionnaire" || Boolean(data.imageUpload?.skipped);
 
-    if (!isQuestionnaire && files.length < 5) {
-      setError("Please go back and complete the live face capture (all 5 angles).");
+    if (!isQuestionnaire && files.length < 3) {
+      setError("Please go back and complete the live face capture (front, left, right).");
       return;
     }
 

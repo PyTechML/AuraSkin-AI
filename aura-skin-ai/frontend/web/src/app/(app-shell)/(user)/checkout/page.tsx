@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useCartStore } from "@/store/cartStore";
 import { useAuthStore } from "@/store/authStore";
-import { createCheckoutSession, getProductById } from "@/services/api";
+import { createCheckoutSession, createUpiPayment, createCodPayment, getProductById } from "@/services/api";
 import { usePanelToast } from "@/components/panel/PanelToast";
 import type { Product } from "@/types";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ImageIcon, CreditCard, MapPin, Wallet } from "lucide-react";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
+import { QRCodeCanvas } from "qrcode.react";
 
 const STEPS = ["Address", "Payment", "Review"] as const;
 const TAX_RATE = 0.08;
@@ -38,11 +39,16 @@ function CheckoutContent() {
     state: "",
     zip: "",
   });
-  const [paymentMethod, setPaymentMethod] = useState<"upi" | "card" | "netbanking" | "wallet">("card");
+  const [paymentMethod, setPaymentMethod] = useState<"upi" | "card" | "netbanking" | "wallet" | "cod">("card");
   const [checkoutItems, setCheckoutItems] = useState<{ product: Product; quantity: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [upiPayment, setUpiPayment] = useState<{
+    upi_url: string;
+    payment_id: string;
+    amount: number;
+  } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -102,6 +108,40 @@ function CheckoutContent() {
       }
       const line = checkoutItems[0];
       if (!line) return;
+
+      if (paymentMethod === "upi") {
+        const result = await createUpiPayment({
+          product_id: line.product.id,
+          quantity: line.quantity,
+        });
+        if (result?.upi_url && result?.payment_id) {
+          setUpiPayment(result);
+          addToast(`UPI payment initiated — ₹${result.amount}`, "success");
+          return;
+        }
+        addToast("Unable to initiate UPI payment", "error");
+        return;
+      }
+
+      if (paymentMethod === "cod") {
+        const shippingStr = [address.line1, address.line2, address.city, address.state, address.zip]
+          .filter(Boolean)
+          .join(", ");
+        const result = await createCodPayment({
+          product_id: line.product.id,
+          quantity: line.quantity,
+          shipping_address: shippingStr,
+        });
+        if (result?.order_id) {
+          addToast("Order placed successfully! Pay on delivery.", "success");
+          router.push("/orders");
+          return;
+        }
+        addToast("Unable to place COD order", "error");
+        return;
+      }
+
+      // Card / Netbanking / Wallet → Stripe checkout
       const { checkout_url: checkoutUrl } = await createCheckoutSession({
         product_id: line.product.id,
         quantity: line.quantity,
@@ -275,7 +315,7 @@ function CheckoutContent() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  {(["upi", "card", "netbanking", "wallet"] as const).map((method) => (
+                  {(["upi", "card", "netbanking", "wallet", "cod"] as const).map((method) => (
                     <button
                       key={method}
                       type="button"
@@ -287,7 +327,7 @@ function CheckoutContent() {
                       }`}
                     >
                       <Wallet className="h-5 w-5" />
-                      <span className="capitalize">{method.replace("_", " ")}</span>
+                      <span className="capitalize">{method === "cod" ? "Cash on Delivery" : method.replace("_", " ")}</span>
                     </button>
                   ))}
                 </div>
@@ -334,10 +374,44 @@ function CheckoutContent() {
                   <Button variant="outline" onClick={() => setStep(2)}>
                     Back
                   </Button>
-                  <Button onClick={handleSubmit} disabled={submitting}>
-                    {submitting ? "Starting checkout…" : "Place order"}
+                  <Button onClick={handleSubmit} disabled={submitting || (paymentMethod === "upi" && !!upiPayment)}>
+                    {paymentMethod === "upi" && upiPayment ? "UPI initiated" : submitting ? "Starting checkout…" : "Place order"}
                   </Button>
                 </div>
+
+                {paymentMethod === "upi" && upiPayment && (
+                  <div className="rounded-xl border border-border/60 bg-muted/10 p-4 space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      Scan this QR in your UPI app to pay. Payment reference:{" "}
+                      <span className="font-mono text-xs">{upiPayment.payment_id}</span>
+                    </p>
+                    <div className="flex justify-center">
+                      <div className="bg-white p-3 rounded-lg border">
+                        <QRCodeCanvas value={upiPayment.upi_url} size={220} includeMargin />
+                      </div>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Button asChild className="flex-1">
+                        <a href={upiPayment.upi_url}>Open UPI app</a>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="flex-1"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(upiPayment.upi_url);
+                            addToast("UPI link copied", "success");
+                          } catch {
+                            addToast("Unable to copy UPI link", "error");
+                          }
+                        }}
+                      >
+                        Copy UPI link
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

@@ -115,6 +115,19 @@ export class PublicRepository {
     return data as DbProduct;
   }
 
+  async getPrimaryStoreIdForProduct(productId: string): Promise<string | null> {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("inventory")
+      .select("store_id")
+      .eq("product_id", productId)
+      .eq("status", "approved")
+      .order("created_at", { ascending: true })
+      .limit(1);
+    if (error || !data || data.length === 0) return null;
+    return (data[0] as any)?.store_id ?? null;
+  }
+
   async getProductsByCategory(category: string, excludeId: string, limit: number): Promise<DbProduct[]> {
     const supabase = getSupabaseClient();
     // Filter by approved inventory first
@@ -142,7 +155,6 @@ export class PublicRepository {
   /**
    * Approved store_profiles with at least one approved inventory row
    * whose product is LIVE (same gate as public product listing),
-   * plus legacy `stores` rows (seed / demo) with coordinates.
    */
   async getStores(): Promise<PublicStoreProfileRow[]> {
     const supabase = getSupabaseClient();
@@ -186,20 +198,7 @@ export class PublicRepository {
         }
       }
     }
-
-    const { data: legacyData, error: legacyError } = await supabase.from("stores").select("*");
-    const legacyRows: PublicStoreProfileRow[] = [];
-    if (!legacyError && legacyData?.length) {
-      for (const raw of legacyData as DbStore[]) {
-        const mapped = mapLegacyStoreToPublicRow(raw);
-        if (mapped) legacyRows.push(mapped);
-      }
-    }
-
-    const profileIds = new Set(profileRows.map((r) => r.id));
-    const merged = [...profileRows, ...legacyRows.filter((r) => !profileIds.has(r.id))];
-
-    merged.sort((a, b) => {
+    profileRows.sort((a, b) => {
       const an = (a.store_name ?? "").trim().toLowerCase();
       const bn = (b.store_name ?? "").trim().toLowerCase();
       if (an === bn) return (a.id ?? "").localeCompare(b.id ?? "");
@@ -208,7 +207,7 @@ export class PublicRepository {
       return an.localeCompare(bn);
     });
 
-    return merged.filter((r) => r.totalProducts > 0);
+    return profileRows.filter((r) => r.totalProducts > 0);
   }
 
   async getStoreById(id: string): Promise<PublicStoreProfileRow | null> {
@@ -244,21 +243,31 @@ export class PublicRepository {
         }
       }
     }
-
-    const { data: legacy, error: legError } = await supabase.from("stores").select("*").eq("id", id).maybeSingle();
-    if (legError || !legacy) return null;
-    return mapLegacyStoreToPublicRow(legacy as DbStore);
+    return null;
   }
 
   async getDermatologists(): Promise<DbDermatologist[]> {
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase.from("dermatologists").select("*").order("name");
+    const { data: verifiedProfiles, error: profError } = await supabase
+      .from("dermatologist_profiles")
+      .select("id")
+      .eq("verified", true);
+    if (profError || !verifiedProfiles?.length) return [];
+    const ids = (verifiedProfiles as { id: string }[]).map((p) => p.id);
+    const { data, error } = await supabase.from("dermatologists").select("*").in("id", ids).order("name");
     if (error) return [];
     return (data as DbDermatologist[]) ?? [];
   }
 
   async getDermatologistById(id: string): Promise<DbDermatologist | null> {
     const supabase = getSupabaseClient();
+    const { data: profile, error: profError } = await supabase
+      .from("dermatologist_profiles")
+      .select("id")
+      .eq("id", id)
+      .eq("verified", true)
+      .maybeSingle();
+    if (profError || !profile) return null;
     const { data, error } = await supabase
       .from("dermatologists")
       .select("*")
@@ -299,5 +308,18 @@ export class PublicRepository {
     const { data, error } = await supabase.from("contact_messages").insert(row).select().single();
     if (error) return null;
     return data as DbContactMessage;
+  }
+
+  async getDermatologistSlots(dermatologistId: string): Promise<any[]> {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("consultation_slots")
+      .select("*")
+      .eq("dermatologist_id", dermatologistId)
+      .eq("status", "available")
+      .order("slot_date")
+      .order("start_time");
+    if (error) return [];
+    return data ?? [];
   }
 }

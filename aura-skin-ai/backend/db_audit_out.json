@@ -1,0 +1,119 @@
+{
+  "counts": {
+    "profiles": 4,
+    "store_profiles": 1,
+    "dermatologist_profiles": 0,
+    "products": 4,
+    "inventory": 4,
+    "orders": 0,
+    "order_items": 0,
+    "consultations": 0,
+    "reports": 18,
+    "earnings": 0,
+    "notifications": 14
+  },
+  "schemas": {
+    "profiles": [
+      "id",
+      "email",
+      "role",
+      "full_name",
+      "avatar_url",
+      "created_at",
+      "blocked"
+    ],
+    "store_profiles": [
+      "id",
+      "store_name",
+      "store_description",
+      "address",
+      "city",
+      "latitude",
+      "longitude",
+      "contact_number",
+      "logo_url",
+      "created_at",
+      "approval_status"
+    ],
+    "products": [
+      "id",
+      "name",
+      "description",
+      "category",
+      "image_url",
+      "price",
+      "store_id",
+      "brand",
+      "rating",
+      "skin_type",
+      "concern",
+      "full_description",
+      "key_ingredients",
+      "usage",
+      "safety_notes",
+      "created_at",
+      "approval_status"
+    ],
+    "inventory": [
+      "id",
+      "store_id",
+      "product_id",
+      "stock_quantity",
+      "price_override",
+      "status",
+      "created_at"
+    ],
+    "reports": [
+      "id",
+      "user_id",
+      "assessment_id",
+      "skin_condition",
+      "acne_score",
+      "pigmentation_score",
+      "hydration_score",
+      "recommended_routine",
+      "created_at",
+      "redness_score",
+      "inflammation_level",
+      "skin_score"
+    ],
+    "notifications": [
+      "id",
+      "recipient_id",
+      "recipient_role",
+      "type",
+      "title",
+      "message",
+      "is_read",
+      "metadata",
+      "created_at"
+    ]
+  },
+  "anomalies": [
+    "ORPHAN REPORT: report 82630554-72f1-4c9c-a6ea-960f17b236fe linked to missing consultation undefined",
+    "ORPHAN REPORT: report 65111193-6eb3-4fb9-9674-cb346352a28d linked to missing consultation undefined",
+    "ORPHAN REPORT: report 65be4067-3b6a-4480-82a9-8c8d2e1efe7d linked to missing consultation undefined",
+    "ORPHAN REPORT: report 135b9c0c-0e4a-4f68-b018-84a35ee4f10a linked to missing consultation undefined",
+    "ORPHAN REPORT: report abbcb0c7-be6c-4ac6-b3ae-a2cf4769e5b3 linked to missing consultation undefined",
+    "ORPHAN REPORT: report a20ac775-23e8-4dbf-981c-8718866fe2dc linked to missing consultation undefined",
+    "ORPHAN REPORT: report 40fc109b-3bd5-4857-9a1b-d10944b7df8a linked to missing consultation undefined",
+    "ORPHAN REPORT: report b4db10b7-cb73-45d2-98c9-8ef38b06196f linked to missing consultation undefined",
+    "ORPHAN REPORT: report a2547fbb-274a-4026-9366-644022b4c575 linked to missing consultation undefined",
+    "ORPHAN REPORT: report 69ddbe22-a786-4fe1-968a-7cbd475a7e2b linked to missing consultation undefined",
+    "ORPHAN REPORT: report 09355592-1c72-482b-b36a-6e4cc8dc24b8 linked to missing consultation undefined",
+    "ORPHAN REPORT: report b77b3fd6-2965-4de8-951b-cc43a947edce linked to missing consultation undefined",
+    "ORPHAN REPORT: report a1555ba6-5a83-4208-8d4b-7461e7670a41 linked to missing consultation undefined",
+    "ORPHAN REPORT: report 901a677c-f444-4228-8cfc-d7b2b966ee95 linked to missing consultation undefined",
+    "ORPHAN REPORT: report 2393c1ea-39b1-4315-9ced-b815af347e2e linked to missing consultation undefined",
+    "ORPHAN REPORT: report f88d66ee-9531-4da5-8989-1137123be4fc linked to missing consultation undefined",
+    "ORPHAN REPORT: report a6ae7be4-861b-4abc-823f-4fa6dd61e4cd linked to missing consultation undefined",
+    "ORPHAN REPORT: report a36b4730-7e8b-4b9e-a228-729fd78bcef5 linked to missing consultation undefined"
+  ],
+  "errors": [
+    "[patients] Error: Could not find the table 'public.patients' in the schema cache",
+    "[availability_slots] Error: Could not find the table 'public.availability_slots' in the schema cache",
+    "[sessions] Error: Could not find the table 'public.sessions' in the schema cache",
+    "[feature_flags] Error: Could not find the table 'public.feature_flags' in the schema cache",
+    "[audit_logs] Error: Could not find the table 'public.audit_logs' in the schema cache"
+  ]
+}

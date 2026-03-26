@@ -64,8 +64,6 @@ export class AssessmentController {
         { name: "front_face", maxCount: 1 },
         { name: "left_profile", maxCount: 1 },
         { name: "right_profile", maxCount: 1 },
-        { name: "upward_angle", maxCount: 1 },
-        { name: "downward_angle", maxCount: 1 },
       ],
       {
         limits: { fileSize: ASSESSMENT_IMAGE_MAX_BYTES },

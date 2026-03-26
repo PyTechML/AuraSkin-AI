@@ -151,4 +151,10 @@ export class PublicController {
     if (!ok) throw new BadRequestException("Failed to submit contact message.");
     return formatSuccess({ success: true }, "Message sent successfully.");
   }
+
+  @Get("dermatologists/:id/slots")
+  async getDermatologistSlots(@Param("id") id: string) {
+    const data = await this.publicService.getDermatologistSlots(id);
+    return formatSuccess(data);
+  }
 }

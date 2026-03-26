@@ -8,6 +8,7 @@ export interface ProductResponse {
   name: string;
   description: string;
   category: string;
+  storeId?: string;
   imageUrl?: string;
   fullDescription?: string;
   keyIngredients?: string[];
@@ -70,12 +71,13 @@ export interface FaqResponse {
   answer: string;
 }
 
-function mapProduct(row: DbProduct): ProductResponse {
+function mapProduct(row: DbProduct, storeId?: string | null): ProductResponse {
   return {
     id: row.id,
     name: row.name,
     description: row.description ?? "",
     category: row.category ?? "",
+    storeId: storeId ?? undefined,
     imageUrl: row.image_url,
     fullDescription: row.full_description,
     keyIngredients: row.key_ingredients,
@@ -159,19 +161,21 @@ export class PublicService {
 
   async getProducts(filters?: ProductFilters, sort?: string): Promise<ProductResponse[]> {
     const rows = await this.repo.getProducts(filters, sort);
-    return rows.map(mapProduct);
+    return rows.map((r) => mapProduct(r));
   }
 
   async getProductById(id: string): Promise<ProductResponse | null> {
     const row = await this.repo.getProductById(id);
-    return row ? mapProduct(row) : null;
+    if (!row) return null;
+    const storeId = await this.repo.getPrimaryStoreIdForProduct(id);
+    return mapProduct(row, storeId);
   }
 
   async getSimilarProducts(productId: string, limit: number): Promise<ProductResponse[]> {
     const product = await this.repo.getProductById(productId);
     if (!product?.category) return [];
     const rows = await this.repo.getProductsByCategory(product.category, productId, limit);
-    return rows.map(mapProduct);
+    return rows.map((r) => mapProduct(r));
   }
 
   async getStores(): Promise<StoreResponse[]> {
@@ -236,5 +240,9 @@ export class PublicService {
   async submitContact(payload: { name: string; email: string; subject?: string; message: string }): Promise<boolean> {
     const inserted = await this.repo.insertContactMessage(payload);
     return inserted != null;
+  }
+
+  async getDermatologistSlots(dermatologistId: string): Promise<any[]> {
+    return this.repo.getDermatologistSlots(dermatologistId);
   }
 }
