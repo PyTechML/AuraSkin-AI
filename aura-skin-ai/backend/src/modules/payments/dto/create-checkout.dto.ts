@@ -1,7 +1,7 @@
-import { IsUUID, IsInt, Min, IsOptional } from "class-validator";
+import { IsString, IsInt, Min, IsOptional } from "class-validator";
 
 export class CreateCheckoutDto {
-  @IsUUID()
+  @IsString()
   product_id!: string;
 
   @IsInt()
@@ -9,6 +9,6 @@ export class CreateCheckoutDto {
   quantity!: number;
 
   @IsOptional()
-  @IsUUID()
+  @IsString()
   store_id?: string;
 }
