@@ -292,7 +292,7 @@ function CheckoutContent() {
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  After review, you will complete payment securely on Stripe.
+                  After review, you will complete your payment via a secure provider.
                 </p>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => setStep(1)}>
