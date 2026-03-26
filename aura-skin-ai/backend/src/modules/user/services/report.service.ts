@@ -144,6 +144,17 @@ export class ReportService {
 
     const generated = this.reportGenerator.generateFromAssessment(assessment);
 
+    const concerns = [assessment.primary_concern, assessment.secondary_concern].filter(
+      (c): c is string => typeof c === "string" && c.length > 0
+    );
+    const llm = await this.aiReportService.generate(
+      assessment.user_id,
+      { skinType: assessment.skin_type, concerns },
+      { acne_score: generated.acne_score, pigmentation: generated.pigmentation_score, confidence: 0.6 }
+    );
+    const fromLlm = [llm.skinReport?.trim(), llm.routine?.trim()].filter(Boolean).join("\n\n");
+    const recommendedRoutine = fromLlm.length > 0 ? fromLlm : generated.recommended_routine;
+
     const report = await this.reportRepository.create({
       user_id: assessment.user_id,
       assessment_id: assessment.id,
@@ -151,13 +162,10 @@ export class ReportService {
       acne_score: generated.acne_score,
       pigmentation_score: generated.pigmentation_score,
       hydration_score: generated.hydration_score,
-      recommended_routine: generated.recommended_routine,
+      recommended_routine: recommendedRoutine,
     });
     if (!report) return null;
 
-    const concerns = [assessment.primary_concern, assessment.secondary_concern].filter(
-      (c): c is string => typeof c === "string" && c.length > 0
-    );
     const routinePlan = generateRoutinePlan({
       skin_type: assessment.skin_type,
       concerns,
