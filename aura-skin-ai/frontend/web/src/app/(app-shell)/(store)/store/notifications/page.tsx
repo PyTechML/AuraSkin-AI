@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/providers/AuthProvider";
 import {
@@ -36,11 +36,8 @@ import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { PanelStagger, PanelStaggerItem } from "@/components/panel/PanelReveal";
 import { Bell, Package, ShoppingBag, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  isDocumentVisible,
-  PANEL_LIVE_POLL_INTERVAL_MS,
-  takeFreshList,
-} from "@/lib/panelPolling";
+import { takeFreshList } from "@/lib/panelPolling";
+import { usePanelLiveRefresh } from "@/lib/usePanelLiveRefresh";
 
 type NotificationGroup = "orders" | "inventory" | "system";
 type TabValue = "all" | "orders" | "inventory" | "system" | "recycle";
@@ -58,37 +55,39 @@ export default function StoreNotificationsPage() {
   const [markAllFade, setMarkAllFade] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
 
-  const load = (silent = false) => {
-    if (!partnerId) return;
-    if (!silent) {
-      setLoading(true);
-      setError(null);
-    }
-    getPartnerNotifications(partnerId)
-      .then((data) => {
-        setNotifications((prev) => takeFreshList(prev, data));
-        if (!silent) setError(null);
-      })
-      .catch(() => {
-        if (!silent) setError("Failed to load notifications.");
-      })
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
-  };
+  const load = useCallback(
+    (silent = false) => {
+      if (!partnerId) return;
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+      getPartnerNotifications(partnerId)
+        .then((data) => {
+          setNotifications((prev) => takeFreshList(prev, data));
+          if (!silent) setError(null);
+        })
+        .catch(() => {
+          if (!silent) setError("Failed to load notifications.");
+        })
+        .finally(() => {
+          if (!silent) setLoading(false);
+        });
+    },
+    [partnerId]
+  );
 
   useEffect(() => {
     load(false);
-  }, [partnerId]);
+  }, [load]);
 
-  useEffect(() => {
-    if (!partnerId) return;
-    const id = window.setInterval(() => {
-      if (!isDocumentVisible()) return;
+  usePanelLiveRefresh(
+    () => {
       load(true);
-    }, PANEL_LIVE_POLL_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, [partnerId]);
+    },
+    [load],
+    { critical: true, scopes: ["notifications", "orders", "inventory"] }
+  );
 
   const grouped = useMemo(() => {
     const byCategory: Record<NotificationGroup, PartnerNotification[]> = {

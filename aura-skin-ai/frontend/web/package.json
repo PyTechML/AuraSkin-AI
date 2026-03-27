@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "dev:turbo": "next dev --turbo",
-    "clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true});\"",
+    "clean": "node -e \"const fs=require('fs');['.next','node_modules/.cache','.turbo'].forEach(p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch(e){}})\"",
+    "dev:clean": "npm run clean && next dev",
     "dev:fresh": "npm run clean && next dev --turbo",
     "build": "next build",
     "start": "next start",

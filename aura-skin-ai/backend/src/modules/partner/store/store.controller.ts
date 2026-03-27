@@ -8,7 +8,7 @@ import { StoreService } from "./services/store.service";
 import { InventoryService } from "./services/inventory.service";
 import { formatSuccess } from "../../../shared/utils/responseFormatter";
 import { CreateStoreProfileDto, UpdateStoreProfileDto } from "./dto/store-profile.dto";
-import { CreateStoreProductDto } from "./dto/product.dto";
+import { CreateStoreProductDto, UpdateStoreProductDto } from "./dto/product.dto";
 
 const RequireStore = () => SetMetadata(ROLES_KEY, ["store"] as BackendRole[]);
 
@@ -57,19 +57,18 @@ export class StoreController {
   async updateProduct(
     @Param("id") id: string,
     @Req() req: Request,
-    @Body()
-    body: {
-      price?: number;
-      stockQuantity?: number;
-      description?: string;
-      imageUrl?: string;
-      approvalStatus?: "DRAFT" | "PENDING" | "LIVE";
-      visibility?: boolean;
-    }
+    @Body() body: UpdateStoreProductDto
   ) {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const storeId = user?.id ?? "";
-    const data = await this.inventoryService.updateStoreProduct(storeId, id, body);
+    const data = await this.inventoryService.updateStoreProduct(storeId, id, {
+      price: body.price,
+      stockQuantity: body.stockQuantity,
+      description: body.description,
+      imageUrl: body.imageUrl,
+      approvalStatus: body.approvalStatus,
+      visibility: body.visibility,
+    });
     return formatSuccess(data);
   }
 

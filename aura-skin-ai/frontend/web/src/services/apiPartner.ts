@@ -24,6 +24,7 @@ import type { NormalizedDermatologistProfile } from "@/types/profile";
 import type { DermatologistEarnings } from "@/types/earnings";
 import type { DermatologistNotification } from "@/types/notification";
 import { API_BASE } from "./apiBase";
+import { normalizeOrderRow } from "@/lib/normalizeOrder";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import {
   getOrdersForPartner as apiGetOrdersForPartner,
@@ -87,6 +88,16 @@ function normalizeProductStatus(raw?: string | null): ProductApprovalStatus {
   return "DRAFT";
 }
 
+/** Maps UI status to partner PUT body; never sends APPROVED/ARCHIVED/REJECTED as invalid DB strings. */
+function toPartnerPutApprovalStatus(
+  status: ProductApprovalStatus | undefined
+): "DRAFT" | "PENDING" | "LIVE" | undefined {
+  if (status === undefined) return undefined;
+  if (status === "APPROVED") return "LIVE";
+  if (status === "LIVE" || status === "DRAFT" || status === "PENDING") return status;
+  return undefined;
+}
+
 function normalizeInventoryStatus(raw?: string | null): ProductApprovalStatus {
   const value = (raw ?? "").toLowerCase();
   if (value === "draft") return "DRAFT";
@@ -94,64 +105,6 @@ function normalizeInventoryStatus(raw?: string | null): ProductApprovalStatus {
   if (value === "approved") return "LIVE";
   if (value === "rejected") return "REJECTED";
   return "DRAFT";
-}
-
-function normalizeOrderStatus(raw?: string | null): Order["status"] {
-  const value = String(raw ?? "").toLowerCase();
-  if (value === "pending" || value === "placed") return "placed";
-  if (value === "processing" || value === "confirmed") return "confirmed";
-  if (value === "packed") return "packed";
-  if (value === "shipped") return "shipped";
-  if (value === "out_for_delivery") return "out_for_delivery";
-  if (value === "delivered") return "delivered";
-  if (value === "cancel_requested") return "cancel_requested";
-  if (value === "cancelled") return "cancelled";
-  if (value === "return_requested") return "return_requested";
-  if (value === "refunded") return "refunded";
-  return "placed";
-}
-
-function normalizePaymentStatus(raw?: string | null): Order["paymentStatus"] {
-  const value = String(raw ?? "").toLowerCase();
-  if (value === "pending") return "pending";
-  if (value === "completed") return "paid";
-  if (value === "paid") return "paid";
-  if (value === "refunded") return "refunded";
-  if (value === "failed") return "failed";
-  return "pending";
-}
-
-function normalizeOrderRow(row: any): Order {
-  const itemsRaw = Array.isArray(row?.items)
-    ? row.items
-    : Array.isArray(row?.order_items)
-      ? row.order_items
-      : [];
-  const items = itemsRaw.map((item: any) => ({
-    productId: String(item?.productId ?? item?.product_id ?? ""),
-    productName: String(item?.productName ?? item?.product_name ?? "Product"),
-    quantity: Number(item?.quantity) || 0,
-    price: Number(item?.price) || 0,
-  }));
-  const createdRaw = String(row?.createdAt ?? row?.created_at ?? "");
-  const createdAt = createdRaw.length >= 10 ? createdRaw.slice(0, 10) : createdRaw;
-  return {
-    id: String(row?.id ?? ""),
-    userId: String(row?.userId ?? row?.user_id ?? ""),
-    storeId: row?.storeId ?? row?.store_id ?? undefined,
-    customerName: row?.customerName ?? row?.customer_name ?? undefined,
-    shippingAddress: row?.shippingAddress ?? row?.shipping_address ?? undefined,
-    items,
-    total: Number(row?.total ?? row?.total_amount) || 0,
-    status: normalizeOrderStatus(row?.status ?? row?.order_status),
-    paymentStatus: normalizePaymentStatus(row?.paymentStatus ?? row?.payment_status),
-    createdAt,
-    shipmentId: row?.shipmentId ?? row?.shipment_id ?? undefined,
-    deliveryEstimate: row?.deliveryEstimate ?? row?.delivery_estimate ?? undefined,
-    trackingNumber: row?.trackingNumber ?? row?.tracking_number ?? undefined,
-    internalNotes: row?.internalNotes ?? row?.internal_notes ?? undefined,
-    activityLog: Array.isArray(row?.activityLog) ? row.activityLog : undefined,
-  };
 }
 
 function normalizePartnerStore(raw: any, partnerId: string): PartnerStore {
@@ -1314,19 +1267,8 @@ export async function getPartnerAnalytics(
       customerRetention,
       averageOrderValue,
     };
-  } catch {
-    const now = new Date();
-    const end = customFrom && customTo ? new Date(customTo) : new Date(now);
-    const start = customFrom && customTo ? new Date(customFrom) : (() => { const s = new Date(now); s.setDate(s.getDate() - (days - 1)); return s; })();
-    return {
-      revenueData: fillDaily(start, end, (d) => ({ date: d, value: 0 })),
-      ordersTrend: fillDaily(start, end, (d) => ({ date: d, count: 0 })),
-      conversionRate: 0,
-      topProducts: [],
-      inventoryTurnover: 0,
-      customerRetention: 0,
-      averageOrderValue: 0,
-    };
+  } catch (e) {
+    throw e instanceof Error ? e : new Error("Failed to load store analytics");
   }
 }
 
@@ -1461,26 +1403,41 @@ export async function createPartnerProduct(
     approvalStatus: payload.approvalStatus ?? "PENDING",
   };
 
-  const res = await apiSend<any>("/partner/store/products", {
+  const res = await apiSend<Record<string, unknown>>("/partner/store/products", {
     method: "POST",
     body,
   });
 
-  const p = (res as any)?.product ?? {};
-  const stockQuantity = (res as any)?.stock_quantity ?? payload.stock;
+  const p = (res?.product ?? {}) as Record<string, unknown>;
+  const productId =
+    typeof p.id === "string"
+      ? p.id
+      : typeof res?.product_id === "string"
+        ? res.product_id
+        : "";
+  if (!productId) {
+    throw new Error(
+      "Could not create product (invalid server response). Check your connection and try again."
+    );
+  }
+
+  const stockQuantity =
+    typeof res?.stock_quantity === "number" ? res.stock_quantity : payload.stock;
 
   const partner: PartnerProduct = {
-    id: p.id ?? (res as any)?.product_id ?? "",
-    name: p.name ?? payload.name,
-    description: p.description ?? payload.description,
-    category: p.category ?? payload.category,
-    imageUrl: p.image_url ?? payload.imageUrls?.[0],
-    fullDescription: p.full_description ?? payload.description,
+    id: productId,
+    name: (typeof p.name === "string" ? p.name : null) ?? payload.name,
+    description: (typeof p.description === "string" ? p.description : null) ?? payload.description,
+    category: (typeof p.category === "string" ? p.category : null) ?? payload.category,
+    imageUrl:
+      (typeof p.image_url === "string" ? p.image_url : null) ?? payload.imageUrls?.[0],
+    fullDescription:
+      (typeof p.full_description === "string" ? p.full_description : null) ?? payload.description,
     keyIngredients: Array.isArray(p.key_ingredients) ? p.key_ingredients : payload.ingredients,
-    usage: p.usage ?? payload.usage,
-    safetyNotes: p.safety_notes ?? undefined,
+    usage: (typeof p.usage === "string" ? p.usage : null) ?? payload.usage,
+    safetyNotes: typeof p.safety_notes === "string" ? p.safety_notes : undefined,
     price: typeof p.price === "number" ? p.price : payload.price,
-    brand: p.brand ?? undefined,
+    brand: typeof p.brand === "string" ? p.brand : undefined,
     rating: typeof p.rating === "number" ? p.rating : undefined,
     skinType: Array.isArray(p.skin_type) ? p.skin_type : undefined,
     concern: Array.isArray(p.concern) ? p.concern : undefined,
@@ -1489,7 +1446,9 @@ export async function createPartnerProduct(
     discount: payload.discount,
     salesCount: 0,
     viewsCount: 0,
-    approvalStatus: normalizeProductStatus(p.approval_status),
+    approvalStatus: normalizeProductStatus(
+      typeof p.approval_status === "string" ? p.approval_status : null
+    ),
   };
 
   return partner;
@@ -1500,6 +1459,7 @@ export async function updatePartnerProduct(
   _partnerId: string,
   data: Partial<Pick<PartnerProduct, "price" | "stock" | "description" | "imageUrl" | "visibility" | "approvalStatus">>
 ): Promise<PartnerProduct | null> {
+  const mappedApproval = toPartnerPutApprovalStatus(data.approvalStatus);
   const updated = await apiSend<any>(`/partner/store/products/${encodeURIComponent(productId)}`, {
     method: "PUT",
     body: {
@@ -1508,7 +1468,7 @@ export async function updatePartnerProduct(
       description: data.description,
       imageUrl: data.imageUrl,
       visibility: data.visibility,
-      approvalStatus: data.approvalStatus,
+      ...(mappedApproval !== undefined ? { approvalStatus: mappedApproval } : {}),
     },
   });
   const safeProduct = (updated as any)?.product ?? {};

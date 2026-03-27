@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { ImageIcon, CreditCard, MapPin, Wallet } from "lucide-react";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { QRCodeCanvas } from "qrcode.react";
+import { dispatchPanelSync } from "@/lib/panelRealtimeSync";
 
 const STEPS = ["Address", "Payment", "Review"] as const;
 const TAX_RATE = 0.08;
@@ -135,6 +136,9 @@ function CheckoutContent() {
           shipping_address: shippingStr,
         });
         if (result?.order_id) {
+          dispatchPanelSync("orders");
+          dispatchPanelSync("notifications");
+          dispatchPanelSync("assigned-users");
           addToast("Order placed successfully! Pay on delivery.", "success");
           router.push("/orders");
           return;

@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException } from "@nestjs/common";
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+} from "@nestjs/common";
 import { getSupabaseClient } from "../../../../database/supabase.client";
 import type { DbInventory, DbProduct } from "../../../../database/models";
 import { InventoryRepository } from "../repositories/inventory.repository";
@@ -6,6 +10,10 @@ import type { AddInventoryDto, UpdateInventoryDto } from "../dto/inventory.dto";
 import { AnalyticsService } from "../../../analytics/analytics.service";
 import type { CreateStoreProductDto } from "../dto/product.dto";
 import { NotificationsService } from "../../../notifications/services/notifications.service";
+import {
+  normalizeDbProductApprovalStatus,
+  normalizePartnerCreateApprovalStatus,
+} from "../../../../shared/utils/productApprovalStatus";
 
 @Injectable()
 export class InventoryService {
@@ -66,7 +74,7 @@ export class InventoryService {
   ): Promise<(DbInventory & { product?: DbProduct }) | null> {
     const supabase = getSupabaseClient();
 
-    const requestedStatus = dto.approvalStatus === "DRAFT" ? "DRAFT" : "PENDING";
+    const requestedStatus = normalizePartnerCreateApprovalStatus(dto.approvalStatus);
     const { data: createdProduct, error: productError } = await supabase
       .from("products")
       .insert({
@@ -89,25 +97,46 @@ export class InventoryService {
       .single();
 
     if (productError || !createdProduct) {
-      return null;
+      const msg =
+        productError?.message ??
+        "Failed to create product. Check database permissions and required fields.";
+      if (
+        productError?.message?.toLowerCase().includes("row-level security") ||
+        productError?.message?.toLowerCase().includes("rls")
+      ) {
+        throw new BadRequestException(msg);
+      }
+      throw new InternalServerErrorException(msg);
     }
 
-    const createdInventory = await this.inventoryRepository.create({
-      store_id: storeId,
-      product_id: (createdProduct as DbProduct).id,
-      stock_quantity: dto.stockQuantity,
-      price_override: null,
-      status: requestedStatus === "DRAFT" ? "draft" : "pending",
-    });
-
-    if (!createdInventory) {
+    let createdInventory: DbInventory;
+    try {
+      createdInventory = await this.inventoryRepository.create({
+        store_id: storeId,
+        product_id: (createdProduct as DbProduct).id,
+        stock_quantity: dto.stockQuantity,
+        price_override: null,
+        status: requestedStatus === "DRAFT" ? "draft" : "pending",
+      });
+    } catch (invErr) {
       await supabase
         .from("products")
         .delete()
         .eq("id", (createdProduct as DbProduct).id)
         .eq("store_id", storeId);
+      const msg =
+        invErr instanceof Error ? invErr.message : String(invErr);
+      if (msg.toLowerCase().includes("row-level security") || msg.toLowerCase().includes("rls")) {
+        throw new BadRequestException(
+          msg === "inventory_insert_returned_null"
+            ? "Failed to create inventory (permission denied)."
+            : msg
+        );
+      }
       throw new InternalServerErrorException(
-        "Failed to create inventory item for this product."
+        msg === "inventory_insert_returned_null"
+          ? "Failed to create inventory row for this product."
+          : msg
       );
     }
 
@@ -176,11 +205,19 @@ export class InventoryService {
       .single();
     if (!currentProduct) return null;
 
+    let normalizedApproval: ReturnType<typeof normalizeDbProductApprovalStatus> | undefined;
+    if (payload.approvalStatus !== undefined && payload.approvalStatus !== null) {
+      const raw = String(payload.approvalStatus).trim();
+      if (raw !== "") {
+        normalizedApproval = normalizeDbProductApprovalStatus(raw);
+      }
+    }
+
     const productUpdate: Record<string, unknown> = {};
     if (payload.price !== undefined) productUpdate.price = payload.price;
     if (payload.description !== undefined) productUpdate.description = payload.description;
     if (payload.imageUrl !== undefined) productUpdate.image_url = payload.imageUrl;
-    if (payload.approvalStatus) productUpdate.approval_status = payload.approvalStatus;
+    if (normalizedApproval !== undefined) productUpdate.approval_status = normalizedApproval;
 
     let product = currentProduct as DbProduct;
     if (Object.keys(productUpdate).length > 0) {
@@ -198,19 +235,32 @@ export class InventoryService {
       rows.find((row) => row.product_id === productId) ?? null
     );
     if (!inventory) {
+      const invStatus =
+        normalizedApproval === "DRAFT"
+          ? "draft"
+          : normalizedApproval === "PENDING"
+            ? "pending"
+            : normalizedApproval === "LIVE"
+              ? "approved"
+              : "pending";
       inventory = await this.inventoryRepository.create({
         store_id: storeId,
         product_id: productId,
         stock_quantity: payload.stockQuantity ?? 0,
         price_override: null,
-        status: payload.approvalStatus === "DRAFT" ? "draft" : "pending",
+        status: invStatus,
       });
     } else {
       inventory = await this.inventoryRepository.update(inventory.id, storeId, {
         stock_quantity: payload.stockQuantity,
       });
-      if (payload.approvalStatus) {
-        const inventoryStatus = payload.approvalStatus === "DRAFT" ? "draft" : payload.approvalStatus === "PENDING" ? "pending" : "approved";
+      if (normalizedApproval !== undefined) {
+        const inventoryStatus =
+          normalizedApproval === "DRAFT"
+            ? "draft"
+            : normalizedApproval === "PENDING"
+              ? "pending"
+              : "approved";
         if (inventory) {
           await getSupabaseClient()
             .from("inventory")
@@ -222,7 +272,10 @@ export class InventoryService {
       }
     }
     const previousStatus = (currentProduct as DbProduct).approval_status ?? null;
-    if (payload.approvalStatus === "PENDING" && previousStatus !== "PENDING") {
+    const prevUpper = String(previousStatus ?? "")
+      .trim()
+      .toUpperCase();
+    if (normalizedApproval === "PENDING" && prevUpper !== "PENDING") {
       await this.notificationsService.createNotification({
         recipientId: storeId,
         recipientRole: "store",

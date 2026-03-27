@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { getProducts, getAiRecommendedProducts } from "@/services/api";
 import type { Product } from "@/types";
 import type { ProductFilters, ProductSort } from "@/services/api";
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { Sparkles } from "lucide-react";
 import { PANEL_LIVE_POLL_INTERVAL_MS } from "@/lib/panelPolling";
+import { usePanelLiveRefresh } from "@/lib/usePanelLiveRefresh";
 
 const SKIN_TYPES = ["Dry", "Oily", "Combination", "Normal", "Sensitive"];
 const CONCERNS = ["Acne", "Dryness", "Hyperpigmentation", "Fine lines", "Sensitivity", "Dullness"];
@@ -28,6 +30,9 @@ const SORT_OPTIONS: { value: ProductSort; label: string }[] = [
 ];
 
 export default function ShopPage() {
+  const searchParams = useSearchParams();
+  const storeFilter = searchParams.get("store")?.trim() ?? "";
+
   const [aiProducts, setAiProducts] = useState<Product[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,29 +77,52 @@ export default function ShopPage() {
     };
   }, []);
 
+  const loadCatalog = useCallback(
+    (silent = false) => {
+      if (!silent) setLoading(true);
+      return getProducts(filters, sort)
+        .then((products) => {
+          setAllProducts(Array.isArray(products) ? products : []);
+        })
+        .catch(() => {
+          if (!silent) setAllProducts([]);
+        })
+        .finally(() => {
+          if (!silent) setLoading(false);
+        });
+    },
+    [filters, sort]
+  );
+
   useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    getProducts(filters, sort)
-      .then((products) => {
-        if (alive) setAllProducts(Array.isArray(products) ? products : []);
-      })
-      .catch(() => {
-        if (alive) setAllProducts([]);
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-  }, [filters, sort]);
+    void loadCatalog(false);
+  }, [loadCatalog]);
+
+  usePanelLiveRefresh(
+    () => {
+      void loadCatalog(true);
+    },
+    [loadCatalog],
+    { critical: true, scopes: ["shop-products"] }
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [storeFilter, filters, sort]);
 
   const safeAllProducts = Array.isArray(allProducts) ? allProducts : [];
   const safeAiProducts = Array.isArray(aiProducts) ? aiProducts : [];
 
-  const paginatedProducts = safeAllProducts.slice(
+  const marketplaceProducts = useMemo(() => {
+    if (!storeFilter) return safeAllProducts;
+    return safeAllProducts.filter((p) => (p.storeId ?? "") === storeFilter);
+  }, [safeAllProducts, storeFilter]);
+
+  const paginatedProducts = marketplaceProducts.slice(
     (page - 1) * perPage,
     page * perPage
   );
-  const totalPages = Math.ceil(safeAllProducts.length / perPage);
+  const totalPages = Math.ceil(marketplaceProducts.length / perPage);
 
   return (
     <div className="space-y-8">
@@ -141,6 +169,14 @@ export default function ShopPage() {
       {/* Section 2 — All Products Marketplace */}
       <section>
         <h2 className="font-heading text-lg font-semibold mb-4">All Products</h2>
+        {storeFilter ? (
+          <p className="text-sm text-muted-foreground mb-4">
+            Showing marketplace listings for the selected store.{" "}
+            <Link href="/shop" className="text-accent underline-offset-2 hover:underline">
+              Clear store filter
+            </Link>
+          </p>
+        ) : null}
 
         {/* Filter bar */}
         <div className="sticky top-0 z-10 -mx-4 px-4 py-3 bg-background/95 backdrop-blur border-b border-border/60 mb-6 flex flex-wrap gap-4">

@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // If dev shows "Cannot find module './vendor-chunks/next.js'": stop all Node processes,
+  // run `npm run clean`, then `npm run dev` and wait until "compiled" before opening the browser.
   // Helps App Router + Supabase: avoid broken vendor chunk resolution for scoped packages on some Windows dev setups.
   experimental: {
     serverComponentsExternalPackages: ["@supabase/supabase-js"],

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { getAssignedUsers, getAssignedUserDetail } from "@/services/apiPartner";
 import { useAuth } from "@/providers/AuthProvider";
@@ -38,6 +38,7 @@ import { PanelTablePagination } from "@/components/panel/PanelTablePagination";
 import { PanelEmptyState } from "@/components/panel/PanelEmptyState";
 import { useClientTableSorting } from "@/hooks/useClientTableSorting";
 import { downloadCsv } from "@/lib/csvExport";
+import { usePanelLiveRefresh } from "@/lib/usePanelLiveRefresh";
 
 const PAGE_SIZE = 10;
 
@@ -54,18 +55,39 @@ export default function StoreAssignedUsersPage() {
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [page, setPage] = useState(1);
 
+  const loadUsers = useCallback(
+    (silent = false) => {
+      if (!partnerId) {
+        if (!silent) setLoading(false);
+        return;
+      }
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+      getAssignedUsers(partnerId)
+        .then((data) => setUsers(Array.isArray(data) ? data : []))
+        .catch(() => {
+          if (!silent) setError("Failed to load assigned users.");
+        })
+        .finally(() => {
+          if (!silent) setLoading(false);
+        });
+    },
+    [partnerId]
+  );
+
   useEffect(() => {
-    if (!partnerId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    getAssignedUsers(partnerId)
-      .then((data) => setUsers(Array.isArray(data) ? data : []))
-      .catch(() => setError("Failed to load assigned users."))
-      .finally(() => setLoading(false));
-  }, [partnerId]);
+    loadUsers(false);
+  }, [loadUsers]);
+
+  usePanelLiveRefresh(
+    () => {
+      loadUsers(true);
+    },
+    [loadUsers],
+    { critical: true, scopes: ["orders", "assigned-users"] }
+  );
 
   const filtered = useMemo(() => {
     let list = users;

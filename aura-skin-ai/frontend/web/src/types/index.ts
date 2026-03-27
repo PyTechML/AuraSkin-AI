@@ -270,7 +270,11 @@ export interface SupportTicket {
   messages?: { from: "partner" | "support"; text: string; at: string }[];
 }
 
-/** Product lifecycle / approval status for partner panel. */
+/**
+ * Product lifecycle for partner panel. Database `products.approval_status` is
+ * DRAFT | PENDING | LIVE | REJECTED. **APPROVED** is a display alias for **LIVE**
+ * (do not send APPROVED to the partner product API; `updatePartnerProduct` maps it).
+ */
 export type ProductApprovalStatus =
   | "DRAFT"
   | "PENDING"

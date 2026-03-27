@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/providers/AuthProvider";
 import { useAuthStore } from "@/store/authStore";
 import { getPartnerProducts, getPartnerAnalytics } from "@/services/apiPartner";
@@ -38,16 +39,17 @@ import { PanelStagger, PanelStaggerItem } from "@/components/panel/PanelReveal";
 import { PanelEmptyState } from "@/components/panel/PanelEmptyState";
 import { downloadCsv } from "@/lib/csvExport";
 import { cn } from "@/lib/utils";
-import {
-  isDocumentVisible,
-  PANEL_LIVE_POLL_INTERVAL_MS,
-  takeFreshList,
-} from "@/lib/panelPolling";
+import { takeFreshList } from "@/lib/panelPolling";
+import { usePanelLiveRefresh } from "@/lib/usePanelLiveRefresh";
+import { usePanelToast } from "@/components/panel/PanelToast";
 
 type VisibilityFilter = "all" | "draft" | "pending" | "live" | "low-stock";
 
 export default function StoreInventoryPage() {
   const { session } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { addToast } = usePanelToast();
   const storeUserId = useAuthStore((s) => s.user?.id);
   const partnerId = session?.user?.id ?? storeUserId ?? "";
   const [products, setProducts] = useState<PartnerProduct[]>([]);
@@ -93,13 +95,19 @@ export default function StoreInventoryPage() {
   }, [partnerId]);
 
   useEffect(() => {
-    if (!partnerId) return;
-    const id = window.setInterval(() => {
-      if (!isDocumentVisible()) return;
-      void loadInventory(true);
-    }, PANEL_LIVE_POLL_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, [partnerId]);
+    if (searchParams.get("submitted") === "1") {
+      addToast("Product submitted for admin approval.");
+      router.replace("/store/inventory", { scroll: false });
+    }
+  }, [searchParams, router, addToast]);
+
+  usePanelLiveRefresh(
+    () => {
+      if (partnerId) void loadInventory(true);
+    },
+    [partnerId],
+    { critical: true, scopes: ["inventory"] }
+  );
 
   const lowStockCount = useMemo(
     () => products.filter((p) => (p.stock ?? 0) < 10 && (p.stock ?? 0) > 0).length,

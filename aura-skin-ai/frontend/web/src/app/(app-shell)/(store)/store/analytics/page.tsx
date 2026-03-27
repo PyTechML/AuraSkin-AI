@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/providers/AuthProvider";
 import {
@@ -28,6 +28,7 @@ import { PanelStagger, PanelStaggerItem } from "@/components/panel/PanelReveal";
 import { downloadCsv } from "@/lib/csvExport";
 import { ChartSkeleton } from "@/components/ui/skeleton-primitives";
 import { Download, TrendingUp, TrendingDown, Users } from "lucide-react";
+import { usePanelLiveRefresh } from "@/lib/usePanelLiveRefresh";
 
 type RangePreset = "7" | "30" | "90";
 
@@ -40,21 +41,42 @@ export default function StoreAnalyticsPage() {
   const [range, setRange] = useState<RangePreset>("30");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
+  const loadAnalytics = useCallback(
+    (silent = false) => {
+      if (!partnerId) {
+        if (!silent) setLoading(false);
+        return;
+      }
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+      getPartnerAnalytics(partnerId, Number(range) as 7 | 30 | 90)
+        .then((data) => {
+          setAnalytics(data);
+          setLastUpdated(new Date());
+        })
+        .catch(() => {
+          if (!silent) setError("Failed to load analytics.");
+        })
+        .finally(() => {
+          if (!silent) setLoading(false);
+        });
+    },
+    [partnerId, range]
+  );
+
   useEffect(() => {
-    if (!partnerId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    getPartnerAnalytics(partnerId, Number(range) as 7 | 30 | 90)
-      .then((data) => {
-        setAnalytics(data);
-        setLastUpdated(new Date());
-      })
-      .catch(() => setError("Failed to load analytics."))
-      .finally(() => setLoading(false));
-  }, [partnerId, range]);
+    loadAnalytics(false);
+  }, [loadAnalytics]);
+
+  usePanelLiveRefresh(
+    () => {
+      loadAnalytics(true);
+    },
+    [loadAnalytics],
+    { critical: true, scopes: ["orders", "inventory", "shop-products"] }
+  );
 
   const hasRevenue = useMemo(
     () => (analytics?.revenueData ?? []).some((d) => d.value > 0),

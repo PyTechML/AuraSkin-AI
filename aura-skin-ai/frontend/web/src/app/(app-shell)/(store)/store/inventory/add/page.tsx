@@ -25,6 +25,7 @@ import { Progress } from "@/components/ui/progress";
 import { ArrowLeft, Check, ImageIcon, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePanelToast } from "@/components/panel/PanelToast";
+import { dispatchPanelSync } from "@/lib/panelRealtimeSync";
 
 const DESCRIPTION_MAX = 300;
 
@@ -241,6 +242,8 @@ export default function StoreAddProductPage() {
       });
       setLastSavedAt(new Date());
       setSuccessBanner(true);
+      dispatchPanelSync("inventory");
+      dispatchPanelSync("admin-products");
       addToast("Draft saved successfully.");
     } catch (err) {
       const message =
@@ -262,16 +265,17 @@ export default function StoreAddProductPage() {
     setSubmitting(true);
     setValidationErrors({});
     try {
-      const created = await createPartnerProduct(partnerId, {
+      await createPartnerProduct(partnerId, {
         ...buildPayload(),
         approvalStatus: "PENDING",
       });
       setLastSavedAt(new Date());
       setSuccessBanner(true);
-      addToast("Product submitted for admin approval");
-      void created;
+      dispatchPanelSync("inventory");
+      dispatchPanelSync("admin-products");
+      dispatchPanelSync("shop-products");
       resetForm();
-      router.push("/store/inventory");
+      router.push("/store/inventory?submitted=1");
     } catch (err) {
       const message =
         err instanceof Error && err.message

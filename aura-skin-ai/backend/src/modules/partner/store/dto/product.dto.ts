@@ -64,3 +64,32 @@ export class CreateStoreProductDto {
   visibility?: boolean;
 }
 
+/** Partner update product (partial). Approval limited to store actions. */
+export class UpdateStoreProductDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  price?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  stockQuantity?: number;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @IsOptional()
+  @IsIn(["DRAFT", "PENDING", "LIVE"])
+  approvalStatus?: "DRAFT" | "PENDING" | "LIVE";
+
+  @IsOptional()
+  @IsBoolean()
+  visibility?: boolean;
+}
+

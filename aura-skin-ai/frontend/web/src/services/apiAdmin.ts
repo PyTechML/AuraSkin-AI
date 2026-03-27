@@ -265,36 +265,20 @@ export async function getPendingInventory(): Promise<PendingInventoryItem[]> {
 }
 
 export async function getAdminProducts(): Promise<PendingInventoryItem[]> {
-  try {
-    const items = await apiGet<PendingInventoryItem[]>("/admin/products");
-    if (process.env.NODE_ENV !== "production") {
-      // eslint-disable-next-line no-console
-      console.log("[Admin] products loaded:", Array.isArray(items) ? items.length : 0);
-    }
-    return Array.isArray(items) ? items : [];
-  } catch {
-    return [];
-  }
+  const items = await apiGet<PendingInventoryItem[]>("/admin/products");
+  return Array.isArray(items) ? items : [];
 }
 
 export async function approveInventory(id: string, reviewNotes?: string): Promise<void> {
-  try {
-    await apiPut(`/admin/products/approve/${encodeURIComponent(id)}`, {
-      review_notes: reviewNotes ?? null,
-    });
-  } catch {
-    // Ignore failures; callers already update local UI optimistically.
-  }
+  await apiPut(`/admin/products/approve/${encodeURIComponent(id)}`, {
+    review_notes: reviewNotes ?? null,
+  });
 }
 
 export async function rejectInventory(id: string, reviewNotes?: string): Promise<void> {
-  try {
-    await apiPut(`/admin/products/reject/${encodeURIComponent(id)}`, {
-      review_notes: reviewNotes ?? null,
-    });
-  } catch {
-    // Ignore failures; callers already update local UI optimistically.
-  }
+  await apiPut(`/admin/products/reject/${encodeURIComponent(id)}`, {
+    review_notes: reviewNotes ?? null,
+  });
 }
 
 function num(value: unknown): number {

@@ -74,12 +74,13 @@ export interface FaqResponse {
 }
 
 function mapProduct(row: DbProduct, storeId?: string | null): ProductResponse {
+  const resolvedStoreId = storeId ?? row.store_id ?? undefined;
   return {
     id: row.id,
     name: row.name,
     description: row.description ?? "",
     category: row.category ?? "",
-    storeId: storeId ?? undefined,
+    storeId: resolvedStoreId,
     imageUrl: row.image_url,
     fullDescription: row.full_description,
     keyIngredients: row.key_ingredients,

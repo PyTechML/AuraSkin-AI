@@ -93,8 +93,11 @@ export default async function StoreDetailPage({
                   </Link>
                 ))}
               </div>
-              <Link href="/shop" className="text-sm text-accent hover:underline mt-2 inline-block">
-                View all products
+              <Link
+                href={`/shop?store=${encodeURIComponent(params.id)}`}
+                className="text-sm text-accent hover:underline mt-2 inline-block"
+              >
+                View all products from this store
               </Link>
             </div>
           )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   getPartnerDashboardStats,
@@ -104,10 +104,7 @@ import {
   ChartSkeleton,
 } from "@/components/ui/skeleton-primitives";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
-import {
-  isDocumentVisible,
-  PANEL_LIVE_POLL_INTERVAL_MS,
-} from "@/lib/panelPolling";
+import { usePanelLiveRefresh } from "@/lib/usePanelLiveRefresh";
 
 export default function StoreDashboardPage() {
   const { session } = useAuth();
@@ -116,40 +113,49 @@ export default function StoreDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!partnerId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    getPartnerDashboardStats(partnerId)
-      .then((data) => {
+  const loadStats = useCallback(
+    (silent = false) => {
+      if (!partnerId) {
+        if (!silent) setLoading(false);
+        return;
+      }
+      if (!silent) {
+        setLoading(true);
         setError(null);
-        if (data == null || typeof data !== "object") {
-          setStats(emptyDashboardStats());
-        } else {
-          setStats(normalizeDashboardStats(data));
-        }
-      })
-      .catch(() => setError("Failed to load dashboard data."))
-      .finally(() => setLoading(false));
-  }, [partnerId]);
-
-  useEffect(() => {
-    if (!partnerId) return;
-    const id = window.setInterval(() => {
-      if (!isDocumentVisible()) return;
+      }
       getPartnerDashboardStats(partnerId)
         .then((data) => {
-          if (data == null || typeof data !== "object") return;
-          setStats(normalizeDashboardStats(data));
           setError(null);
+          if (data == null || typeof data !== "object") {
+            setStats(emptyDashboardStats());
+          } else {
+            setStats(normalizeDashboardStats(data));
+          }
         })
-        .catch(() => {});
-    }, PANEL_LIVE_POLL_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, [partnerId]);
+        .catch(() => {
+          if (!silent) setError("Failed to load dashboard data.");
+        })
+        .finally(() => {
+          if (!silent) setLoading(false);
+        });
+    },
+    [partnerId]
+  );
+
+  useEffect(() => {
+    loadStats(false);
+  }, [loadStats]);
+
+  usePanelLiveRefresh(
+    () => {
+      loadStats(true);
+    },
+    [loadStats],
+    {
+      critical: true,
+      scopes: ["inventory", "orders", "notifications", "admin-products", "shop-products"],
+    }
+  );
 
   if (loading) {
     return (

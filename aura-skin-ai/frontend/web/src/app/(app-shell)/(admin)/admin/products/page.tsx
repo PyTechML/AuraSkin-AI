@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import {
   AdminHeader,
   AdminPrimaryGrid,
@@ -37,6 +37,8 @@ import { PanelTablePagination } from "@/components/panel/PanelTablePagination";
 import { PanelEmptyState } from "@/components/panel/PanelEmptyState";
 import { Package, CheckCircle, XCircle, Flag } from "lucide-react";
 import { getAdminProducts, approveInventory, rejectInventory, type PendingInventoryItem } from "@/services/apiAdmin";
+import { usePanelLiveRefresh } from "@/lib/usePanelLiveRefresh";
+import { dispatchPanelSync } from "@/lib/panelRealtimeSync";
 
 type ProductStatus = "approved" | "pending" | "rejected";
 
@@ -60,6 +62,14 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "rejected", label: "Rejected" },
 ];
 
+function mapInventoryStatus(raw: string): ProductStatus {
+  const v = String(raw ?? "").toLowerCase();
+  if (v === "approved") return "approved";
+  if (v === "rejected") return "rejected";
+  if (v === "pending" || v === "draft") return "pending";
+  return "pending";
+}
+
 function productStatusLabel(status: ProductStatus): string {
   switch (status) {
     case "pending":
@@ -76,6 +86,7 @@ function productStatusLabel(status: ProductStatus): string {
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<AdminProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
@@ -91,38 +102,60 @@ export default function AdminProductsPage() {
     }
   }, []);
 
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    getAdminProducts()
-      .then((pending: PendingInventoryItem[]) => {
-        if (!alive) return;
-        const safePending = Array.isArray(pending) ? pending : [];
-        setProducts(
-          safePending.map<AdminProduct>((inv) => ({
-            id: inv.id,
-            name: inv.product?.name ?? "Unknown product",
-            category: inv.product?.category ?? "Uncategorized",
-            description: inv.product?.description ?? "",
-            status: inv.status as ProductStatus,
-            lastUpdated: inv.created_at ?? "",
-            storeName: inv.store?.store_name ?? "Unknown store",
-            imageUrl: (inv.product as any)?.image_url ?? undefined,
-            keyIngredients:
-              (inv.product as any)?.key_ingredients && Array.isArray((inv.product as any).key_ingredients)
-                ? ((inv.product as any).key_ingredients as string[])
-                : undefined,
-          }))
-        );
-      })
-      .finally(() => {
-        if (!alive) return;
-        setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
+  const mapRows = useCallback((rows: PendingInventoryItem[]) => {
+    setProducts(
+      rows.map<AdminProduct>((inv) => ({
+        id: inv.id,
+        name: inv.product?.name ?? "Unknown product",
+        category: inv.product?.category ?? "Uncategorized",
+        description: inv.product?.description ?? "",
+        status: mapInventoryStatus(inv.status),
+        lastUpdated: inv.created_at ?? "",
+        storeName: inv.store?.store_name ?? "Unknown store",
+        imageUrl: (inv.product as { image_url?: string | null })?.image_url ?? undefined,
+        keyIngredients:
+          (inv.product as { key_ingredients?: unknown })?.key_ingredients &&
+          Array.isArray((inv.product as { key_ingredients?: unknown }).key_ingredients)
+            ? ((inv.product as { key_ingredients: string[] }).key_ingredients as string[])
+            : undefined,
+      }))
+    );
   }, []);
+
+  const loadProducts = useCallback(
+    (silent = false) => {
+      if (!silent) {
+        setLoading(true);
+        setLoadError(null);
+      }
+      return getAdminProducts()
+        .then((pending: PendingInventoryItem[]) => {
+          const safePending = Array.isArray(pending) ? pending : [];
+          mapRows(safePending);
+        })
+        .catch((err: unknown) => {
+          if (!silent) {
+            setLoadError(err instanceof Error ? err.message : "Failed to load products.");
+          }
+        })
+        .finally(() => {
+          if (!silent) setLoading(false);
+        });
+    },
+    [mapRows]
+  );
+
+  useEffect(() => {
+    void loadProducts(false);
+  }, [loadProducts]);
+
+  usePanelLiveRefresh(
+    () => {
+      void loadProducts(true);
+    },
+    [loadProducts],
+    { critical: true, scopes: ["admin-products"] }
+  );
 
   const filtered = useMemo(() => {
     if (statusFilter === "all") return products;
@@ -157,21 +190,36 @@ export default function AdminProductsPage() {
   };
 
   const handleApprove = async (id: string) => {
-    await approveInventory(id, reviewNotes || undefined);
-    setProducts((prev) => prev.filter((p) => p.id !== id));
-    setConfirmAction(null);
-    setActionTargetId(null);
-    setReviewNotes("");
-    if (drawerProductId === id) setDrawerProductId(null);
+    try {
+      await approveInventory(id, reviewNotes || undefined);
+      setProducts((prev) => prev.filter((p) => p.id !== id));
+      dispatchPanelSync("shop-products");
+      dispatchPanelSync("inventory");
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Approve failed.");
+      await loadProducts(true);
+    } finally {
+      setConfirmAction(null);
+      setActionTargetId(null);
+      setReviewNotes("");
+      if (drawerProductId === id) setDrawerProductId(null);
+    }
   };
 
   const handleReject = async (id: string) => {
-    await rejectInventory(id, reviewNotes || undefined);
-    setProducts((prev) => prev.filter((p) => p.id !== id));
-    setConfirmAction(null);
-    setActionTargetId(null);
-    setReviewNotes("");
-    if (drawerProductId === id) setDrawerProductId(null);
+    try {
+      await rejectInventory(id, reviewNotes || undefined);
+      setProducts((prev) => prev.filter((p) => p.id !== id));
+      dispatchPanelSync("inventory");
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Reject failed.");
+      await loadProducts(true);
+    } finally {
+      setConfirmAction(null);
+      setActionTargetId(null);
+      setReviewNotes("");
+      if (drawerProductId === id) setDrawerProductId(null);
+    }
   };
 
   const handleBulkApprove = () => {
@@ -211,6 +259,16 @@ export default function AdminProductsPage() {
       />
 
       <AdminPrimaryGrid>
+        {loadError ? (
+          <Card className="border-destructive/40 col-span-full">
+            <CardContent className="flex flex-wrap items-center gap-3 py-4 text-sm text-destructive">
+              <span>{loadError}</span>
+              <Button type="button" variant="outline" size="sm" onClick={() => void loadProducts(false)}>
+                Retry
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
         <Card className="border-border/60">
           <div className="p-4 border-b border-border/60 flex flex-wrap items-center gap-3">
             <Select value={statusFilter} onValueChange={setStatusFilter}>

@@ -63,15 +63,6 @@ export class AdminProductsRepository {
       product: productMap.get(inv.product_id) ?? null,
       store: storeMap.get(inv.store_id) ?? null,
     })) as PendingInventoryItem[];
-    // Debug: count by status
-    // eslint-disable-next-line no-console
-    console.log(
-      "[AdminProductsRepository] inventory totals:",
-      "all=", out.length,
-      "pending=", out.filter(i => i.status === "pending").length,
-      "approved=", out.filter(i => i.status === "approved").length,
-      "rejected=", out.filter(i => i.status === "rejected").length
-    );
     return out;
   }
 

@@ -12,6 +12,7 @@ import { API_BASE } from "./apiBase";
 import { apiPost, apiPostMultipart, getAuthHeaders } from "./apiInternal";
 import type { CreateDermatologistSlotPayload, NormalizedSlot } from "@/types/availability";
 import { buildAssessmentResultFromReportPayload } from "@/types/assessment";
+import { normalizeOrderRow } from "@/lib/normalizeOrder";
 
 async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}/api${path}`, {
@@ -64,10 +65,6 @@ export async function getProducts(
   const path = q ? `/products?${q}` : "/products";
   try {
     const raw = await apiGet<Product[] | { products?: Product[]; items?: Product[] }>(path);
-    if (process.env.NODE_ENV !== "production") {
-      // eslint-disable-next-line no-console
-      console.log("API RESPONSE:", raw);
-    }
     if (Array.isArray(raw)) return raw;
     const container = raw ?? {};
     const list =
@@ -654,9 +651,11 @@ export async function updateUserProfile(payload: {
   return await apiPost("/user/profile", payload);
 }
 
-export async function getOrders(userId: string): Promise<Order[]> {
+export async function getOrders(_userId: string): Promise<Order[]> {
   try {
-    return await apiGet<Order[]>("/user/orders");
+    const raw = await apiGet<unknown>("/user/orders");
+    const list = Array.isArray(raw) ? raw : [];
+    return list.map((row) => normalizeOrderRow(row));
   } catch {
     return [];
   }
@@ -664,10 +663,12 @@ export async function getOrders(userId: string): Promise<Order[]> {
 
 export async function getOrderById(
   id: string,
-  userId: string
+  _userId: string
 ): Promise<Order | null> {
   try {
-    return await apiGet<Order>(`/user/orders/${id}`);
+    const raw = await apiGet<unknown>(`/user/orders/${id}`);
+    if (raw == null || typeof raw !== "object") return null;
+    return normalizeOrderRow(raw);
   } catch {
     return null;
   }

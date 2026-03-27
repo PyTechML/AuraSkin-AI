@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { getOrdersForPartner, updateOrderStatus } from "@/services/apiPartner";
 import { useAuth } from "@/providers/AuthProvider";
@@ -26,11 +26,8 @@ import {
 } from "@/components/ui/table";
 import { Package, Eye } from "lucide-react";
 import { CardSkeleton, TableRowSkeleton } from "@/components/ui/skeleton-primitives";
-import {
-  isDocumentVisible,
-  PANEL_LIVE_POLL_INTERVAL_MS,
-  takeFreshList,
-} from "@/lib/panelPolling";
+import { takeFreshList } from "@/lib/panelPolling";
+import { usePanelLiveRefresh } from "@/lib/usePanelLiveRefresh";
 
 const STATUS_OPTIONS = [
   "all",
@@ -84,37 +81,39 @@ export default function StoreOrdersPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
 
-  const load = (silent = false) => {
-    if (!partnerId) return;
-    if (!silent) {
-      setLoading(true);
-      setError(null);
-    }
-    getOrdersForPartner(partnerId)
-      .then((data) => {
-        setOrders((prev) => takeFreshList(prev, data));
-        if (!silent) setError(null);
-      })
-      .catch(() => {
-        if (!silent) setError("Failed to load orders.");
-      })
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
-  };
+  const load = useCallback(
+    (silent = false) => {
+      if (!partnerId) return;
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+      getOrdersForPartner(partnerId)
+        .then((data) => {
+          setOrders((prev) => takeFreshList(prev, data));
+          if (!silent) setError(null);
+        })
+        .catch(() => {
+          if (!silent) setError("Failed to load orders.");
+        })
+        .finally(() => {
+          if (!silent) setLoading(false);
+        });
+    },
+    [partnerId]
+  );
 
   useEffect(() => {
     load(false);
-  }, [partnerId]);
+  }, [load]);
 
-  useEffect(() => {
-    if (!partnerId) return;
-    const id = window.setInterval(() => {
-      if (!isDocumentVisible()) return;
+  usePanelLiveRefresh(
+    () => {
       load(true);
-    }, PANEL_LIVE_POLL_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, [partnerId]);
+    },
+    [load],
+    { critical: true, scopes: ["orders"] }
+  );
 
   const filtered = useMemo(() => {
     let list = [...orders];

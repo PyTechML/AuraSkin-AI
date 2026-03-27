@@ -40,7 +40,7 @@ export class InventoryRepository {
     return data as DbInventory;
   }
 
-  async create(row: CreateInventoryRow): Promise<DbInventory | null> {
+  async create(row: CreateInventoryRow): Promise<DbInventory> {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from("inventory")
@@ -53,7 +53,12 @@ export class InventoryRepository {
       })
       .select()
       .single();
-    if (error || !data) return null;
+    if (error) {
+      throw new Error(error.message || "inventory_insert_failed");
+    }
+    if (!data) {
+      throw new Error("inventory_insert_failed:no_row");
+    }
     return data as DbInventory;
   }
 
