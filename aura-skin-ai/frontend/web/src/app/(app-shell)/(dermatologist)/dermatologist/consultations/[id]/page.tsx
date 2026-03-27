@@ -5,8 +5,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@/providers/AuthProvider";
 import {
+  approveDermatologistConsultation,
   getDermatologistConsultationById,
   getDermatologistPatientDisplayName,
+  rejectDermatologistConsultation,
   updateDermatologistConsultation,
 } from "@/services/apiPartner";
 import type { NormalizedConsultation } from "@/types/consultation";
@@ -39,6 +41,7 @@ export default function DermatologistConsultationDetailPage() {
   const [followUpRequired, setFollowUpRequired] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [actionBusy, setActionBusy] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -105,6 +108,49 @@ export default function DermatologistConsultationDetailPage() {
     }
   }
 
+  async function handleApprove() {
+    if (!consultationId || consultation?.status !== "pending") return;
+    setActionBusy("approve");
+    try {
+      const updated = await approveDermatologistConsultation(consultationId);
+      if (updated) {
+        setConsultation(updated);
+        addToast("Consultation confirmed. The patient is notified in their account.", "success");
+      } else {
+        addToast("Could not confirm this consultation.", "error");
+      }
+    } catch {
+      addToast("Could not confirm this consultation.", "error");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function handleReject() {
+    if (!consultationId || consultation?.status !== "pending") return;
+    if (
+      !window.confirm(
+        "Decline this request? The time slot will be released for other bookings."
+      )
+    ) {
+      return;
+    }
+    setActionBusy("reject");
+    try {
+      const updated = await rejectDermatologistConsultation(consultationId);
+      if (updated) {
+        setConsultation(updated);
+        addToast("Consultation declined.", "success");
+      } else {
+        addToast("Could not decline this consultation.", "error");
+      }
+    } catch {
+      addToast("Could not decline this consultation.", "error");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   if (loading && !consultation) {
     return (
       <div className="space-y-6">
@@ -149,6 +195,27 @@ export default function DermatologistConsultationDetailPage() {
         <h1 className="font-heading text-2xl font-semibold">
           Consultation with {patientLabel}
         </h1>
+        {consultation.status === "pending" ? (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={actionBusy !== null}
+              onClick={() => void handleApprove()}
+            >
+              {actionBusy === "approve" ? "Confirming…" : "Approve request"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={actionBusy !== null}
+              onClick={() => void handleReject()}
+            >
+              {actionBusy === "reject" ? "Declining…" : "Decline"}
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

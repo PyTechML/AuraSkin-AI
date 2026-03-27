@@ -1,8 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/providers/AuthProvider";
-import { getDermatologistConsultations } from "@/services/apiPartner";
+import {
+  approveDermatologistConsultation,
+  getDermatologistConsultations,
+  rejectDermatologistConsultation,
+} from "@/services/apiPartner";
 import type { NormalizedConsultation } from "@/types/consultation";
 import {
   Card,
@@ -18,7 +23,8 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import { Calendar, Clock, User } from "lucide-react";
+import { Calendar, ChevronRight, Clock, User } from "lucide-react";
+import { usePanelToast } from "@/components/panel/PanelToast";
 import { CardSkeleton } from "@/components/ui/skeleton-primitives";
 import { PanelPageHeader } from "@/components/layouts/PanelPageHeader";
 import { PanelSectionReveal } from "@/components/panel/PanelReveal";
@@ -33,10 +39,13 @@ type TabKey = "pending" | "upcoming" | "completed" | "cancelled";
 export default function DermatologistConsultationsPage() {
   const { session } = useAuth();
   const partnerId = session?.user?.id;
+  const { addToast } = usePanelToast();
   const [consultations, setConsultations] = useState<NormalizedConsultation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("pending");
+  const [actingId, setActingId] = useState<string | null>(null);
+  const [actingKind, setActingKind] = useState<"approve" | "reject" | null>(null);
 
   const loadConsultations = useCallback(
     async (silent: boolean) => {
@@ -74,6 +83,55 @@ export default function DermatologistConsultationsPage() {
     }, PANEL_LIVE_POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, [partnerId, loadConsultations]);
+
+  const runApprove = useCallback(
+    async (id: string) => {
+      setActingId(id);
+      setActingKind("approve");
+      try {
+        const updated = await approveDermatologistConsultation(id);
+        if (updated) {
+          addToast("Confirmed — patient notified.", "success");
+          await loadConsultations(false);
+        } else {
+          addToast("Could not confirm.", "error");
+        }
+      } catch {
+        addToast("Could not confirm.", "error");
+      } finally {
+        setActingId(null);
+        setActingKind(null);
+      }
+    },
+    [addToast, loadConsultations]
+  );
+
+  const runReject = useCallback(
+    async (id: string) => {
+      if (
+        !window.confirm("Decline this request? The slot will be released.")
+      ) {
+        return;
+      }
+      setActingId(id);
+      setActingKind("reject");
+      try {
+        const updated = await rejectDermatologistConsultation(id);
+        if (updated) {
+          addToast("Consultation declined.", "success");
+          await loadConsultations(false);
+        } else {
+          addToast("Could not decline.", "error");
+        }
+      } catch {
+        addToast("Could not decline.", "error");
+      } finally {
+        setActingId(null);
+        setActingKind(null);
+      }
+    },
+    [addToast, loadConsultations]
+  );
 
   const grouped = useMemo(() => {
     const safeConsultations = Array.isArray(consultations) ? consultations : [];
@@ -139,7 +197,7 @@ export default function DermatologistConsultationsPage() {
       />
 
       <p className="text-sm text-muted-foreground">
-        Use tabs to switch between pending, upcoming, completed, and cancelled consultations. Status badges reflect the latest state of each consultation.
+        Open a consultation for clinical notes. For pending requests, use Approve to confirm (patient gets an in-app notification) or Decline to release the slot.
       </p>
       <PanelSectionReveal>
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
@@ -174,7 +232,10 @@ export default function DermatologistConsultationsPage() {
                     </CardContent>
                   </Card>
                 ) : (
-                  items.map((b) => (
+                  items.map((b) => {
+                    const cid = (b.id ?? "").trim();
+                    const busy = actingId === cid;
+                    return (
                     <Card
                       key={b.id ?? `${b.patientId ?? "patient"}-${b.date ?? ""}-${b.timeSlot ?? ""}`}
                       className="border-border partner-card-hover"
@@ -203,11 +264,39 @@ export default function DermatologistConsultationsPage() {
                             >
                               {(b.status ?? "").trim() || "pending"}
                             </Badge>
+                            {cid ? (
+                              <Button variant="outline" size="sm" asChild>
+                                <Link href={`/dermatologist/consultations/${encodeURIComponent(cid)}`}>
+                                  Open
+                                  <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+                                </Link>
+                              </Button>
+                            ) : null}
+                            {tab === "pending" && b.status === "pending" && cid ? (
+                              <>
+                                <Button
+                                  size="sm"
+                                  disabled={busy}
+                                  onClick={() => void runApprove(cid)}
+                                >
+                                  {busy && actingKind === "approve" ? "…" : "Approve"}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={busy}
+                                  onClick={() => void runReject(cid)}
+                                >
+                                  {busy && actingKind === "reject" ? "…" : "Decline"}
+                                </Button>
+                              </>
+                            ) : null}
                           </div>
                         </div>
                       </CardContent>
                     </Card>
-                  ))
+                  );
+                  })
                 )}
               </TabsContent>
             );

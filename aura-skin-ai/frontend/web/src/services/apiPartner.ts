@@ -801,6 +801,17 @@ export async function getDermatologistConsultationById(
   }
 }
 
+async function consultationRowWithSlot(
+  row: BackendConsultationRow
+): Promise<NormalizedConsultation> {
+  const slotsResponse = await apiGet<BackendSlotRow[]>(
+    "/partner/dermatologist/slots"
+  ).catch(() => []);
+  const slots = Array.isArray(slotsResponse) ? slotsResponse : [];
+  const slot = row.slot_id ? slots.find((s) => s.id === row.slot_id) : undefined;
+  return dermatologistConsultationFromRow(row, slot);
+}
+
 export async function updateDermatologistConsultation(
   id: string,
   payload: {
@@ -823,13 +834,37 @@ export async function updateDermatologistConsultation(
         },
       }
     );
-    const slotsResponse = await apiGet<BackendSlotRow[]>(
-      "/partner/dermatologist/slots"
-    ).catch(() => []);
-    const slots = Array.isArray(slotsResponse) ? slotsResponse : [];
-    const row = raw as BackendConsultationRow;
-    const slot = row.slot_id ? slots.find((s) => s.id === row.slot_id) : undefined;
-    return dermatologistConsultationFromRow(row, slot);
+    return consultationRowWithSlot(raw as BackendConsultationRow);
+  } catch {
+    return null;
+  }
+}
+
+/** Confirms a pending request; backend notifies the patient (consultation_confirmed). */
+export async function approveDermatologistConsultation(
+  id: string
+): Promise<NormalizedConsultation | null> {
+  try {
+    const raw = await apiSend<BackendConsultationRow>(
+      `/partner/dermatologist/consultations/approve/${encodeURIComponent(id)}`,
+      { method: "PUT" }
+    );
+    return consultationRowWithSlot(raw as BackendConsultationRow);
+  } catch {
+    return null;
+  }
+}
+
+/** Declines a pending request; slot is released when applicable. */
+export async function rejectDermatologistConsultation(
+  id: string
+): Promise<NormalizedConsultation | null> {
+  try {
+    const raw = await apiSend<BackendConsultationRow>(
+      `/partner/dermatologist/consultations/reject/${encodeURIComponent(id)}`,
+      { method: "PUT" }
+    );
+    return consultationRowWithSlot(raw as BackendConsultationRow);
   } catch {
     return null;
   }

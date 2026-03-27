@@ -20,7 +20,16 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
-import { CalendarDays, Users, Wallet, Activity, CalendarPlus } from "lucide-react";
+import {
+  Activity,
+  Bell,
+  CalendarDays,
+  CalendarPlus,
+  Stethoscope,
+  UserCircle,
+  Users,
+  Wallet,
+} from "lucide-react";
 import {
   CardSkeleton,
   ChartSkeleton,
@@ -247,6 +256,40 @@ export default function DermatologistDashboardPage() {
         Overview of today&apos;s consultation workload and recorded earnings
         (not withdrawable cash until withdrawals are supported).
       </p>
+
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" asChild>
+          <Link href="/dermatologist/consultations">
+            <Stethoscope className="h-4 w-4 mr-1.5" />
+            Consultations
+          </Link>
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <Link href="/dermatologist/availability">
+            <CalendarPlus className="h-4 w-4 mr-1.5" />
+            Availability
+          </Link>
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <Link href="/dermatologist/patients">
+            <Users className="h-4 w-4 mr-1.5" />
+            Patients
+          </Link>
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <Link href="/dermatologist/notifications">
+            <Bell className="h-4 w-4 mr-1.5" />
+            Notifications
+          </Link>
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <Link href="/dermatologist/profile">
+            <UserCircle className="h-4 w-4 mr-1.5" />
+            Profile
+          </Link>
+        </Button>
+      </div>
+
       {/* Top KPI cards */}
       <PanelSectionReveal>
         <PanelStagger className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
