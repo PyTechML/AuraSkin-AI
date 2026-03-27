@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/authStore";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -81,17 +82,42 @@ export function RecommendedApproachWithInlineBooking(props: {
   const availability = useMemo(() => groupSlotsByDate(rawSlots), [rawSlots]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !props.dermatologistId) return;
     let cancelled = false;
-    setSlotsLoading(true);
-    getDermatologistSlotsPublic(props.dermatologistId)
-      .then((slots) => {
-        if (!cancelled) setRawSlots(slots);
-      })
-      .finally(() => {
-        if (!cancelled) setSlotsLoading(false);
-      });
-    return () => { cancelled = true; };
+
+    const loadSlots = () => {
+      setSlotsLoading(true);
+      getDermatologistSlotsPublic(props.dermatologistId)
+        .then((slots) => {
+          if (!cancelled) setRawSlots(slots);
+        })
+        .finally(() => {
+          if (!cancelled) setSlotsLoading(false);
+        });
+    };
+
+    loadSlots();
+
+    const channel = supabase
+      .channel(`availability_slots:${props.dermatologistId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "availability_slots",
+          filter: `doctor_id=eq.${props.dermatologistId}`,
+        },
+        () => {
+          if (!cancelled) loadSlots();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      void supabase.removeChannel(channel);
+    };
   }, [isOpen, props.dermatologistId]);
 
   const onConfirm = async () => {
@@ -103,11 +129,15 @@ export function RecommendedApproachWithInlineBooking(props: {
         props.dermatologistId,
         selected.id
       );
-      if (result?.checkout_url) {
+      if (result.checkout_url) {
         window.location.href = result.checkout_url;
         return;
       }
-      setSentModalOpen(true);
+      if (result.instant === true) {
+        setSentModalOpen(true);
+        return;
+      }
+      setError("Could not start payment. Please try again.");
     } catch (e: any) {
       setError(e?.message ?? "Booking failed. Please try again.");
     } finally {

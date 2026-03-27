@@ -8,6 +8,7 @@ import { PaymentAuditRepository } from "../repositories/payment-audit.repository
 import { EarningsRepository } from "../../partner/dermatologist/repositories/earnings.repository";
 import { EventsService } from "../../notifications/services/events.service";
 import { AnalyticsService } from "../../analytics/analytics.service";
+import { persistConsultationAndBookSlot } from "./consultation-booking.helper";
 
 @Injectable()
 export class WebhooksService {
@@ -151,6 +152,19 @@ export class WebhooksService {
     });
   }
 
+  private async resolveOrderCustomerName(
+    userId: string
+  ): Promise<string | undefined> {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", userId)
+      .maybeSingle();
+    const n = (data as { full_name?: string | null } | null)?.full_name?.trim();
+    return n || undefined;
+  }
+
   private async createOrderFromSession(
     session: Stripe.Checkout.Session,
     paymentId: string,
@@ -167,6 +181,8 @@ export class WebhooksService {
     if (!storeId || !productId) return;
 
     const supabase = getSupabaseClient();
+    const customerName = await this.resolveOrderCustomerName(userId);
+    const namePatch = customerName ? { customer_name: customerName } : {};
     const existingOrderId = metadata.order_id;
     let order: { id: string } | null = null;
     let orderError: { message?: string } | null = null;
@@ -176,6 +192,7 @@ export class WebhooksService {
         .update({
           order_status: "confirmed",
           total_amount: amount,
+          ...namePatch,
         })
         .eq("id", existingOrderId)
         .eq("user_id", userId)
@@ -192,6 +209,7 @@ export class WebhooksService {
           store_id: storeId,
           total_amount: amount,
           order_status: "confirmed",
+          ...namePatch,
         })
         .select("id")
         .single();
@@ -274,55 +292,28 @@ export class WebhooksService {
     const slotId = metadata.slot_id;
     if (!dermatologistId || !slotId) return;
 
-    const supabase = getSupabaseClient();
-    const { data: consultation, error: consultError } = await supabase
-      .from("consultations")
-      .insert({
-        user_id: userId,
-        doctor_id: dermatologistId,
-        dermatologist_id: dermatologistId,
-        slot_id: slotId,
-        // Keep dermatologist approval loop deterministic: payment creates pending request, dermatologist confirms.
-        consultation_status: "pending",
-      })
-      .select()
-      .single();
-
-    if (consultError || !consultation) {
+    const booked = await persistConsultationAndBookSlot(userId, dermatologistId, slotId);
+    if ("error" in booked) {
       await this.paymentAuditRepository.log("consultation.create_failed", {
         payment_id: paymentId,
-        error: consultError?.message,
+        error: booked.error,
       });
       return;
     }
 
-    const { error: slotUpdateError } = await supabase
-      .from("availability_slots")
-      .update({ status: "booked" })
-      .eq("id", slotId)
-      .eq("doctor_id", dermatologistId);
-    if (slotUpdateError) {
-      // Backward-compatibility path for environments still writing into legacy table.
-      await supabase
-        .from("consultation_slots")
-        .update({ status: "booked" })
-        .eq("id", slotId)
-        .eq("dermatologist_id", dermatologistId);
-    }
-
     await this.paymentsRepository.update(paymentId, {
-      consultation_id: consultation.id,
+      consultation_id: booked.consultationId,
     });
 
     const amount = parseFloat(metadata.amount ?? "0");
     const exists = await this.earningsRepository.existsByConsultationId(
       dermatologistId,
-      consultation.id
+      booked.consultationId
     );
     if (!exists && amount > 0) {
       await this.earningsRepository.create({
         dermatologist_id: dermatologistId,
-        consultation_id: consultation.id,
+        consultation_id: booked.consultationId,
         amount,
         status: "pending",
       });
@@ -330,7 +321,13 @@ export class WebhooksService {
     this.logger.logUserActivity({
       event: "consultation_booking",
       user_id: userId,
-      extra: { consultation_id: consultation.id, dermatologist_id: dermatologistId },
+      extra: { consultation_id: booked.consultationId, dermatologist_id: dermatologistId },
+    });
+
+    await this.eventsService.emit("dermatologist_consultation_request", {
+      dermatologist_id: dermatologistId,
+      user_id: userId,
+      consultation_id: booked.consultationId,
     });
   }
 

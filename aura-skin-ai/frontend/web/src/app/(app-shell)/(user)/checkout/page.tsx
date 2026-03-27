@@ -115,6 +115,7 @@ function CheckoutContent() {
           product_id: line.product.id,
           quantity: line.quantity,
           store_id: line.product.storeId,
+          customer_name: user.name?.trim() || undefined,
         });
         if (result?.upi_url && result?.payment_id) {
           setUpiPayment(result);
@@ -134,6 +135,7 @@ function CheckoutContent() {
           quantity: line.quantity,
           store_id: line.product.storeId,
           shipping_address: shippingStr,
+          customer_name: user.name?.trim() || undefined,
         });
         if (result?.order_id) {
           dispatchPanelSync("orders");
@@ -152,6 +154,7 @@ function CheckoutContent() {
         product_id: line.product.id,
         quantity: line.quantity,
         store_id: line.product.storeId,
+        customer_name: user.name?.trim() || undefined,
       });
       if (checkoutUrl) {
         window.location.href = checkoutUrl;

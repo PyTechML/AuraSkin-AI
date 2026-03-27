@@ -201,12 +201,12 @@ export default function DermatologistProfilePage() {
         subtitle="Manage your professional and public information."
       />
 
-      <p className="text-sm text-muted-foreground mb-2">
+      <p className="text-sm text-muted-foreground mb-2 max-w-3xl mx-auto text-center sm:text-left">
         Information here is visible to patients booking consultations and helps set expectations before a consultation.
       </p>
       <PanelSectionReveal>
-      <form onSubmit={handleSave}>
-        <Card className="border-border max-w-2xl">
+      <form onSubmit={handleSave} className="max-w-3xl mx-auto w-full">
+        <Card className="border-border w-full">
           <CardHeader>
             <CardTitle className="font-heading">
               Professional details

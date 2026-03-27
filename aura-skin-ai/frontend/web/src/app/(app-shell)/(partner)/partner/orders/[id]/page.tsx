@@ -25,6 +25,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ImageIcon, ArrowLeft, Check } from "lucide-react";
+import {
+  formatOrderStatusLabel,
+  formatStoreCustomerDisplay,
+} from "@/lib/storeOrderDisplay";
 
 const TIMELINE_STEPS: Order["status"][] = [
   "placed",
@@ -124,6 +128,7 @@ export default function PartnerOrderDetailPage() {
   const nextStatuses = getNextOrderStatuses(order.status);
   const currentStepIndex = TIMELINE_STEPS.indexOf(order.status);
   const showRefundPanel = order.status === "refunded" || order.status === "return_requested";
+  const customerDisplay = formatStoreCustomerDisplay(order);
 
   return (
     <div className="space-y-8">
@@ -148,10 +153,10 @@ export default function PartnerOrderDetailPage() {
                 : "outline"
             }
           >
-            {order.status.replace(/_/g, " ")}
+            {formatOrderStatusLabel(order.status)}
           </Badge>
           <Badge variant="outline">
-            {(order.paymentStatus ?? "paid").replace(/_/g, " ")}
+            {formatOrderStatusLabel(order.paymentStatus ?? "paid")}
           </Badge>
         </div>
       </div>
@@ -162,8 +167,22 @@ export default function PartnerOrderDetailPage() {
             <CardHeader>
               <CardTitle className="font-heading text-lg">Customer information</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-1 text-sm">
-              <p><strong>Customer:</strong> {order.customerName ?? order.userId}</p>
+            <CardContent className="space-y-2 text-sm">
+              <div>
+                <span className="text-muted-foreground">Name</span>
+                <p className="font-medium">{customerDisplay.primary}</p>
+              </div>
+              {order.userId ? (
+                <div>
+                  <span className="text-muted-foreground">Account ID</span>
+                  <p
+                    className="font-mono text-xs text-muted-foreground truncate max-w-full"
+                    title={order.userId}
+                  >
+                    …{order.userId.slice(-8)}
+                  </p>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
 

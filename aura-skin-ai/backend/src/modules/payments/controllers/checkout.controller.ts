@@ -36,7 +36,8 @@ export class CheckoutController {
       dto.quantity,
       dto.store_id,
       successUrl,
-      cancelUrl
+      cancelUrl,
+      dto.customer_name
     );
     return formatSuccess(data);
   }
@@ -73,7 +74,8 @@ export class CheckoutController {
       userId,
       dto.product_id,
       dto.quantity,
-      dto.store_id
+      dto.store_id,
+      dto.customer_name
     );
     return formatSuccess(data);
   }
@@ -90,7 +92,8 @@ export class CheckoutController {
       dto.product_id,
       dto.quantity,
       dto.store_id,
-      dto.shipping_address ?? ""
+      dto.shipping_address ?? "",
+      dto.customer_name
     );
     return formatSuccess(data);
   }

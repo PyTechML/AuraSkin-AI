@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import type { DbConsultation } from "../../../../database/models";
+import { EventsService } from "../../../notifications/services/events.service";
 import { ConsultationsRepository } from "../repositories/consultations.repository";
 import { DermatologistRepository } from "../repositories/dermatologist.repository";
 import type { UpdateConsultationClinicalDto } from "../dto/update-consultation-clinical.dto";
@@ -8,7 +9,8 @@ import type { UpdateConsultationClinicalDto } from "../dto/update-consultation-c
 export class ConsultationsService {
   constructor(
     private readonly consultationsRepository: ConsultationsRepository,
-    private readonly dermatologistRepository: DermatologistRepository
+    private readonly dermatologistRepository: DermatologistRepository,
+    private readonly eventsService: EventsService
   ) {}
 
   async listByDermatologist(
@@ -83,6 +85,11 @@ export class ConsultationsService {
         dermatologistId,
         "booked"
       );
+      await this.eventsService.emit("consultation_confirmed", {
+        user_id: updated.user_id,
+        consultation_id: updated.id,
+        dermatologist_id: dermatologistId,
+      });
     }
     return updated;
   }

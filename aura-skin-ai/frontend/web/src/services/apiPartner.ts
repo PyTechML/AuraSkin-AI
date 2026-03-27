@@ -304,57 +304,34 @@ type BackendDermatologistEarningsAggregate = {
   total_earnings?: number | null;
   pending_payout?: number | null;
   monthly_revenue?: number | null;
+  recent?: Array<{
+    id?: string | null;
+    amount?: number | null;
+    created_at?: string | null;
+    status?: string | null;
+    consultation_id?: string | null;
+  }>;
 };
 
 export async function getDermatologistEarnings(): Promise<DermatologistEarnings> {
-  const [consultationsResponse, earningsResponse] = await Promise.all([
-    apiGet<BackendConsultationRow[] | unknown>("/partner/dermatologist/consultations").catch(
-      () => []
-    ),
-    apiGet<BackendDermatologistEarningsAggregate | unknown>(
-      "/partner/dermatologist/earnings"
-    ).catch(() => ({})),
-  ]);
+  const earningsResponse = await apiGet<BackendDermatologistEarningsAggregate | unknown>(
+    "/partner/dermatologist/earnings"
+  ).catch(() => ({}));
 
-  const consultations = Array.isArray(consultationsResponse)
-    ? (consultationsResponse as BackendConsultationRow[])
-    : [];
   const earnings = (earningsResponse ?? {}) as BackendDermatologistEarningsAggregate;
 
-  const completedConsultationRows = consultations.filter((item) => {
-    const status = String(item?.consultation_status ?? "").toLowerCase();
-    return status === "completed";
-  });
-
-  const completedConsultations = Number(completedConsultationRows.length) || 0;
+  const completedConsultations = Number(earnings.total_consultations) || 0;
   const totalRevenue = Number(earnings.total_earnings) || 0;
   const monthlyRevenue = Number(earnings.monthly_revenue) || 0;
   const pendingPayout = Number(earnings.pending_payout) || 0;
 
-  const inferredAmountPerCompleted =
-    completedConsultations > 0 ? totalRevenue / completedConsultations : 0;
-
-  const safeTransactions = Array.isArray(completedConsultationRows)
-    ? completedConsultationRows
-    : [];
-
-  const recentTransactions = safeTransactions
-    .slice()
-    .sort((a, b) => {
-      const dateA = new Date(
-        String(a?.consultation_date ?? a?.updated_at ?? a?.created_at ?? "")
-      ).getTime();
-      const dateB = new Date(
-        String(b?.consultation_date ?? b?.updated_at ?? b?.created_at ?? "")
-      ).getTime();
-      return (Number(dateB) || 0) - (Number(dateA) || 0);
-    })
-    .slice(0, 10)
-    .map((item) => ({
-      id: String(item?.id ?? ""),
-      amount: Number(inferredAmountPerCompleted) || 0,
-      date: String(item?.consultation_date ?? item?.updated_at ?? item?.created_at ?? ""),
-      status: String(item?.consultation_status ?? "completed"),
+  const recentRows = Array.isArray(earnings.recent) ? earnings.recent : [];
+  const recentTransactions = recentRows
+    .map((row) => ({
+      id: String(row?.id ?? "").trim(),
+      amount: Number(row?.amount) || 0,
+      date: String(row?.created_at ?? ""),
+      status: String(row?.status ?? "pending"),
     }))
     .filter((item) => item.id.length > 0);
 
@@ -461,9 +438,10 @@ export async function getPartnerNotifications(
   }
 }
 
-type BackendDermatologistNotificationRow = {
+type BackendInAppNotificationRow = {
   id?: string | null;
   type?: string | null;
+  title?: string | null;
   message?: string | null;
   created_at?: string | null;
   read_status?: boolean | null;
@@ -472,25 +450,27 @@ type BackendDermatologistNotificationRow = {
 
 export async function getDermatologistNotifications(): Promise<DermatologistNotification[]> {
   try {
-    const response = await apiGet<BackendDermatologistNotificationRow[] | unknown>(
-      "/partner/dermatologist/notifications"
-    );
+    const response = await apiGet<BackendInAppNotificationRow[] | unknown>("/notifications");
     const safeRows = Array.isArray(response) ? response : [];
     return safeRows
       .map((row) => {
         const safeRow = row ?? {};
-        const id = String((safeRow as BackendDermatologistNotificationRow).id ?? "").trim();
+        const id = String((safeRow as BackendInAppNotificationRow).id ?? "").trim();
         if (!id) return null;
+        const title = String((safeRow as BackendInAppNotificationRow).title ?? "").trim();
+        const body = String((safeRow as BackendInAppNotificationRow).message ?? "").trim();
+        const message =
+          body || title || "New update available";
         return {
           id,
-          type: String((safeRow as BackendDermatologistNotificationRow).type ?? "system"),
-          message: String((safeRow as BackendDermatologistNotificationRow).message ?? ""),
+          type: String((safeRow as BackendInAppNotificationRow).type ?? "system"),
+          message,
           createdAt: String(
-            (safeRow as BackendDermatologistNotificationRow).created_at ?? new Date().toISOString()
+            (safeRow as BackendInAppNotificationRow).created_at ?? new Date().toISOString()
           ),
           isRead: Boolean(
-            (safeRow as BackendDermatologistNotificationRow).read_status ??
-              (safeRow as BackendDermatologistNotificationRow).is_read
+            (safeRow as BackendInAppNotificationRow).read_status ??
+              (safeRow as BackendInAppNotificationRow).is_read
           ),
         } satisfies DermatologistNotification;
       })
@@ -511,10 +491,8 @@ export async function markNotificationRead(
   _partnerId?: string
 ): Promise<void> {
   try {
-    const path = _partnerId
-      ? `/notifications/read/${encodeURIComponent(id)}`
-      : `/partner/dermatologist/notifications/read/${encodeURIComponent(id)}`;
-    await apiSend<void>(path, { method: "PUT" });
+    void _partnerId;
+    await apiSend<void>(`/notifications/read/${encodeURIComponent(id)}`, { method: "PUT" });
   } catch {
     // best-effort
   }
@@ -522,15 +500,8 @@ export async function markNotificationRead(
 
 export async function markAllNotificationsRead(partnerId?: string): Promise<void> {
   try {
-    if (partnerId) {
-      await apiSend<void>("/notifications/read-all", { method: "PUT" });
-      return;
-    }
-
-    const notifications = await getDermatologistNotifications();
-    const unread = notifications.filter((item) => !item.isRead);
-    if (unread.length === 0) return;
-    await Promise.allSettled(unread.map((item) => markNotificationRead(item.id)));
+    void partnerId;
+    await apiSend<void>("/notifications/read-all", { method: "PUT" });
   } catch {
     void partnerId;
   }

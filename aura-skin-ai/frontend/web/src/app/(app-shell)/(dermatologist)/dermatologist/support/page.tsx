@@ -56,7 +56,7 @@ export default function DermatologistSupportPage() {
     if (!partnerId) return Promise.resolve();
     return getSupportTickets(partnerId)
       .then(setTickets)
-      .catch(() => setError("Failed to load tickets."));
+      .catch(() => setTickets([]));
   };
 
   useEffect(() => {

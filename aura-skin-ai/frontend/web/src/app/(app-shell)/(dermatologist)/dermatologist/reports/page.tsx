@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import { getBookingsForPartner } from "@/services/apiPartner";
 import type { ConsultationBooking } from "@/types";
@@ -19,6 +19,11 @@ import {
   PanelStaggerItem,
 } from "@/components/panel/PanelReveal";
 import { TrendingUp } from "lucide-react";
+import {
+  isDocumentVisible,
+  PANEL_LIVE_POLL_INTERVAL_MS,
+  takeFreshList,
+} from "@/lib/panelPolling";
 
 interface Metrics {
   totalConsultations: number;
@@ -34,18 +39,46 @@ export default function DermatologistReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const loadReports = useCallback(
+    (silent: boolean) => {
+      if (!partnerId) {
+        setLoading(false);
+        return;
+      }
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+      getBookingsForPartner(partnerId)
+        .then((list) =>
+          setBookings((prev) => (silent ? takeFreshList(prev, list) : list))
+        )
+        .catch(() => {
+          if (!silent) setError("Failed to load reports.");
+        })
+        .finally(() => {
+          if (!silent) setLoading(false);
+        });
+    },
+    [partnerId]
+  );
+
   useEffect(() => {
     if (!partnerId) {
       setLoading(false);
       return;
     }
-    setLoading(true);
-    setError(null);
-    getBookingsForPartner(partnerId)
-      .then(setBookings)
-      .catch(() => setError("Failed to load reports."))
-      .finally(() => setLoading(false));
-  }, [partnerId]);
+    loadReports(false);
+  }, [partnerId, loadReports]);
+
+  useEffect(() => {
+    if (!partnerId) return;
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      loadReports(true);
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [partnerId, loadReports]);
 
   const metrics = useMemo<Metrics>(() => {
     if (bookings.length === 0) {

@@ -1,8 +1,24 @@
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { ImageIcon, ChevronRight, Sparkles, ShieldCheck, HelpCircle, MapPin } from "lucide-react";
 import { getDermatologistById } from "@/services/api";
-import { RecommendedApproachWithInlineBooking } from "@/components/consultations/InlineBookingSection";
 import { Card, CardContent } from "@/components/ui/card";
+
+const RecommendedApproachWithInlineBooking = dynamic(
+  () =>
+    import("@/components/consultations/InlineBookingSection").then(
+      (m) => m.RecommendedApproachWithInlineBooking
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="rounded-xl border border-border/50 bg-muted/20 p-5 h-36 animate-pulse"
+        aria-hidden
+      />
+    ),
+  }
+);
 import { Button } from "@/components/ui/button";
 
 export default async function DermatologistPage({ params }: { params: { id: string } }) {

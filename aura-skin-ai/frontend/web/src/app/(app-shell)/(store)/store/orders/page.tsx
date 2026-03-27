@@ -24,10 +24,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Package, Eye } from "lucide-react";
+import { Package, ClipboardList } from "lucide-react";
 import { CardSkeleton, TableRowSkeleton } from "@/components/ui/skeleton-primitives";
 import { takeFreshList } from "@/lib/panelPolling";
 import { usePanelLiveRefresh } from "@/lib/usePanelLiveRefresh";
+import {
+  csvCustomerNameColumn,
+  formatOrderStatusLabel,
+  formatStoreCustomerDisplay,
+  nextFulfillmentStepLabel,
+} from "@/lib/storeOrderDisplay";
 
 const STATUS_OPTIONS = [
   "all",
@@ -44,10 +50,19 @@ const STATUS_OPTIONS = [
 ];
 
 function exportOrdersToCsv(orders: Order[]) {
-  const headers = ["Order ID", "Customer", "Date", "Total", "Status", "Payment"];
+  const headers = [
+    "Order ID",
+    "Customer",
+    "User ID",
+    "Date",
+    "Total",
+    "Status",
+    "Payment",
+  ];
   const rows = orders.map((o) => [
     o.id,
-    o.customerName ?? o.userId,
+    csvCustomerNameColumn(o),
+    o.userId,
     o.createdAt,
     o.total.toFixed(2),
     o.status,
@@ -276,7 +291,7 @@ export default function StoreOrdersPage() {
               <SelectContent>
                 {STATUS_OPTIONS.map((s) => (
                   <SelectItem key={s} value={s}>
-                    {s === "all" ? "All statuses" : s.replace(/_/g, " ")}
+                    {s === "all" ? "All statuses" : formatOrderStatusLabel(s)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -307,6 +322,12 @@ export default function StoreOrdersPage() {
           </div>
         </CardContent>
       </Card>
+
+      {filtered.length > 0 && (
+        <p className="text-sm text-muted-foreground">
+          Open an order to update status, tracking, and notes.
+        </p>
+      )}
 
       {filtered.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
@@ -382,53 +403,72 @@ export default function StoreOrdersPage() {
                 <TableHead>Total</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Payment</TableHead>
-                <TableHead className="w-[80px]">Actions</TableHead>
+                <TableHead className="min-w-[120px]">Next</TableHead>
+                <TableHead className="w-[140px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((order) => (
-                <TableRow key={order.id}>
-                  <TableCell>
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(order.id)}
-                      onChange={() => toggleSelect(order.id)}
-                      aria-label={`Select order ${order.id}`}
-                    />
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    {order.id.replace("ord-", "#")}
-                  </TableCell>
-                  <TableCell>{order.customerName ?? order.userId}</TableCell>
-                  <TableCell>{order.createdAt}</TableCell>
-                  <TableCell>${order.total.toFixed(2)}</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        order.status === "delivered"
-                          ? "success"
-                          : order.status === "cancelled" ||
-                            order.status === "refunded"
-                          ? "secondary"
-                          : "outline"
-                      }
-                    >
-                      {order.status.replace(/_/g, " ")}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {(order.paymentStatus ?? "paid").replace(/_/g, " ")}
-                  </TableCell>
-                  <TableCell>
-                    <Button variant="outline" size="sm" asChild>
-                      <Link href={`/store/orders/${order.id}`}>
-                        <Eye className="h-4 w-4 mr-1" />
-                        View
-                      </Link>
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {filtered.map((order) => {
+                const cust = formatStoreCustomerDisplay(order);
+                const nextHint = nextFulfillmentStepLabel(order.status);
+                return (
+                  <TableRow key={order.id}>
+                    <TableCell>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(order.id)}
+                        onChange={() => toggleSelect(order.id)}
+                        aria-label={`Select order ${order.id}`}
+                      />
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {order.id.replace("ord-", "#")}
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium">{cust.primary}</div>
+                      {cust.refNote && (
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {cust.refNote}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>{order.createdAt}</TableCell>
+                    <TableCell>${order.total.toFixed(2)}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          order.status === "delivered"
+                            ? "success"
+                            : order.status === "cancelled" ||
+                              order.status === "refunded"
+                            ? "secondary"
+                            : "outline"
+                        }
+                      >
+                        {formatOrderStatusLabel(order.status)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {formatOrderStatusLabel(order.paymentStatus ?? "paid")}
+                    </TableCell>
+                    <TableCell>
+                      {nextHint ? (
+                        <span className="text-xs text-muted-foreground">{nextHint}</span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Button variant="outline" size="sm" asChild>
+                        <Link href={`/store/orders/${order.id}`}>
+                          <ClipboardList className="h-4 w-4 mr-1" />
+                          Manage order
+                        </Link>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </Card>

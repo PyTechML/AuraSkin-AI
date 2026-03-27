@@ -11,4 +11,9 @@ export class CreateCheckoutDto {
   @IsOptional()
   @IsString()
   store_id?: string;
+
+  /** Display name to store on the order (falls back to profile full_name server-side). */
+  @IsOptional()
+  @IsString()
+  customer_name?: string;
 }

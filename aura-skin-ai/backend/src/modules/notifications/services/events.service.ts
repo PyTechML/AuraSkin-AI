@@ -94,6 +94,39 @@ export class EventsService {
           });
           break;
         }
+        case "dermatologist_consultation_request": {
+          const dermatologistId = payload.dermatologist_id as string | undefined;
+          const consultation_id = payload.consultation_id as string | undefined;
+          const userIdBooking = payload.user_id as string | undefined;
+          if (!dermatologistId) break;
+          await this.notificationsService.createNotification({
+            recipientId: dermatologistId,
+            recipientRole: "dermatologist",
+            type: "consultation_request",
+            title: "New consultation request",
+            message:
+              (payload.message as string | undefined) ??
+              "A patient completed payment and requested a consultation. Review it under Consultations.",
+            metadata: { consultation_id, user_id: userIdBooking },
+          });
+          break;
+        }
+        case "consultation_confirmed": {
+          const consultation_id = payload.consultation_id as string | undefined;
+          const dermatologist_id = payload.dermatologist_id as string | undefined;
+          if (!user_id) break;
+          await this.notificationsService.createNotification({
+            recipientId: user_id,
+            recipientRole: "user",
+            type: "consultation_confirmed",
+            title: "Consultation confirmed",
+            message:
+              (payload.message as string | undefined) ??
+              "Your dermatologist confirmed your consultation request.",
+            metadata: { consultation_id, dermatologist_id },
+          });
+          break;
+        }
         case "order_update": {
           const order_id = payload.order_id as string | undefined;
           const message = (payload.message as string) ?? "Your order has been updated.";

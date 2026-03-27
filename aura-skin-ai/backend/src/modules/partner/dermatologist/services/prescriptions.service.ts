@@ -77,6 +77,11 @@ export class PrescriptionsService {
       });
     }
 
+    await this.earningsRepository.markPaidByConsultationId(
+      dermatologistId,
+      dto.consultationId
+    );
+
     return prescription;
   }
 

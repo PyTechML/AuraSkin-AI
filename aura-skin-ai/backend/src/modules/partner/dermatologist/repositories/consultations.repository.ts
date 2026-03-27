@@ -99,13 +99,39 @@ export class ConsultationsRepository {
 
   async getSlotById(slotId: string): Promise<DbConsultationSlot | null> {
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase
+    const { data: hybrid, error: hErr } = await supabase
+      .from("availability_slots")
+      .select("*")
+      .eq("id", slotId)
+      .maybeSingle();
+    if (!hErr && hybrid) {
+      const h = hybrid as {
+        id: string;
+        doctor_id: string;
+        date: string;
+        start_time: string;
+        end_time: string;
+        status: string;
+        created_at?: string;
+      };
+      const t = (x: string) => (typeof x === "string" && x.length >= 5 ? x.slice(0, 5) : x);
+      return {
+        id: h.id,
+        dermatologist_id: h.doctor_id,
+        slot_date: String(h.date).slice(0, 10),
+        start_time: t(h.start_time),
+        end_time: t(h.end_time),
+        status: h.status as DbConsultationSlot["status"],
+        created_at: h.created_at,
+      };
+    }
+    const { data: leg, error: lErr } = await supabase
       .from("consultation_slots")
       .select("*")
       .eq("id", slotId)
-      .single();
-    if (error || !data) return null;
-    return data as DbConsultationSlot;
+      .maybeSingle();
+    if (lErr || !leg) return null;
+    return leg as DbConsultationSlot;
   }
 
   async setSlotStatus(
@@ -114,11 +140,20 @@ export class ConsultationsRepository {
     status: "available" | "booked" | "blocked"
   ): Promise<boolean> {
     const supabase = getSupabaseClient();
-    const { error } = await supabase
+    const now = new Date().toISOString();
+    const { data: updatedHybrid, error: hErr } = await supabase
+      .from("availability_slots")
+      .update({ status, updated_at: now })
+      .eq("id", slotId)
+      .eq("doctor_id", dermatologistId)
+      .select("id")
+      .maybeSingle();
+    if (!hErr && updatedHybrid) return true;
+    const { error: lErr } = await supabase
       .from("consultation_slots")
       .update({ status })
       .eq("id", slotId)
       .eq("dermatologist_id", dermatologistId);
-    return !error;
+    return !lErr;
   }
 }

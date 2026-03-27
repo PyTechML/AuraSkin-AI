@@ -10,13 +10,14 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { Request } from "express";
+import { Throttle } from "@nestjs/throttler";
 import { AuthGuard, AuthenticatedUser } from "../../../shared/guards/auth.guard";
 import { RoleGuard, ROLES_KEY } from "../../../shared/guards/role.guard";
 import { SetMetadata } from "@nestjs/common";
 import type { BackendRole } from "../../../shared/constants/roles";
 import { SlotsService } from "./services/slots.service";
 import { formatSuccess } from "../../../shared/utils/responseFormatter";
-import { CreateSlotDto, UpdateSlotDto } from "./dto";
+import { CreateSlotDto, UpdateSlotDto, SyncAvailabilityDto } from "./dto";
 
 const RequireDermatologist = () =>
   SetMetadata(ROLES_KEY, ["dermatologist"] as BackendRole[]);
@@ -24,6 +25,7 @@ const RequireDermatologist = () =>
 @Controller("partner/dermatologist/slots")
 @UseGuards(AuthGuard, RoleGuard)
 @RequireDermatologist()
+@Throttle({ public: { limit: 300, ttl: 60_000 } })
 export class SlotsController {
   constructor(private readonly slotsService: SlotsService) {}
 
@@ -32,6 +34,14 @@ export class SlotsController {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const dermatologistId = user?.id ?? "";
     const data = await this.slotsService.listByDermatologist(dermatologistId);
+    return formatSuccess(data);
+  }
+
+  @Post("sync")
+  async sync(@Req() req: Request, @Body() dto: SyncAvailabilityDto) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const dermatologistId = user?.id ?? "";
+    const data = await this.slotsService.syncAvailability(dermatologistId, dto);
     return formatSuccess(data);
   }
 

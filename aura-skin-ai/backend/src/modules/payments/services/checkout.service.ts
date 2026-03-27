@@ -3,6 +3,7 @@ import { loadEnv } from "../../../config/env";
 import { getSupabaseClient } from "../../../database/supabase.client";
 import { EventsService } from "../../notifications/services/events.service";
 import { AnalyticsService } from "../../analytics/analytics.service";
+import { persistConsultationAndBookSlot } from "./consultation-booking.helper";
 import Stripe from "stripe";
 
 @Injectable()
@@ -19,13 +20,36 @@ export class CheckoutService {
     }
   }
 
+  private async getProfileDisplayName(userId: string): Promise<string | null> {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", userId)
+      .maybeSingle();
+    const n = (data as { full_name?: string | null } | null)?.full_name?.trim();
+    return n || null;
+  }
+
+  /** Prefer client hint; otherwise `profiles.full_name`. */
+  private async resolveCustomerName(
+    userId: string,
+    hint?: string | null
+  ): Promise<string | undefined> {
+    const t = hint?.trim();
+    if (t) return t;
+    const fromProfile = await this.getProfileDisplayName(userId);
+    return fromProfile || undefined;
+  }
+
   async createCheckoutSession(
     userId: string,
     productId: string,
     quantity: number,
     storeId: string | undefined,
     successUrl: string,
-    cancelUrl: string
+    cancelUrl: string,
+    customerNameHint?: string | null
   ): Promise<{ checkout_url: string }> {
     if (!this.stripe) {
       throw new BadRequestException("Payment service is not configured");
@@ -68,6 +92,7 @@ export class CheckoutService {
       throw new BadRequestException("Product price not available or invalid");
     }
     const amount = Number(unitPrice) * quantity;
+    const customerName = await this.resolveCustomerName(userId, customerNameHint);
     const { data: order, error: orderError } = await supabase
       .from("orders")
       .insert({
@@ -75,6 +100,7 @@ export class CheckoutService {
         store_id: resolvedStoreId,
         order_status: "pending",
         total_amount: amount,
+        ...(customerName ? { customer_name: customerName } : {}),
       } as any)
       .select()
       .single();
@@ -128,20 +154,19 @@ export class CheckoutService {
     slotId: string,
     successUrl: string,
     cancelUrl: string
-  ): Promise<{ checkout_url: string }> {
-    if (!this.stripe) {
-      throw new BadRequestException("Payment service is not configured");
-    }
+  ): Promise<{ checkout_url: string; instant?: boolean }> {
     const supabase = getSupabaseClient();
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from("dermatologist_profiles")
       .select("consultation_fee")
       .eq("id", dermatologistId)
-      .single();
-    const fee = profile?.consultation_fee ?? 0;
-    if (Number(fee) <= 0) {
-      throw new BadRequestException("Consultation fee not set");
+      .maybeSingle();
+    if (profileError || !profile) {
+      throw new BadRequestException("Dermatologist not found");
     }
+    const feeRaw = (profile as { consultation_fee?: number | null }).consultation_fee ?? 0;
+    const fee = Number(feeRaw);
+
     const { data: hybridSlot, error: hybridSlotError } = await supabase
       .from("availability_slots")
       .select("id, status")
@@ -161,7 +186,30 @@ export class CheckoutService {
     if (!slot || slot.status !== "available") {
       throw new BadRequestException("Slot not available");
     }
-    const amount = Number(fee);
+
+    if (fee <= 0) {
+      const booked = await persistConsultationAndBookSlot(userId, dermatologistId, slotId);
+      if ("error" in booked) {
+        throw new BadRequestException(booked.error);
+      }
+      await this.eventsService.emit("dermatologist_consultation_request", {
+        dermatologist_id: dermatologistId,
+        user_id: userId,
+        consultation_id: booked.consultationId,
+      });
+      await this.analytics.track("consultation_booked", {
+        user_id: userId,
+        entity_type: "consultation",
+        entity_id: booked.consultationId,
+        metadata: { instant: true, dermatologist_id: dermatologistId },
+      });
+      return { checkout_url: "", instant: true };
+    }
+
+    if (!this.stripe) {
+      throw new BadRequestException("Payment service is not configured");
+    }
+    const amount = fee;
     const session = await this.stripe.checkout.sessions.create({
       mode: "payment",
       success_url: successUrl,
@@ -253,11 +301,13 @@ export class CheckoutService {
     userId: string,
     productId: string,
     quantity: number,
-    storeId: string | undefined
+    storeId: string | undefined,
+    customerNameHint?: string | null
   ): Promise<{ upi_url: string; payment_id: string; amount: number }> {
     const { product, unitPrice, resolvedStoreId } = await this.getProductAndPrice(productId, storeId);
     const amount = Number(unitPrice) * quantity;
     const supabase = getSupabaseClient();
+    const customerName = await this.resolveCustomerName(userId, customerNameHint);
 
     // Create a pending order
     const { data: order, error: orderError } = await supabase
@@ -268,6 +318,7 @@ export class CheckoutService {
         order_status: "pending",
         payment_status: "pending",
         total_amount: amount,
+        ...(customerName ? { customer_name: customerName } : {}),
       } as any)
       .select()
       .single();
@@ -330,11 +381,14 @@ export class CheckoutService {
     productId: string,
     quantity: number,
     storeId: string | undefined,
-    shippingAddress: string
+    shippingAddress: string,
+    customerNameHint?: string | null
   ): Promise<{ order_id: string }> {
     const { product, unitPrice, resolvedStoreId } = await this.getProductAndPrice(productId, storeId);
     const amount = Number(unitPrice) * quantity;
     const supabase = getSupabaseClient();
+    const customerName = await this.resolveCustomerName(userId, customerNameHint);
+    const ship = shippingAddress?.trim() ?? "";
 
     const { data: order, error: orderError } = await supabase
       .from("orders")
@@ -343,6 +397,8 @@ export class CheckoutService {
         store_id: resolvedStoreId,
         order_status: "pending",
         total_amount: amount,
+        ...(customerName ? { customer_name: customerName } : {}),
+        ...(ship ? { shipping_address: ship } : {}),
       } as any)
       .select()
       .single();

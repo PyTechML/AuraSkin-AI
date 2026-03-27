@@ -466,16 +466,19 @@ export class PublicRepository {
       .eq("status", "available")
       .order("date")
       .order("start_time");
-    if (!hybridError && Array.isArray(hybridData)) {
-      return hybridData.map((row: any) => ({
-        id: row.id,
-        dermatologist_id: dermatologistId,
-        slot_date: row.date,
-        start_time: row.start_time,
-        end_time: row.end_time,
-        status: row.status,
-      }));
-    }
+    const hybridList =
+      !hybridError && Array.isArray(hybridData)
+        ? hybridData.map((row: any) => ({
+            id: row.id,
+            dermatologist_id: dermatologistId,
+            slot_date: row.date,
+            start_time: row.start_time,
+            end_time: row.end_time,
+            status: row.status,
+          }))
+        : [];
+
+    if (hybridList.length > 0) return hybridList;
 
     const { data: legacyData, error: legacyError } = await supabase
       .from("consultation_slots")

@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { NotificationsModule } from "../../notifications/notifications.module";
 import { DermatologistController } from "./dermatologist.controller";
 import { SlotsController } from "./slots.controller";
 import { ConsultationsController } from "./consultations.controller";
@@ -16,6 +17,7 @@ import { PrescriptionsRepository } from "./repositories/prescriptions.repository
 import { EarningsRepository } from "./repositories/earnings.repository";
 
 @Module({
+  imports: [NotificationsModule],
   controllers: [
     DermatologistController,
     SlotsController,
