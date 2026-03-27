@@ -152,7 +152,7 @@ export class AuthService {
   async signUp(
     email: string,
     password: string,
-    options?: { name?: string }
+    options?: { name?: string; requestedRole?: string }
   ): Promise<SignUpResult> {
     const supabaseAdmin = getSupabaseClient();
     const normalizedEmail = (email ?? "").trim().toLowerCase();
@@ -197,6 +197,11 @@ export class AuthService {
           extra: { email: normalizedEmail, reason: upsertError.message },
         });
       }
+
+      const requestedBackend = options?.requestedRole ? toBackendRole(options.requestedRole) : null;
+      if (requestedBackend && (requestedBackend === "store" || requestedBackend === "dermatologist")) {
+        await this.createRoleRequest(userId, requestedBackend);
+      }
     }
 
     this.logger.logUserActivity({
@@ -209,6 +214,39 @@ export class AuthService {
 
   async signOut(): Promise<void> {
     await this.supabase.auth.signOut();
+  }
+
+  async resubmitRoleRequest(token: string, requestedRole: string): Promise<boolean> {
+    const {
+      data: { user },
+      error,
+    } = await this.supabase.auth.getUser(token);
+    if (error || !user) return false;
+    const normalizedRole = requestedRole.trim().toLowerCase();
+    if (normalizedRole !== "store" && normalizedRole !== "dermatologist") return false;
+    const supabaseAdmin = getSupabaseClient();
+    const { data: row } = await supabaseAdmin
+      .from("role_requests")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("requested_role", normalizedRole)
+      .eq("status", "rejected")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const id = (row as { id?: string } | null)?.id;
+    if (!id) return false;
+    const { error: updateError } = await supabaseAdmin
+      .from("role_requests")
+      .update({
+        status: "pending",
+        reviewed_at: null,
+        reviewed_by: null,
+        rejection_reason: null,
+        resubmitted_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+    return !updateError;
   }
 
   async getUser(token: string): Promise<CurrentUser | null> {

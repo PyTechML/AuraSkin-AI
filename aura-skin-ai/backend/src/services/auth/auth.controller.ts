@@ -43,12 +43,12 @@ export class AuthController {
   @Throttle({ auth: { limit: 10, ttl: 60_000 } })
   @Post("signup")
   async signup(
-    @Body() body: { email: string; password: string; name?: string }
+    @Body() body: { email: string; password: string; name?: string; requested_role?: string }
   ) {
     const result = await this.authService.signUp(
       body.email ?? "",
       body.password ?? "",
-      { name: body.name }
+      { name: body.name, requestedRole: body.requested_role }
     );
     if ("error" in result) {
       throw new BadRequestException(result.error);
@@ -68,5 +68,17 @@ export class AuthController {
       throw new UnauthorizedException("Invalid token");
     }
     return formatSuccess(user);
+  }
+
+  @Post("role-request/resubmit")
+  async resubmitRoleRequest(
+    @Headers("authorization") authHeader: string | undefined,
+    @Body() body: { requested_role?: string }
+  ) {
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    if (!token) throw new UnauthorizedException("Invalid token");
+    const ok = await this.authService.resubmitRoleRequest(token, body?.requested_role ?? "");
+    if (!ok) throw new BadRequestException("Unable to resubmit role request");
+    return formatSuccess({ success: true });
   }
 }

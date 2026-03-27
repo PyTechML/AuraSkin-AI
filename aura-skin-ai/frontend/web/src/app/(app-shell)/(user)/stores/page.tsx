@@ -11,6 +11,13 @@ import { Button } from "@/components/ui/button";
 import { MapPin, Star } from "lucide-react";
 import dynamic from "next/dynamic";
 
+const UUID_LIKE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function readableStoreName(name: string | null | undefined): string {
+  const value = typeof name === "string" ? name.trim() : "";
+  if (!value || UUID_LIKE_RE.test(value)) return "Store";
+  return value;
+}
+
 const LocationsMap = dynamic(
   () => import("@/components/stores/LocationsMap").then((m) => m.LocationsMap),
   { ssr: false, loading: () => <div className="w-full h-64 bg-muted/40 rounded-xl animate-pulse" /> }
@@ -82,15 +89,19 @@ export default function StoresPage() {
           kind: "store" as const,
           lat: s.lat as number,
           lng: s.lng as number,
-          name: s.name ?? "Store",
+          name: readableStoreName(s.name),
           addressLine: s.location || s.address,
           contact: s.contact,
         })),
     [stores]
   );
+  const visibleStores = useMemo(
+    () => stores.filter((s) => String(s.status ?? "active").toLowerCase() === "active"),
+    [stores]
+  );
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 mx-auto w-full max-w-7xl">
       <h1 className="font-heading text-2xl font-semibold">Stores Near You</h1>
       <p className="text-muted-foreground">
         Find AuraSkin partner stores and pharmacies near your location.
@@ -120,87 +131,82 @@ export default function StoresPage() {
         </Card>
       )}
 
-      <div className="grid gap-8 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <div className="mb-6">
-            <LocationsMap
-              points={mapPoints}
-              userLat={hasAccurateLocation ? lat : undefined}
-              userLng={hasAccurateLocation ? lng : undefined}
-            />
-          </div>
+      <LocationsMap
+        points={mapPoints}
+        userLat={hasAccurateLocation ? lat : undefined}
+        userLng={hasAccurateLocation ? lng : undefined}
+        className="h-[360px] md:h-[460px]"
+      />
 
-          {loading ? (
-            <div className="space-y-4">
-              {[1, 2].map((i) => (
-                <div key={i} className="h-32 rounded-xl border border-border/60 bg-muted/40 animate-pulse" />
-              ))}
-            </div>
-          ) : stores.length === 0 ? (
-            <Card className="border-border">
-              <CardContent className="py-12 text-center">
-                <MapPin className="h-12 w-12 text-muted-foreground/60 mx-auto mb-4" />
-                <p className="text-muted-foreground">No stores available yet</p>
+      {loading ? (
+        <div className="space-y-4">
+          {[1, 2].map((i) => (
+            <div key={i} className="h-32 rounded-xl border border-border/60 bg-muted/40 animate-pulse" />
+          ))}
+        </div>
+      ) : visibleStores.length === 0 ? (
+        <Card className="border-border">
+          <CardContent className="py-12 text-center">
+            <MapPin className="h-12 w-12 text-muted-foreground/60 mx-auto mb-4" />
+            <p className="text-muted-foreground">No stores available yet</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {visibleStores.map((store) => (
+            <Card key={store.id} className="border-border hover:shadow-[0_0_20px_rgba(229,190,181,0.15)] transition-shadow">
+              <CardContent className="p-4">
+                <div className="flex gap-4">
+                  {store.imageUrl ? (
+                    <img
+                      src={store.imageUrl}
+                      alt={readableStoreName(store.name)}
+                      className="w-24 h-24 shrink-0 rounded-xl object-cover"
+                    />
+                  ) : (
+                    <div className="w-24 h-24 shrink-0 rounded-xl bg-muted/80 flex items-center justify-center">
+                      <MapPin className="h-8 w-8 text-muted-foreground/60" />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-heading font-semibold">{readableStoreName(store.name)}</h3>
+                    {store.location ? (
+                      <p className="text-sm text-muted-foreground">{store.location}</p>
+                    ) : null}
+                    {Number.isFinite(store.totalProducts) && store.totalProducts > 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        {store.totalProducts} product{store.totalProducts === 1 ? "" : "s"}
+                      </p>
+                    ) : null}
+                    {store.rating != null && (
+                      <p className="text-sm text-muted-foreground flex items-center gap-1">
+                        <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+                        {store.rating}
+                      </p>
+                    )}
+                    {store.distance != null && (
+                      <p className="text-sm text-muted-foreground">
+                        {store.distance.toFixed(1)} km away
+                      </p>
+                    )}
+                    {store.description && (
+                      <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+                        {store.description}
+                      </p>
+                    )}
+                    {store.contact ? (
+                      <p className="text-sm text-muted-foreground mt-1">{store.contact}</p>
+                    ) : null}
+                    <Button variant="outline" size="sm" className="mt-3" asChild>
+                      <Link href={`/stores/${store.id}`}>View Store</Link>
+                    </Button>
+                  </div>
+                </div>
               </CardContent>
             </Card>
-          ) : (
-            <div className="space-y-4">
-              {stores.map((store) => (
-                <Card key={store.id} className="border-border hover:shadow-[0_0_20px_rgba(229,190,181,0.15)] transition-shadow">
-                  <CardContent className="p-4">
-                    <div className="flex gap-4">
-                      {store.imageUrl ? (
-                        <img
-                          src={store.imageUrl}
-                          alt={store.name ?? "Store"}
-                          className="w-24 h-24 shrink-0 rounded-xl object-cover"
-                        />
-                      ) : (
-                        <div className="w-24 h-24 shrink-0 rounded-xl bg-muted/80 flex items-center justify-center">
-                          <MapPin className="h-8 w-8 text-muted-foreground/60" />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-heading font-semibold">{store.name ?? "Store"}</h3>
-                        {store.location ? (
-                          <p className="text-sm text-muted-foreground">{store.location}</p>
-                        ) : null}
-                        {Number.isFinite(store.totalProducts) && store.totalProducts > 0 ? (
-                          <p className="text-sm text-muted-foreground">
-                            {store.totalProducts} product{store.totalProducts === 1 ? "" : "s"}
-                          </p>
-                        ) : null}
-                        {store.rating != null && (
-                          <p className="text-sm text-muted-foreground flex items-center gap-1">
-                            <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
-                            {store.rating}
-                          </p>
-                        )}
-                        {store.distance != null && (
-                          <p className="text-sm text-muted-foreground">
-                            {store.distance.toFixed(1)} km away
-                          </p>
-                        )}
-                        {store.description && (
-                          <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
-                            {store.description}
-                          </p>
-                        )}
-                        {store.contact ? (
-                          <p className="text-sm text-muted-foreground mt-1">{store.contact}</p>
-                        ) : null}
-                        <Button variant="outline" size="sm" className="mt-3" asChild>
-                          <Link href={`/stores/${store.id}`}>View Store</Link>
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
+          ))}
         </div>
-      </div>
+      )}
     </div>
   );
 }

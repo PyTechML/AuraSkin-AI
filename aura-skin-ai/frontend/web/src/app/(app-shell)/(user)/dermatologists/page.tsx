@@ -92,20 +92,25 @@ export default function DermatologistsPage() {
         };
       });
   }, [dermatologists]);
+  const visibleDermatologists = useMemo(
+    () => dermatologists.filter((d) => typeof d.id === "string" && d.id.trim().length > 0),
+    [dermatologists]
+  );
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 mx-auto w-full max-w-7xl">
       <h1 className="font-heading text-2xl font-semibold">Dermatologists Near You</h1>
       <p className="text-muted-foreground">
         Find board-certified dermatologists who partner with AuraSkin AI.
       </p>
 
-      <div className="max-w-4xl rounded-2xl border border-border/60 overflow-hidden">
+      <div className="rounded-2xl border border-border/60 overflow-hidden">
         <div className="p-0">
           <LocationsMap
             points={mapPoints}
             userLat={hasAccurateLocation ? lat : undefined}
             userLng={hasAccurateLocation ? lng : undefined}
+            className="h-[360px] md:h-[460px]"
           />
         </div>
       </div>
@@ -140,7 +145,7 @@ export default function DermatologistsPage() {
             <div key={i} className="h-48 rounded-xl border border-border/60 bg-muted/40 animate-pulse" />
           ))}
         </div>
-      ) : dermatologists.length === 0 ? (
+      ) : visibleDermatologists.length === 0 ? (
         <Card className="border-border">
           <CardContent className="py-16 text-center">
             <User className="h-12 w-12 text-muted-foreground/60 mx-auto mb-4" />
@@ -149,7 +154,7 @@ export default function DermatologistsPage() {
         </Card>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {dermatologists.map((d) => (
+          {visibleDermatologists.map((d) => (
             <Card key={d.id} className="border-border hover:shadow-[0_0_20px_rgba(229,190,181,0.15)] transition-shadow">
               <CardContent className="p-4">
                 <div className="flex gap-4">
@@ -165,8 +170,12 @@ export default function DermatologistsPage() {
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-heading font-semibold">{d.name}</h3>
-                    <p className="text-sm text-muted-foreground">{d.specialty}</p>
+                    <h3 className="font-heading font-semibold">
+                      {d.name?.trim() ? d.name : "Dermatologist"}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      {d.specialty?.trim() ? d.specialty : "General Dermatology"}
+                    </p>
                     {d.yearsExperience != null && (
                       <p className="text-xs text-muted-foreground mt-1">
                         {d.yearsExperience}+ years experience

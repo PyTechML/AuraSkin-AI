@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -12,6 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { signup } from "@/services/apiAuth";
 import { usePanelToast } from "@/components/panel/PanelToast";
 import { supabase } from "@/lib/supabase";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -38,6 +40,7 @@ const schema = z
     email: z.string().email("Enter a valid email"),
     password: z.string().min(6, "Password must be at least 6 characters"),
     confirmPassword: z.string(),
+    requested_role: z.enum(["USER", "STORE", "DERMATOLOGIST"]).default("USER"),
   })
   .refine((d) => d.password === d.confirmPassword, {
     message: "Passwords do not match",
@@ -54,6 +57,8 @@ export default function SignupPage() {
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({ resolver: zodResolver(schema) });
+  const [pendingModalOpen, setPendingModalOpen] = useState(false);
+  const [pendingRoleLabel, setPendingRoleLabel] = useState<"Store" | "Dermatologist">("Store");
 
   const handleSocialLogin = async (provider: "google" | "apple") => {
     try {
@@ -71,8 +76,18 @@ export default function SignupPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      await signup({ email: data.email, password: data.password, name: data.name });
-      addToast("Registration successful. Welcome to AuraSkin AI.", "success");
+      await signup({
+        email: data.email,
+        password: data.password,
+        name: data.name,
+        requested_role: data.requested_role,
+      });
+      if (data.requested_role === "STORE" || data.requested_role === "DERMATOLOGIST") {
+        setPendingRoleLabel(data.requested_role === "STORE" ? "Store" : "Dermatologist");
+        setPendingModalOpen(true);
+      } else {
+        addToast("Registration successful. Welcome to AuraSkin AI.", "success");
+      }
       router.push("/login");
     } catch (err) {
       const message =
@@ -93,6 +108,18 @@ export default function SignupPage() {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="requested_role">Register as</Label>
+            <select
+              id="requested_role"
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              {...register("requested_role")}
+            >
+              <option value="USER">User</option>
+              <option value="STORE">Store Partner</option>
+              <option value="DERMATOLOGIST">Dermatologist</option>
+            </select>
+          </div>
           <div className="space-y-2">
             <Label htmlFor="name">Full name</Label>
             <Input id="name" placeholder="Your name" {...register("name")} />
@@ -165,6 +192,20 @@ export default function SignupPage() {
           </Button>
         </div>
       </CardContent>
+      <Dialog open={pendingModalOpen} onOpenChange={setPendingModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{pendingRoleLabel} approval requested</DialogTitle>
+            <DialogDescription>
+              Your account is created as a user for now. We have sent your {pendingRoleLabel.toLowerCase()} role request to admin for review.
+              You can login with the same email and password, and your account role will switch automatically after approval.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingModalOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

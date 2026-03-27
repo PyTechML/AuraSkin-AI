@@ -96,10 +96,20 @@ function mapProduct(row: DbProduct, storeId?: string | null): ProductResponse {
 function mapStoreProfile(row: PublicStoreProfileRow): StoreResponse {
   const total = row.totalProducts;
   const totalProducts = Number.isFinite(total) ? total : 0;
+  const safeName =
+    typeof row.store_name === "string" && row.store_name.trim().length > 0
+      ? row.store_name.trim()
+      : "Store";
+  const safeLocation =
+    typeof row.city === "string" && row.city.trim().length > 0
+      ? row.city.trim()
+      : typeof row.address === "string" && row.address.trim().length > 0
+      ? row.address.trim()
+      : "Location not provided";
   return {
     id: row.id,
-    name: row.store_name ?? "",
-    location: row.city ?? "",
+    name: safeName,
+    location: safeLocation,
     status: "Active",
     address: row.address ?? undefined,
     lat: row.latitude != null ? Number(row.latitude) : undefined,
@@ -190,19 +200,24 @@ export class PublicService {
 
   async getStoresNearby(lat: number, lng: number): Promise<StoreResponse[]> {
     const rows = await this.repo.getStores();
-    const withDistance = rows
-      .filter((s) => s.latitude != null && s.longitude != null)
-      .map((s) => {
-        const mapped = mapStoreProfile(s);
-        mapped.distance = Math.round(distanceKm(lat, lng, Number(s.latitude), Number(s.longitude)) * 10) / 10;
-        return mapped;
-      });
-    return withDistance.sort((a, b) => (a.distance ?? 999) - (b.distance ?? 999));
+    const mapped = rows.map((s) => {
+      const item = mapStoreProfile(s);
+      if (s.latitude != null && s.longitude != null) {
+        item.distance = Math.round(distanceKm(lat, lng, Number(s.latitude), Number(s.longitude)) * 10) / 10;
+      }
+      return item;
+    });
+    return mapped.sort((a, b) => (a.distance ?? Number.POSITIVE_INFINITY) - (b.distance ?? Number.POSITIVE_INFINITY));
   }
 
   async getStoreById(id: string): Promise<StoreResponse | null> {
     const row = await this.repo.getStoreById(id);
     return row ? mapStoreProfile(row) : null;
+  }
+
+  async getStoreProducts(id: string): Promise<ProductResponse[]> {
+    const rows = await this.repo.getStoreProducts(id);
+    return rows.map((r) => mapProduct(r, id));
   }
 
   async getDermatologists(): Promise<DermatologistResponse[]> {
@@ -212,14 +227,14 @@ export class PublicService {
 
   async getDermatologistsNearby(lat: number, lng: number): Promise<DermatologistResponse[]> {
     const rows = await this.repo.getDermatologists();
-    const withDistance = rows
-      .filter((d) => d.latitude != null && d.longitude != null)
-      .map((d) => {
-        const mapped = mapDermatologist(d);
-        mapped.distance = Math.round(distanceKm(lat, lng, Number(d.latitude), Number(d.longitude)) * 10) / 10;
-        return mapped;
-      });
-    return withDistance.sort((a, b) => (a.distance ?? 999) - (b.distance ?? 999));
+    const mapped = rows.map((d) => {
+      const item = mapDermatologist(d);
+      if (d.latitude != null && d.longitude != null) {
+        item.distance = Math.round(distanceKm(lat, lng, Number(d.latitude), Number(d.longitude)) * 10) / 10;
+      }
+      return item;
+    });
+    return mapped.sort((a, b) => (a.distance ?? Number.POSITIVE_INFINITY) - (b.distance ?? Number.POSITIVE_INFINITY));
   }
 
   async getDermatologistById(id: string): Promise<DermatologistResponse | null> {

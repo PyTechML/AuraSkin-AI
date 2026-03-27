@@ -74,7 +74,6 @@ export class CheckoutService {
         user_id: userId,
         store_id: resolvedStoreId,
         order_status: "pending",
-        payment_status: "pending",
         total_amount: amount,
       } as any)
       .select()
@@ -343,10 +342,7 @@ export class CheckoutService {
         user_id: userId,
         store_id: resolvedStoreId,
         order_status: "pending",
-        payment_status: "pending",
         total_amount: amount,
-        shipping_address: shippingAddress,
-        internal_notes: "Cash on Delivery",
       } as any)
       .select()
       .single();

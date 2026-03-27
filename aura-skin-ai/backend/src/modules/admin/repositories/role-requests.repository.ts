@@ -11,6 +11,8 @@ export interface RoleRequestRow {
   reviewed_at: string | null;
   reviewed_by: string | null;
   created_at: string;
+  rejection_reason?: string | null;
+  resubmitted_at?: string | null;
 }
 
 export interface RoleRequestWithProfile extends RoleRequestRow {
@@ -25,7 +27,7 @@ export class RoleRequestsRepository {
     const supabase = getSupabaseClient();
     let query = supabase
       .from("role_requests")
-      .select("id, user_id, requested_role, status, reviewed_at, reviewed_by, created_at")
+      .select("id, user_id, requested_role, status, reviewed_at, reviewed_by, created_at, rejection_reason, resubmitted_at")
       .order("created_at", { ascending: false });
     if (status) {
       query = query.eq("status", status);
@@ -58,7 +60,7 @@ export class RoleRequestsRepository {
     const supabase = getSupabaseClient();
     const { data: row, error } = await supabase
       .from("role_requests")
-      .select("id, user_id, requested_role, status, reviewed_at, reviewed_by, created_at")
+      .select("id, user_id, requested_role, status, reviewed_at, reviewed_by, created_at, rejection_reason, resubmitted_at")
       .eq("id", id)
       .single();
     if (error || !row) return null;
@@ -78,7 +80,8 @@ export class RoleRequestsRepository {
   async updateStatus(
     id: string,
     status: RoleRequestStatus,
-    reviewedBy: string
+    reviewedBy: string,
+    rejectionReason?: string | null
   ): Promise<boolean> {
     const supabase = getSupabaseClient();
     const { error } = await supabase
@@ -87,6 +90,33 @@ export class RoleRequestsRepository {
         status,
         reviewed_at: new Date().toISOString(),
         reviewed_by: reviewedBy,
+        rejection_reason: status === "rejected" ? rejectionReason ?? null : null,
+      })
+      .eq("id", id);
+    return !error;
+  }
+
+  async resubmitLatestRejected(userId: string, requestedRole: "store" | "dermatologist"): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    const { data: row } = await supabase
+      .from("role_requests")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("requested_role", requestedRole)
+      .eq("status", "rejected")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const id = (row as { id?: string } | null)?.id;
+    if (!id) return false;
+    const { error } = await supabase
+      .from("role_requests")
+      .update({
+        status: "pending",
+        reviewed_at: null,
+        reviewed_by: null,
+        rejection_reason: null,
+        resubmitted_at: new Date().toISOString(),
       })
       .eq("id", id);
     return !error;

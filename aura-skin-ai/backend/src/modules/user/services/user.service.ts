@@ -97,8 +97,19 @@ export class UserService {
       .select("*")
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
-    if (error) return [];
-    return (data as DbConsultationBooking[]) ?? [];
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return data as DbConsultationBooking[];
+    }
+
+    // Compatibility fallback for deployments using the newer consultations table
+    // or when consultation_bookings exists but has no rows for this user.
+    const { data: consultations } = await supabase
+      .from("consultations")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+    if (!consultations) return [];
+    return consultations as DbConsultationBooking[];
   }
 
   async getDashboard(userId: string): Promise<UserDashboardDto> {

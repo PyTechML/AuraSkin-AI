@@ -1,4 +1,4 @@
-import { Controller, Get, Put, UseGuards, Req, Param, Query } from "@nestjs/common";
+import { Controller, Get, Put, UseGuards, Req, Param, Query, Body } from "@nestjs/common";
 import { Request } from "express";
 import { AuthGuard, AuthenticatedUser } from "../../../shared/guards/auth.guard";
 import { RoleGuard, ROLES_KEY } from "../../../shared/guards/role.guard";
@@ -32,9 +32,10 @@ export class AdminRoleRequestsController {
   }
 
   @Put("role-requests/:id/reject")
-  async reject(@Req() req: Request, @Param("id") id: string) {
+  async reject(@Req() req: Request, @Param("id") id: string, @Body() body: { reason?: string }) {
     const admin = req.user as AuthenticatedUser;
-    const data = await this.roleRequestsService.reject(admin.id, id);
+    const data = await this.roleRequestsService.reject(admin.id, id, body?.reason);
     return formatSuccess(data);
   }
+
 }

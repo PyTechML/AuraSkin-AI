@@ -552,6 +552,14 @@ export async function getStoreById(id: string): Promise<PublicStore | null> {
   }
 }
 
+export async function getStoreProducts(id: string): Promise<Product[]> {
+  try {
+    return await apiGet<Product[]>(`/stores/${id}/products`);
+  } catch {
+    return [];
+  }
+}
+
 export async function getDermatologistsNearby(
   lat: number,
   lng: number

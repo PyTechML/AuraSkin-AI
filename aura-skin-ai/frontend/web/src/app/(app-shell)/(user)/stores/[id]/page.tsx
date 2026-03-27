@@ -1,7 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getStoreById, getProducts } from "@/services/api";
+import { getStoreById, getStoreProducts } from "@/services/api";
 import { ChevronRight, MapPin, Clock, Phone, ImageIcon } from "lucide-react";
+
+const UUID_LIKE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function readableStoreName(name: string | null | undefined): string {
+  const value = typeof name === "string" ? name.trim() : "";
+  if (!value || UUID_LIKE_RE.test(value)) return "Store";
+  return value;
+}
 
 export default async function StoreDetailPage({
   params,
@@ -11,9 +18,7 @@ export default async function StoreDetailPage({
   const store = await getStoreById(params.id);
   if (!store) notFound();
 
-  const allProducts = await getProducts();
-  const products = Array.isArray(allProducts) ? allProducts : [];
-  const storeProducts = products.slice(0, 4);
+  const storeProducts = await getStoreProducts(params.id);
 
   return (
     <div className="space-y-8">
@@ -22,7 +27,7 @@ export default async function StoreDetailPage({
           Stores
         </Link>
         <ChevronRight className="h-4 w-4" />
-        <span className="text-foreground">{store.name}</span>
+        <span className="text-foreground">{readableStoreName(store.name)}</span>
       </nav>
 
       <div className="grid gap-8 lg:grid-cols-3">
@@ -35,7 +40,7 @@ export default async function StoreDetailPage({
           </div>
 
           <div>
-            <h1 className="font-heading text-2xl font-semibold">{store.name}</h1>
+            <h1 className="font-heading text-2xl font-semibold">{readableStoreName(store.name)}</h1>
             {store.rating != null && (
               <p className="text-muted-foreground mt-1">★ {store.rating} rating</p>
             )}

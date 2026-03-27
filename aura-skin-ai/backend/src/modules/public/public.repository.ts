@@ -15,7 +15,7 @@ function isLegacyStoreActive(status?: string | null): boolean {
   return String(status).trim().toLowerCase() === "active";
 }
 
-/** Approved store_profiles row with public catalog product count. */
+/** Approved store_profiles row with optional public catalog product count. */
 export type PublicStoreProfileRow = DbStoreProfile & { totalProducts: number };
 
 export type PublicDermatologistRow = {
@@ -68,12 +68,17 @@ export class PublicRepository {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from("profiles")
-      .select("id")
-      .eq("role", role)
-      .eq("status", "approved")
-      .eq("is_active", true);
+      .select("id, status, is_active")
+      .eq("role", role);
     if (error || !data?.length) return new Set<string>();
-    return new Set((data as { id: string }[]).map((row) => row.id));
+    const eligible = (data as Array<{ id: string; status?: string | null; is_active?: boolean | null }>).filter(
+      (row) => {
+        const status = String(row.status ?? "approved").trim().toLowerCase();
+        const isActive = row.is_active ?? true;
+        return status === "approved" && isActive === true;
+      }
+    );
+    return new Set(eligible.map((row) => row.id));
   }
 
   async getProducts(filters?: ProductFilters, sort?: string): Promise<DbProduct[]> {
@@ -183,55 +188,75 @@ export class PublicRepository {
     return (data as DbProduct[]) ?? [];
   }
 
+  async getStoreProducts(storeId: string, limit = 12): Promise<DbProduct[]> {
+    const supabase = getSupabaseClient();
+    const { data: invRows, error: invError } = await supabase
+      .from("inventory")
+      .select("product_id")
+      .eq("store_id", storeId)
+      .eq("status", "approved");
+    if (invError || !invRows?.length) return [];
+    const productIds = [...new Set(invRows.map((r: any) => r.product_id))];
+    if (productIds.length === 0) return [];
+    const { data, error } = await supabase
+      .from("products")
+      .select("*")
+      .in("id", productIds)
+      .eq("approval_status", "LIVE")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error || !data) return [];
+    return data as DbProduct[];
+  }
+
   /**
-   * Approved store_profiles with at least one approved inventory row
-   * whose product is LIVE (same gate as public product listing),
+   * Strict role-based store visibility:
+   * - profiles.role = store with approved/active profile status
+   * - store_profiles row exists and is approved
+   * - no legacy cross-table fallback
    */
   async getStores(): Promise<PublicStoreProfileRow[]> {
     const supabase = getSupabaseClient();
     const eligibleProfiles = await this.getEligibleProfileIdsByRole("store");
-    if (eligibleProfiles.size === 0) return [];
-    let profileRows: PublicStoreProfileRow[] = [];
+    if (eligibleProfiles.size === 0) {
+      // eslint-disable-next-line no-console
+      console.info("[PublicRepository] stores list: no eligible store ids");
+      return [];
+    }
+    const { data: profiles, error: profError } = await supabase
+      .from("store_profiles")
+      .select("*")
+      .in("id", [...eligibleProfiles])
+      .eq("approval_status", "approved");
+    if (profError || !profiles?.length) {
+      // eslint-disable-next-line no-console
+      console.info("[PublicRepository] stores list: no approved store profiles", {
+        eligibleProfileCount: eligibleProfiles.size,
+      });
+      return [];
+    }
 
-    const { data: invRows, error: invError } = await supabase
-      .from("inventory")
-      .select("store_id, product_id")
-      .eq("status", "approved");
-    if (!invError && invRows?.length) {
+    const countByStore = new Map<string, number>();
+    const { data: invRows } = await supabase.from("inventory").select("store_id, product_id").eq("status", "approved");
+    if (invRows?.length) {
       const productIds = [...new Set(invRows.map((r: { product_id: string }) => r.product_id))];
       if (productIds.length > 0) {
-        const { data: liveProducts, error: liveError } = await supabase
+        const { data: liveProducts } = await supabase
           .from("products")
           .select("id")
           .in("id", productIds)
           .eq("approval_status", "LIVE");
-        if (!liveError && liveProducts?.length) {
-          const liveProductIds = new Set(liveProducts.map((p: { id: string }) => p.id));
-          const countByStore = new Map<string, number>();
-          for (const row of invRows as { store_id: string; product_id: string }[]) {
-            if (!liveProductIds.has(row.product_id)) continue;
-            if (!eligibleProfiles.has(row.store_id)) continue;
-            countByStore.set(row.store_id, (countByStore.get(row.store_id) ?? 0) + 1);
-          }
-          const eligibleStoreIds = [...countByStore.keys()];
-          if (eligibleStoreIds.length > 0) {
-            const { data: profiles, error: profError } = await supabase
-              .from("store_profiles")
-              .select("*")
-              .in("id", eligibleStoreIds)
-              .eq("approval_status", "approved");
-            if (!profError && profiles?.length) {
-              profileRows = (profiles as DbStoreProfile[])
-                .map((p) => ({
-                  ...p,
-                  totalProducts: countByStore.get(p.id) ?? 0,
-                }))
-                .filter((r) => r.totalProducts > 0);
-            }
-          }
+        const liveProductIds = new Set((liveProducts ?? []).map((p: { id: string }) => p.id));
+        for (const row of invRows as { store_id: string; product_id: string }[]) {
+          if (!liveProductIds.has(row.product_id)) continue;
+          countByStore.set(row.store_id, (countByStore.get(row.store_id) ?? 0) + 1);
         }
       }
     }
+    const profileRows: PublicStoreProfileRow[] = (profiles as DbStoreProfile[]).map((p) => ({
+      ...p,
+      totalProducts: countByStore.get(p.id) ?? 0,
+    }));
     profileRows.sort((a, b) => {
       const an = (a.store_name ?? "").trim().toLowerCase();
       const bn = (b.store_name ?? "").trim().toLowerCase();
@@ -241,7 +266,13 @@ export class PublicRepository {
       return an.localeCompare(bn);
     });
 
-    return profileRows.filter((r) => r.totalProducts > 0);
+    // eslint-disable-next-line no-console
+    console.info("[PublicRepository] stores list resolved", {
+      eligibleProfileCount: eligibleProfiles.size,
+      approvedProfileCount: profileRows.length,
+      withProductsCount: profileRows.filter((r) => r.totalProducts > 0).length,
+    });
+    return profileRows;
   }
 
   async getStoreById(id: string): Promise<PublicStoreProfileRow | null> {
@@ -273,11 +304,10 @@ export class PublicRepository {
           for (const row of invRows as { product_id: string }[]) {
             if (liveProductIds.has(row.product_id)) totalProducts += 1;
           }
-          if (totalProducts > 0) {
-            return { ...(profile as DbStoreProfile), totalProducts };
-          }
+          return { ...(profile as DbStoreProfile), totalProducts };
         }
       }
+      return { ...(profile as DbStoreProfile), totalProducts: 0 };
     }
     return null;
   }
@@ -285,13 +315,23 @@ export class PublicRepository {
   async getDermatologists(): Promise<PublicDermatologistRow[]> {
     const supabase = getSupabaseClient();
     const eligibleProfiles = await this.getEligibleProfileIdsByRole("dermatologist");
-    if (eligibleProfiles.size === 0) return [];
-    const { data: verifiedProfiles, error: profError } = await supabase
+    if (eligibleProfiles.size === 0) {
+      // eslint-disable-next-line no-console
+      console.info("[PublicRepository] dermatologists list: no eligible dermatologist ids");
+      return [];
+    }
+    const { data: allProfiles, error: profError } = await supabase
       .from("dermatologist_profiles")
       .select("*")
-      .eq("verified", true);
-    if (profError || !verifiedProfiles?.length) return [];
-    const profileRows = (verifiedProfiles as DbDermatologistProfile[]).filter((row) => eligibleProfiles.has(row.id));
+      .in("id", [...eligibleProfiles]);
+    if (profError || !allProfiles?.length) {
+      // eslint-disable-next-line no-console
+      console.info("[PublicRepository] dermatologists list: no dermatologist profiles", {
+        eligibleProfileCount: eligibleProfiles.size,
+      });
+      return [];
+    }
+    const profileRows = allProfiles as DbDermatologistProfile[];
     if (profileRows.length === 0) return [];
     const ids = profileRows.map((row) => row.id);
 
@@ -306,7 +346,7 @@ export class PublicRepository {
       ((legacyDerms as DbDermatologist[]) ?? []).map((row) => [row.id, row])
     );
 
-    return profileRows
+    const rows = profileRows
       .map((profileRow) => {
         const profileIdentity = profileMap.get(profileRow.id);
         const legacy = legacyMap.get(profileRow.id);
@@ -331,6 +371,13 @@ export class PublicRepository {
         } as PublicDermatologistRow;
       })
       .sort((a, b) => a.name.localeCompare(b.name));
+    // eslint-disable-next-line no-console
+    console.info("[PublicRepository] dermatologists list resolved", {
+      eligibleProfileCount: eligibleProfiles.size,
+      profileCount: profileRows.length,
+      returnedCount: rows.length,
+    });
+    return rows;
   }
 
   async getDermatologistById(id: string): Promise<PublicDermatologistRow | null> {
@@ -341,7 +388,6 @@ export class PublicRepository {
       .from("dermatologist_profiles")
       .select("*")
       .eq("id", id)
-      .eq("verified", true)
       .maybeSingle();
     if (profError || !profile) return null;
     const [{ data: identity }, { data: legacyData }] = await Promise.all([

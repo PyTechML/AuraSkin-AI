@@ -97,6 +97,12 @@ export class PublicController {
     return formatSuccess(data);
   }
 
+  @Get("stores/:id/products")
+  async getStoreProducts(@Param("id") id: string) {
+    const data = await this.publicService.getStoreProducts(id);
+    return formatSuccess(data);
+  }
+
   @Get("dermatologists/nearby")
   async getDermatologistsNearby(@Query("lat") latStr?: string, @Query("lng") lngStr?: string) {
     const lat = latStr != null && latStr !== "" ? parseFloat(latStr) : NaN;

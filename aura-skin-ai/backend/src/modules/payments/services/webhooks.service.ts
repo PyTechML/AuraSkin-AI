@@ -175,7 +175,6 @@ export class WebhooksService {
         .from("orders")
         .update({
           order_status: "confirmed",
-          payment_status: "completed",
           total_amount: amount,
         })
         .eq("id", existingOrderId)
@@ -193,7 +192,6 @@ export class WebhooksService {
           store_id: storeId,
           total_amount: amount,
           order_status: "confirmed",
-          payment_status: "completed",
         })
         .select("id")
         .single();
