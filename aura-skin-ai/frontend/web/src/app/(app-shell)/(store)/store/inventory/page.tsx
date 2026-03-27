@@ -46,26 +46,6 @@ import {
 
 type VisibilityFilter = "all" | "draft" | "pending" | "live" | "low-stock";
 
-/** Tiny sparkline: stub trend from stock or 5 fake values. */
-function StockSparkline({ stock, productId }: { stock: number; productId: string }) {
-  const values = useMemo(() => {
-    const base = Math.max(1, stock);
-    return [base, base + 2, base - 1, base + 1, base].map((v) => Math.max(0, v));
-  }, [stock, productId]);
-  const max = Math.max(...values, 1);
-  return (
-    <div className="flex items-end gap-0.5 h-5 w-14" aria-hidden>
-      {values.map((v, i) => (
-        <div
-          key={i}
-          className="flex-1 min-w-[2px] rounded-t bg-muted-foreground/40"
-          style={{ height: `${Math.max(2, (v / max) * 100)}%` }}
-        />
-      ))}
-    </div>
-  );
-}
-
 export default function StoreInventoryPage() {
   const { session } = useAuth();
   const storeUserId = useAuthStore((s) => s.user?.id);
@@ -97,26 +77,8 @@ export default function StoreInventoryPage() {
           if (anal != null) setAnalytics(anal);
           return;
         }
-        const key = "store-inventory-new-products";
-        const cachedRaw =
-          typeof window !== "undefined" ? window.sessionStorage.getItem(key) : null;
-        let cached: PartnerProduct[] = [];
-        if (cachedRaw) {
-          try {
-            const parsed = JSON.parse(cachedRaw) as unknown;
-            cached = Array.isArray(parsed) ? (parsed as PartnerProduct[]) : [];
-          } catch {
-            cached = [];
-          }
-        }
-        const merged = [...cached, ...prods].filter(
-          (item, index, arr) => arr.findIndex((x) => x.id === item.id) === index
-        );
-        setProducts(merged);
+        setProducts(Array.isArray(prods) ? prods : []);
         setAnalytics(anal ?? null);
-        if (typeof window !== "undefined" && cached.length > 0) {
-          window.sessionStorage.removeItem(key);
-        }
       })
       .catch(() => {
         if (!silent) setError("Failed to load inventory.");
@@ -433,7 +395,6 @@ export default function StoreInventoryPage() {
                         <TableCell>${(p.price ?? 0).toFixed(2)}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
-                            <StockSparkline stock={stock} productId={p.id} />
                             <span
                               className={cn(
                                 isOut && "text-destructive font-medium",

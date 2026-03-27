@@ -86,8 +86,8 @@ export function ProductActionMenu({
   };
 
   const handleDeleteConfirm = async () => {
-    const updated = await deleteProduct(product.id, partnerId);
-    if (updated) onAction();
+    const result = await deleteProduct(product.id, partnerId);
+    if (result.success) onAction();
     setDeleteModalOpen(false);
     setDeleteModalType(null);
   };

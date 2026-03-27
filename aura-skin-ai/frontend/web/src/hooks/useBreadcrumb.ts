@@ -2,6 +2,12 @@
 
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
+import {
+  getReportBreadcrumbLabel,
+  getReportBreadcrumbLabelVersion,
+  subscribeReportBreadcrumbLabels,
+} from "@/lib/reportBreadcrumbLabelStore";
+import { useSyncExternalStore } from "react";
 
 export interface BreadcrumbItem {
   label: string;
@@ -61,11 +67,13 @@ function getSegmentLabel(segment: string, prevSegment: string | undefined): stri
   if (prevSegment === "orders") return segment.startsWith("ord-") ? `Order #${segment.replace(/^ord-/, "")}` : "Order";
   if (prevSegment === "inventory") return segment === "add" ? "Add Product" : "Edit Product";
   if (prevSegment === "assigned-users") return "User";
+  if (prevSegment === "reports") return getReportBreadcrumbLabel(segment) ?? "Assessment Report";
   return segment.charAt(0).toUpperCase() + segment.slice(1);
 }
 
 export function useBreadcrumb(): BreadcrumbItem[] {
   const pathname = usePathname();
+  useSyncExternalStore(subscribeReportBreadcrumbLabels, getReportBreadcrumbLabelVersion, () => 0);
 
   return useMemo(() => {
     const segments = pathname.split("/").filter(Boolean);

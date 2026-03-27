@@ -31,6 +31,8 @@ import {
   getAdminRules,
   createAdminRule,
   deleteAdminRule,
+  getAdminSettings,
+  saveAdminSettings,
 } from "@/services/apiAdmin";
 import {
   PanelToastProvider,
@@ -75,6 +77,7 @@ function AdminRuleEnginePageInner() {
   const [addRuleType, setAddRuleType] = useState<AdminRuleType>("blocked_keywords");
   const [addRuleValue, setAddRuleValue] = useState("");
   const [addSubmitting, setAddSubmitting] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
 
   const loadRules = useCallback(async (opts?: { withSkeleton?: boolean }) => {
     const showSkeleton = opts?.withSkeleton ?? true;
@@ -97,6 +100,26 @@ function AdminRuleEnginePageInner() {
   useEffect(() => {
     void loadRules({ withSkeleton: true });
   }, [loadRules]);
+
+  useEffect(() => {
+    let active = true;
+    getAdminSettings()
+      .then((settings) => {
+        if (!active) return;
+        const cfg = settings.ruleEngine;
+        if (!cfg || typeof cfg !== "object") return;
+        const obj = cfg as Record<string, unknown>;
+        if (obj.logicMode === "AND" || obj.logicMode === "OR") {
+          setLogicMode(obj.logicMode);
+        }
+      })
+      .catch(() => {
+        // ignore
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const safeRules = Array.isArray(rules) ? rules : [];
   const selectedRule = safeRules.find((r) => r.id === selectedRuleId);
@@ -145,6 +168,22 @@ function AdminRuleEnginePageInner() {
       await loadRules({ withSkeleton: false });
     } catch {
       addToast("Unable to update rule", "error");
+    }
+  };
+
+  const handleSaveRuleConfig = async () => {
+    setSavingConfig(true);
+    try {
+      await saveAdminSettings({
+        ruleEngine: {
+          logicMode,
+        },
+      });
+      addToast("Rule configuration saved");
+    } catch {
+      addToast("Failed to save rule configuration", "error");
+    } finally {
+      setSavingConfig(false);
     }
   };
 
@@ -273,7 +312,9 @@ function AdminRuleEnginePageInner() {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <Button size="sm" type="button">Save changes</Button>
+                    <Button size="sm" type="button" disabled={savingConfig} onClick={() => void handleSaveRuleConfig()}>
+                      {savingConfig ? "Saving…" : "Save changes"}
+                    </Button>
                     <Button variant="outline" size="sm" type="button" onClick={() => void handleDeleteRule()}>
                       <Trash2 className="h-4 w-4 mr-2" />
                       Delete

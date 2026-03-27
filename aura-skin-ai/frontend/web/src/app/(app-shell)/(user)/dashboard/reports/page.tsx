@@ -495,7 +495,9 @@ export default function ReportsPage() {
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 <ConcernIcon className="h-4 w-4 text-accent shrink-0" aria-hidden />
-                                <span className="font-heading font-medium truncate">{report.title}</span>
+                                <span className="font-heading font-medium truncate">
+                                  {report.userFullName?.trim() || report.title}
+                                </span>
                               </div>
                               <div className="mt-2 flex flex-wrap items-center gap-2">
                                 <Badge variant="outline">{statusTag}</Badge>
@@ -513,12 +515,24 @@ export default function ReportsPage() {
                             </div>
                             <span className="text-sm text-muted-foreground shrink-0 flex items-center gap-2">
                               <Calendar className="h-4 w-4" aria-hidden />
-                              {report.date}
+                              {report.assessmentTimestamp
+                                ? new Date(report.assessmentTimestamp).toLocaleDateString()
+                                : report.date}
                             </span>
                           </div>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                          {/* Keep existing report card content intact (summary + View report) */}
+                          {(report as Report).skinType && (
+                            <p className="text-sm text-muted-foreground">
+                              <span className="font-medium text-foreground">Skin type:</span> {(report as Report).skinType}
+                            </p>
+                          )}
+                          {(report as Report).confidenceScore != null && (
+                            <p className="text-sm text-muted-foreground">
+                              <span className="font-medium text-foreground">Confidence score:</span>{" "}
+                              {Math.round(Number((report as Report).confidenceScore))}%
+                            </p>
+                          )}
                           <p className="text-sm text-muted-foreground">{report.summary}</p>
 
                           {report.concerns && report.concerns.length > 0 ? (

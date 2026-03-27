@@ -12,6 +12,7 @@ import { SlotsRepository } from "../repositories/slots.repository";
 import { ConsultationsRepository } from "../repositories/consultations.repository";
 import type { CreateDermatologistProfileDto } from "../dto/dermatologist-profile.dto";
 import type { UpdateDermatologistProfileDto } from "../dto/dermatologist-profile.dto";
+import type { CreatePatientDto, UpdatePatientDto } from "../dto/patient.dto";
 
 @Injectable()
 export class DermatologistService {
@@ -86,27 +87,52 @@ export class DermatologistService {
 
   async getPatients(
     dermatologistId: string
-  ): Promise<Array<{ id: string; full_name: string | null; email: string | null }>> {
-    const userIds =
-      await this.dermatologistRepository.getPatientUserIdsByDermatologistId(
-        dermatologistId
-      );
-    const profiles = await Promise.all(
-      userIds.map((uid) =>
-        this.dermatologistRepository.getProfileByIdFromProfiles(uid)
-      )
+  ): Promise<
+    Array<{
+      id: string;
+      user_id: string | null;
+      name: string;
+      age: number | null;
+      notes: string | null;
+      created_at?: string;
+      updated_at?: string;
+      full_name: string | null;
+      email: string | null;
+    }>
+  > {
+    const rows = await this.dermatologistRepository.getPatientsByDoctorId(
+      dermatologistId
     );
-    return profiles.filter(
-      (p): p is { id: string; full_name: string | null; email: string | null } =>
-        p != null
+    const mapped = await Promise.all(
+      rows.map(async (row) => {
+        const linkedProfile = row.user_id
+          ? await this.dermatologistRepository.getProfileByIdFromProfiles(row.user_id)
+          : null;
+        return {
+          ...row,
+          full_name: linkedProfile?.full_name ?? null,
+          email: linkedProfile?.email ?? null,
+        };
+      })
     );
+    return mapped;
   }
 
   async getPatientById(
     dermatologistId: string,
-    patientUserId: string
+    patientId: string
   ): Promise<{
-    profile: { id: string; full_name: string | null; email: string | null };
+    patient: {
+      id: string;
+      user_id: string | null;
+      name: string;
+      age: number | null;
+      notes: string | null;
+      created_at?: string;
+      updated_at?: string;
+      full_name: string | null;
+      email: string | null;
+    };
     assessments: DbAssessment[];
     reports: Array<
       DbReport & {
@@ -114,22 +140,22 @@ export class DermatologistService {
       }
     >;
   } | null> {
-    const hasConsultation =
-      await this.dermatologistRepository.hasConsultationWithDermatologist(
-        patientUserId,
-        dermatologistId
-      );
-    if (!hasConsultation) return null;
-
-    const profile =
-      await this.dermatologistRepository.getProfileByIdFromProfiles(
-        patientUserId
-      );
-    if (!profile) return null;
+    const patient = await this.dermatologistRepository.getPatientById(
+      patientId,
+      dermatologistId
+    );
+    if (!patient) return null;
+    const profile = patient.user_id
+      ? await this.dermatologistRepository.getProfileByIdFromProfiles(patient.user_id)
+      : null;
 
     const [assessments, reports] = await Promise.all([
-      this.dermatologistRepository.getAssessmentsByUserId(patientUserId),
-      this.dermatologistRepository.getReportsByUserId(patientUserId),
+      patient.user_id
+        ? this.dermatologistRepository.getAssessmentsByUserId(patient.user_id)
+        : Promise.resolve([]),
+      patient.user_id
+        ? this.dermatologistRepository.getReportsByUserId(patient.user_id)
+        : Promise.resolve([]),
     ]);
 
     const reportsWithProducts = await Promise.all(
@@ -143,10 +169,44 @@ export class DermatologistService {
     );
 
     return {
-      profile,
+      patient: {
+        ...patient,
+        full_name: profile?.full_name ?? null,
+        email: profile?.email ?? null,
+      },
       assessments,
       reports: reportsWithProducts,
     };
+  }
+
+  async createPatient(
+    dermatologistId: string,
+    dto: CreatePatientDto
+  ): Promise<any | null> {
+    return this.dermatologistRepository.createPatient({
+      doctor_id: dermatologistId,
+      name: dto.name,
+      age: dto.age ?? null,
+      notes: dto.notes ?? null,
+      user_id: dto.userId ?? null,
+    });
+  }
+
+  async updatePatient(
+    dermatologistId: string,
+    patientId: string,
+    dto: UpdatePatientDto
+  ): Promise<any | null> {
+    return this.dermatologistRepository.updatePatient(patientId, dermatologistId, {
+      name: dto.name,
+      age: dto.age ?? null,
+      notes: dto.notes ?? null,
+      user_id: dto.userId,
+    });
+  }
+
+  async deletePatient(dermatologistId: string, patientId: string): Promise<boolean> {
+    return this.dermatologistRepository.deletePatient(patientId, dermatologistId);
   }
 
   /** Legacy: list consultations as "bookings" for backward compatibility. */

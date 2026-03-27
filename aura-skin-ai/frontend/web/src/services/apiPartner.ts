@@ -23,6 +23,7 @@ import type { NormalizedPatient } from "@/types/patient";
 import type { NormalizedDermatologistProfile } from "@/types/profile";
 import type { DermatologistEarnings } from "@/types/earnings";
 import type { DermatologistNotification } from "@/types/notification";
+import { supabase } from "@/lib/supabase";
 import { API_BASE } from "./apiBase";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import {
@@ -96,6 +97,94 @@ function normalizeInventoryStatus(raw?: string | null): ProductApprovalStatus {
   return "DRAFT";
 }
 
+function normalizeOrderStatus(raw?: string | null): Order["status"] {
+  const value = String(raw ?? "").toLowerCase();
+  if (value === "pending" || value === "placed") return "placed";
+  if (value === "processing" || value === "confirmed") return "confirmed";
+  if (value === "packed") return "packed";
+  if (value === "shipped") return "shipped";
+  if (value === "out_for_delivery") return "out_for_delivery";
+  if (value === "delivered") return "delivered";
+  if (value === "cancel_requested") return "cancel_requested";
+  if (value === "cancelled") return "cancelled";
+  if (value === "return_requested") return "return_requested";
+  if (value === "refunded") return "refunded";
+  return "placed";
+}
+
+function normalizePaymentStatus(raw?: string | null): Order["paymentStatus"] {
+  const value = String(raw ?? "").toLowerCase();
+  if (value === "pending") return "pending";
+  if (value === "completed") return "paid";
+  if (value === "paid") return "paid";
+  if (value === "refunded") return "refunded";
+  if (value === "failed") return "failed";
+  return "pending";
+}
+
+function normalizeOrderRow(row: any): Order {
+  const itemsRaw = Array.isArray(row?.items)
+    ? row.items
+    : Array.isArray(row?.order_items)
+      ? row.order_items
+      : [];
+  const items = itemsRaw.map((item: any) => ({
+    productId: String(item?.productId ?? item?.product_id ?? ""),
+    productName: String(item?.productName ?? item?.product_name ?? "Product"),
+    quantity: Number(item?.quantity) || 0,
+    price: Number(item?.price) || 0,
+  }));
+  const createdRaw = String(row?.createdAt ?? row?.created_at ?? "");
+  const createdAt = createdRaw.length >= 10 ? createdRaw.slice(0, 10) : createdRaw;
+  return {
+    id: String(row?.id ?? ""),
+    userId: String(row?.userId ?? row?.user_id ?? ""),
+    storeId: row?.storeId ?? row?.store_id ?? undefined,
+    customerName: row?.customerName ?? row?.customer_name ?? undefined,
+    shippingAddress: row?.shippingAddress ?? row?.shipping_address ?? undefined,
+    items,
+    total: Number(row?.total ?? row?.total_amount) || 0,
+    status: normalizeOrderStatus(row?.status ?? row?.order_status),
+    paymentStatus: normalizePaymentStatus(row?.paymentStatus ?? row?.payment_status),
+    createdAt,
+    shipmentId: row?.shipmentId ?? row?.shipment_id ?? undefined,
+    deliveryEstimate: row?.deliveryEstimate ?? row?.delivery_estimate ?? undefined,
+    trackingNumber: row?.trackingNumber ?? row?.tracking_number ?? undefined,
+    internalNotes: row?.internalNotes ?? row?.internal_notes ?? undefined,
+    activityLog: Array.isArray(row?.activityLog) ? row.activityLog : undefined,
+  };
+}
+
+function normalizePartnerStore(raw: any, partnerId: string): PartnerStore {
+  return {
+    id: String(raw?.id ?? partnerId),
+    partnerId,
+    name: String(raw?.name ?? raw?.store_name ?? ""),
+    address: raw?.address ?? undefined,
+    lat:
+      typeof raw?.lat === "number"
+        ? raw.lat
+        : typeof raw?.latitude === "number"
+          ? raw.latitude
+          : undefined,
+    lng:
+      typeof raw?.lng === "number"
+        ? raw.lng
+        : typeof raw?.longitude === "number"
+          ? raw.longitude
+          : undefined,
+    openingHours: raw?.openingHours ?? raw?.opening_hours ?? undefined,
+    contact: raw?.contact ?? raw?.contact_number ?? undefined,
+    bannerUrl: raw?.bannerUrl ?? raw?.logo_url ?? undefined,
+    description: raw?.description ?? raw?.store_description ?? undefined,
+    linkedDermatologistId:
+      raw?.linkedDermatologistId ?? raw?.linked_dermatologist_id ?? null,
+    taxId: raw?.taxId ?? raw?.tax_id ?? undefined,
+    businessRegistrationNumber:
+      raw?.businessRegistrationNumber ?? raw?.business_registration_number ?? undefined,
+  };
+}
+
 /** Resolve store ID for a partner (STORE → store id, DERMATOLOGIST → linked or same id). */
 export function getPartnerStoreId(partnerId: string, _role?: string): string {
   const normalized = partnerId.trim();
@@ -108,7 +197,9 @@ export function getPartnerStoreId(partnerId: string, _role?: string): string {
 export async function getPartnerStore(partnerId: string): Promise<PartnerStore | null> {
   try {
     // Backend derives store id from authenticated user; partnerId is unused here.
-    return await apiGet<PartnerStore>("/partner/store/profile");
+    const response = await apiGet<any>("/partner/store/profile");
+    if (!response) return null;
+    return normalizePartnerStore(response, partnerId);
   } catch {
     return null;
   }
@@ -147,11 +238,23 @@ export async function updatePartnerStore(
   data: Partial<Omit<PartnerStore, "id" | "partnerId">>
 ): Promise<PartnerStore | null> {
   try {
+    const body = {
+      storeName: data.name,
+      address: data.address,
+      openingHours: data.openingHours,
+      contactNumber: data.contact,
+      storeDescription: data.description,
+      taxId: data.taxId,
+      businessRegistrationNumber: data.businessRegistrationNumber,
+      linkedDermatologistId: data.linkedDermatologistId ?? null,
+    };
     // Use PUT profile endpoint; backend infers store id from auth context.
-    return await apiSend<PartnerStore>("/partner/store/profile", {
+    const response = await apiSend<any>("/partner/store/profile", {
       method: "PUT",
-      body: data,
+      body,
     });
+    if (!response) return null;
+    return normalizePartnerStore(response, partnerId);
   } catch {
     return null;
   }
@@ -159,7 +262,9 @@ export async function updatePartnerStore(
 
 export async function getOrdersForPartner(partnerId: string): Promise<Order[]> {
   const storeId = getPartnerStoreId(partnerId);
-  return apiGetOrdersForPartner(storeId);
+  const orders = await apiGetOrdersForPartner(storeId);
+  const safeOrders = Array.isArray(orders) ? orders : [];
+  return safeOrders.map((row) => normalizeOrderRow(row));
 }
 
 export async function getOrderByIdForPartner(
@@ -167,14 +272,16 @@ export async function getOrderByIdForPartner(
   partnerId: string
 ): Promise<Order | null> {
   const storeId = getPartnerStoreId(partnerId);
-  return apiGetOrderByIdForPartner(id, storeId);
+  const order = await apiGetOrderByIdForPartner(id, storeId);
+  return order ? normalizeOrderRow(order) : null;
 }
 
 export async function updateOrderStatus(
   id: string,
   status: Order["status"]
 ): Promise<Order | null> {
-  return apiUpdateOrderStatus(id, status);
+  const updated = await apiUpdateOrderStatus(id, status);
+  return updated ? normalizeOrderRow(updated) : null;
 }
 
 const FULFILLMENT_FLOW: Order["status"][] = [
@@ -210,7 +317,8 @@ export async function updateOrderTracking(
   const storeId = getPartnerStoreId(partnerId);
   const order = await apiGetOrderByIdForPartner(id, storeId);
   if (!order) return Promise.resolve(null);
-  return apiUpdateOrderTracking(id, trackingNumber);
+  const updated = await apiUpdateOrderTracking(id, trackingNumber);
+  return updated ? normalizeOrderRow(updated) : null;
 }
 
 export async function addOrderNote(
@@ -221,7 +329,8 @@ export async function addOrderNote(
   const storeId = getPartnerStoreId(partnerId);
   const order = await apiGetOrderByIdForPartner(id, storeId);
   if (!order) return Promise.resolve(null);
-  return apiAddOrderNote(id, note);
+  const updated = await apiAddOrderNote(id, note);
+  return updated ? normalizeOrderRow(updated) : null;
 }
 
 export async function getPartnerPayouts(partnerId: string): Promise<Payout[]> {
@@ -825,77 +934,121 @@ export async function getDermatologistPatientDisplayName(
 
 export async function getDermatologistPatients(): Promise<NormalizedPatient[]> {
   try {
-    const consultationsResponse = await apiGet<BackendConsultationRow[]>(
-      "/partner/dermatologist/consultations"
-    );
-    const consultations = Array.isArray(consultationsResponse) ? consultationsResponse : [];
-    const groupedByPatient = new Map<string, BackendConsultationRow[]>();
-
-    for (const consultation of consultations) {
-      const patientId = (consultation.patient_id ?? consultation.user_id ?? "").trim();
-      if (!patientId) continue;
-      const bucket = groupedByPatient.get(patientId);
-      if (bucket) {
-        bucket.push(consultation);
-      } else {
-        groupedByPatient.set(patientId, [consultation]);
-      }
-    }
-
-    const patientIds = Array.from(groupedByPatient.keys());
-    if (patientIds.length === 0) return [];
-
-    let profileById = new Map<string, BackendProfileRow>();
-    try {
-      const encodedIds = patientIds.map((id) => encodeURIComponent(id)).join(",");
-      const profilesResponse = await apiGet<BackendProfileRow[]>(
-        `/profiles?id=in.(${encodedIds})`
-      );
-      const profiles = Array.isArray(profilesResponse) ? profilesResponse : [];
-      profileById = new Map(
-        profiles
-          .filter((profile) => typeof profile?.id === "string" && profile.id.length > 0)
-          .map((profile) => [profile.id as string, profile])
-      );
-    } catch {
-      profileById = new Map<string, BackendProfileRow>();
-    }
-
+    const data = await apiGet<Array<Record<string, unknown>>>("/partner/dermatologist/patients");
+    const rows = Array.isArray(data) ? data : [];
     const now = Date.now();
     const ninetyDaysInMs = 90 * 24 * 60 * 60 * 1000;
-
-    return patientIds.map((patientId) => {
-      const related = groupedByPatient.get(patientId) ?? [];
-      const lastConsultationDate = related.reduce<string | undefined>((latest, row) => {
-        const candidate =
-          row.consultation_date ?? row.updated_at ?? row.created_at ?? undefined;
-        if (!candidate) return latest;
-        if (!latest) return candidate;
-        return new Date(candidate).getTime() > new Date(latest).getTime() ? candidate : latest;
-      }, undefined);
-
+    return rows.map((row) => {
+      const id = String(row.id ?? "").trim();
+      const name =
+        String(row.name ?? row.full_name ?? "").trim() ||
+        String(row.full_name ?? "").trim() ||
+        "Unknown";
+      const lastConsultationDate =
+        row.updated_at != null ? String(row.updated_at).slice(0, 10) : undefined;
       const lastConsultationTime = lastConsultationDate
         ? new Date(lastConsultationDate).getTime()
         : Number.NaN;
       const isActive =
         Number.isFinite(lastConsultationTime) && now - lastConsultationTime <= ninetyDaysInMs;
-
-      const profile = profileById.get(patientId);
-      const safeName =
-        (profile?.full_name ?? profile?.name ?? "").trim() || "Unknown";
-
       return {
-        id: patientId,
-        name: safeName,
-        email: profile?.email ?? undefined,
-        phone: profile?.phone ?? undefined,
-        totalConsultations: related.length || 0,
+        id,
+        name,
+        email: row.email != null ? String(row.email) : undefined,
+        phone: undefined,
+        totalConsultations: 0,
         lastConsultationDate,
         status: isActive ? "active" : "inactive",
-      };
+      } satisfies NormalizedPatient;
     });
   } catch {
     return [];
+  }
+}
+
+export async function createDermatologistPatient(payload: {
+  name: string;
+  age?: number;
+  notes?: string;
+  userId?: string;
+}): Promise<NormalizedPatient | null> {
+  try {
+    const data = await apiSend<Record<string, unknown>>("/partner/dermatologist/patients", {
+      method: "POST",
+      body: payload,
+    });
+    return {
+      id: String(data.id ?? ""),
+      name: String(data.name ?? "").trim() || "Unknown",
+      totalConsultations: 0,
+      status: "active",
+      email: undefined,
+      phone: undefined,
+      lastConsultationDate: data.updated_at != null ? String(data.updated_at).slice(0, 10) : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function updateDermatologistPatient(
+  patientId: string,
+  payload: { name?: string; age?: number; notes?: string; userId?: string }
+): Promise<NormalizedPatient | null> {
+  try {
+    const data = await apiSend<Record<string, unknown>>(
+      `/partner/dermatologist/patients/${encodeURIComponent(patientId)}`,
+      { method: "PUT", body: payload }
+    );
+    return {
+      id: String(data.id ?? patientId),
+      name: String(data.name ?? "").trim() || "Unknown",
+      totalConsultations: 0,
+      status: "active",
+      email: undefined,
+      phone: undefined,
+      lastConsultationDate: data.updated_at != null ? String(data.updated_at).slice(0, 10) : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteDermatologistPatient(patientId: string): Promise<boolean> {
+  try {
+    const data = await apiSend<{ deleted?: boolean }>(
+      `/partner/dermatologist/patients/${encodeURIComponent(patientId)}/delete`,
+      { method: "POST" }
+    );
+    return Boolean(data?.deleted);
+  } catch {
+    return false;
+  }
+}
+
+export interface DermatologistPatientDetailPayload {
+  patient: {
+    id: string;
+    user_id: string | null;
+    name: string;
+    age: number | null;
+    notes: string | null;
+    full_name: string | null;
+    email: string | null;
+  };
+  assessments: Array<Record<string, unknown>>;
+  reports: Array<Record<string, unknown>>;
+}
+
+export async function getDermatologistPatientById(
+  patientId: string
+): Promise<DermatologistPatientDetailPayload | null> {
+  try {
+    return await apiGet<DermatologistPatientDetailPayload>(
+      `/partner/dermatologist/patients/${encodeURIComponent(patientId)}`
+    );
+  } catch {
+    return null;
   }
 }
 
@@ -1252,8 +1405,18 @@ export async function getPartnerProducts(_partnerId: string): Promise<PartnerPro
       stock: typeof row.stock_quantity === "number" ? row.stock_quantity : 0,
       visibility: typeof p?.visibility === "boolean" ? p.visibility : true,
       discount: 0,
-      salesCount: 0,
-      viewsCount: 0,
+      salesCount:
+        typeof p?.sales_count === "number"
+          ? p.sales_count
+          : typeof p?.salesCount === "number"
+            ? p.salesCount
+            : 0,
+      viewsCount:
+        typeof p?.views_count === "number"
+          ? p.views_count
+          : typeof p?.viewsCount === "number"
+            ? p.viewsCount
+            : 0,
       approvalStatus,
     };
   });
@@ -1391,11 +1554,31 @@ export async function archiveProduct(
 export async function deleteProduct(
   productId: string,
   _partnerId: string
-): Promise<PartnerProduct | null> {
-  await apiSend<void>(`/partner/store/products/${encodeURIComponent(productId)}`, {
+): Promise<{ success: boolean }> {
+  const response = await apiSend<{ success?: boolean }>(
+    `/partner/store/products/${encodeURIComponent(productId)}`,
+    {
     method: "DELETE",
-  });
-  return null;
+    }
+  );
+  return { success: Boolean(response?.success ?? true) };
+}
+
+export async function uploadPartnerProductImage(file: File): Promise<string> {
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
+  const path = `store-products/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const { error } = await supabase.storage
+    .from("assessment-images")
+    .upload(path, file, { cacheControl: "3600", upsert: false, contentType: file.type });
+  if (error) {
+    throw new Error(error.message || "Image upload failed.");
+  }
+  const { data } = supabase.storage.from("assessment-images").getPublicUrl(path);
+  const publicUrl = data?.publicUrl;
+  if (!publicUrl) {
+    throw new Error("Image uploaded but public URL was not generated.");
+  }
+  return publicUrl;
 }
 
 export async function duplicateProduct(

@@ -17,6 +17,7 @@ import { DermatologistService } from "./services/dermatologist.service";
 import { formatSuccess } from "../../../shared/utils/responseFormatter";
 import { CreateDermatologistProfileDto, UpdateDermatologistProfileDto } from "./dto";
 import { ForbiddenException } from "@nestjs/common";
+import { CreatePatientDto, UpdatePatientDto } from "./dto/patient.dto";
 
 const RequireDermatologist = () =>
   SetMetadata(ROLES_KEY, ["dermatologist"] as BackendRole[]);
@@ -81,6 +82,38 @@ export class DermatologistController {
     );
     if (!data) throw new ForbiddenException("Patient not found or access denied");
     return formatSuccess(data);
+  }
+
+  @Post("patients")
+  async createPatient(@Req() req: Request, @Body() dto: CreatePatientDto) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const dermatologistId = user?.id ?? "";
+    const data = await this.dermatologistService.createPatient(dermatologistId, dto);
+    return formatSuccess(data);
+  }
+
+  @Put("patients/:id")
+  async updatePatient(
+    @Param("id") id: string,
+    @Req() req: Request,
+    @Body() dto: UpdatePatientDto
+  ) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const dermatologistId = user?.id ?? "";
+    const data = await this.dermatologistService.updatePatient(
+      dermatologistId,
+      id,
+      dto
+    );
+    return formatSuccess(data);
+  }
+
+  @Post("patients/:id/delete")
+  async deletePatient(@Param("id") id: string, @Req() req: Request) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const dermatologistId = user?.id ?? "";
+    const deleted = await this.dermatologistService.deletePatient(dermatologistId, id);
+    return formatSuccess({ deleted });
   }
 
   @Get("notifications")

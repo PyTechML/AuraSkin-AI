@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAssistantSettingsStore } from "@/store/assistantSettingsStore";
 import { useAdminPermission } from "@/hooks/useAdminPermission";
+import { getAdminSettings, saveAdminSettings } from "@/services/apiAdmin";
 
 const TABS = [
   { value: "general", label: "General" },
@@ -40,6 +41,12 @@ const TOPICS: Array<{ key: string; label: string }> = [
 export default function AdminSettingsPage() {
   const [flagRecommendations, setFlagRecommendations] = useState(true);
   const [flagConsultations, setFlagConsultations] = useState(true);
+  const [siteName, setSiteName] = useState("AuraSkin AI");
+  const [supportEmail, setSupportEmail] = useState("support@auraskin.ai");
+  const [stripePublishableKey, setStripePublishableKey] = useState("");
+  const [notificationRulesText, setNotificationRulesText] = useState("");
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsStatus, setSettingsStatus] = useState<string | null>(null);
 
   const canEditAssistant = useAdminPermission("settings.edit");
   const assistant = useAssistantSettingsStore();
@@ -83,6 +90,49 @@ export default function AdminSettingsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    getAdminSettings()
+      .then((data) => {
+        if (!mounted) return;
+        setSiteName(String(data.siteName ?? "AuraSkin AI"));
+        setSupportEmail(String(data.supportEmail ?? "support@auraskin.ai"));
+        setFlagRecommendations(Boolean(data.flagRecommendations ?? true));
+        setFlagConsultations(Boolean(data.flagConsultations ?? true));
+        setStripePublishableKey(String(data.stripePublishableKey ?? ""));
+        setNotificationRulesText(String(data.notificationRulesText ?? ""));
+      })
+      .catch(() => {
+        // ignore and keep defaults
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const handleSaveSettings = async () => {
+    setSettingsSaving(true);
+    setSettingsStatus(null);
+    const saved = await saveAdminSettings({
+      siteName,
+      supportEmail,
+      flagRecommendations,
+      flagConsultations,
+      stripePublishableKey,
+      notificationRulesText,
+      featureFlags: {
+        recommendations: flagRecommendations,
+        consultations: flagConsultations,
+      },
+    });
+    setSettingsSaving(false);
+    if (!saved) {
+      setSettingsStatus("Save failed.");
+      return;
+    }
+    setSettingsStatus("Saved.");
+  };
+
   return (
     <>
       <AdminHeader
@@ -110,11 +160,17 @@ export default function AdminSettingsPage() {
                 <CardContent className="space-y-4">
                   <div>
                     <Label htmlFor="site-name" className="text-xs">Site name</Label>
-                    <Input id="site-name" defaultValue="AuraSkin AI" className="mt-1" />
+                    <Input id="site-name" value={siteName} onChange={(e) => setSiteName(e.target.value)} className="mt-1" />
                   </div>
                   <div>
                     <Label htmlFor="support-email" className="text-xs">Support email</Label>
-                    <Input id="support-email" type="email" defaultValue="support@auraskin.ai" className="mt-1" />
+                    <Input id="support-email" type="email" value={supportEmail} onChange={(e) => setSupportEmail(e.target.value)} className="mt-1" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button type="button" size="sm" onClick={() => void handleSaveSettings()} disabled={settingsSaving}>
+                      {settingsSaving ? "Saving…" : "Save settings"}
+                    </Button>
+                    {settingsStatus ? <span className="text-xs text-muted-foreground">{settingsStatus}</span> : null}
                   </div>
                 </CardContent>
               </Card>
@@ -165,6 +221,9 @@ export default function AdminSettingsPage() {
                     <Label htmlFor="flag-consultations" className="text-sm">Dermatologist consultations</Label>
                     <Switch id="flag-consultations" checked={flagConsultations} onCheckedChange={setFlagConsultations} />
                   </div>
+                  <Button type="button" size="sm" onClick={() => void handleSaveSettings()} disabled={settingsSaving}>
+                    {settingsSaving ? "Saving…" : "Save flags"}
+                  </Button>
                 </CardContent>
               </Card>
               <Card className="border-border/60">
@@ -187,8 +246,11 @@ export default function AdminSettingsPage() {
                 <CardContent className="space-y-4">
                   <div>
                     <Label htmlFor="stripe-key" className="text-xs">Stripe publishable key</Label>
-                    <Input id="stripe-key" type="password" placeholder="pk_…" className="mt-1" />
+                    <Input id="stripe-key" type="password" placeholder="pk_…" className="mt-1" value={stripePublishableKey} onChange={(e) => setStripePublishableKey(e.target.value)} />
                   </div>
+                  <Button type="button" size="sm" onClick={() => void handleSaveSettings()} disabled={settingsSaving}>
+                    {settingsSaving ? "Saving…" : "Save payment config"}
+                  </Button>
                 </CardContent>
               </Card>
               <Card className="border-border/60">
@@ -231,6 +293,15 @@ export default function AdminSettingsPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <p className="text-sm text-muted-foreground">When to notify admins: new product pending, store application, flagged content.</p>
+                  <Textarea
+                    value={notificationRulesText}
+                    onChange={(e) => setNotificationRulesText(e.target.value)}
+                    placeholder="Notification rules and triggers"
+                    className="min-h-[140px]"
+                  />
+                  <Button type="button" size="sm" onClick={() => void handleSaveSettings()} disabled={settingsSaving}>
+                    {settingsSaving ? "Saving…" : "Save notification rules"}
+                  </Button>
                 </CardContent>
               </Card>
               <Card className="border-border/60">

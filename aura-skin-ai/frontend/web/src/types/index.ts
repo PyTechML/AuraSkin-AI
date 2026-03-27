@@ -96,6 +96,14 @@ export interface Report {
   title: string;
   date: string;
   summary: string;
+  userFullName?: string;
+  userEmail?: string;
+  userAge?: number;
+  hydrationLevel?: number;
+  sleepHours?: number;
+  sunExposure?: string;
+  lifestyleInputs?: string;
+  assessmentTimestamp?: string;
   skinType?: string;
   concerns?: string[];
   skinScore?: number;

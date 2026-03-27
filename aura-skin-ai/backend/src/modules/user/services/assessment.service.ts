@@ -66,6 +66,7 @@ const computeSkinScore = (
 };
 
 function parseLifestyleFactors(lifestyle: string | null): {
+  name?: string;
   age?: number;
   gender?: string;
   sleepHours?: number;
@@ -73,8 +74,9 @@ function parseLifestyleFactors(lifestyle: string | null): {
 } {
   if (!lifestyle) return {};
   const parts = lifestyle.split(" | ");
-  const result: { age?: number; gender?: string; sleepHours?: number; sunExposure?: string } = {};
+  const result: { name?: string; age?: number; gender?: string; sleepHours?: number; sunExposure?: string } = {};
   for (const p of parts) {
+    if (p.startsWith("Name: ")) result.name = p.replace("Name: ", "");
     if (p.startsWith("Age: ")) result.age = parseInt(p.replace("Age: ", ""), 10);
     if (p.startsWith("Gender: ")) result.gender = p.replace("Gender: ", "");
     if (p.startsWith("Sun: ")) result.sunExposure = p.replace("Sun: ", "");
@@ -170,6 +172,7 @@ export class AssessmentService {
     try {
       const row = await this.assessmentRepository.create({
         user_id: userId,
+        assessment_name: dto.fullName?.trim() || null,
         skin_type: dto.skinType ?? null,
         primary_concern: dto.primaryConcern ?? null,
         secondary_concern: dto.secondaryConcern ?? null,
@@ -367,8 +370,10 @@ export class AssessmentService {
           .select("full_name")
           .eq("id", userId)
           .single();
-        const userName = (userData as { full_name?: string } | null)?.full_name ?? null;
-        const { age, gender, sleepHours, sunExposure } = parseLifestyleFactors(assessment.lifestyle_factors);
+        const profileName = (userData as { full_name?: string } | null)?.full_name ?? null;
+        const parsedLifestyle = parseLifestyleFactors(assessment.lifestyle_factors);
+        const { age, gender, sleepHours, sunExposure } = parsedLifestyle;
+        const resolvedUserName = assessment.assessment_name?.trim() || parsedLifestyle.name?.trim() || profileName;
 
         const generated = await this.aiReportService.generate(
           userId,
@@ -377,7 +382,7 @@ export class AssessmentService {
             concerns: [assessment.primary_concern, assessment.secondary_concern].filter(
               (c): c is string => typeof c === "string" && c.length > 0
             ),
-            userName,
+            userName: resolvedUserName,
             age,
             gender,
             sleepHours,

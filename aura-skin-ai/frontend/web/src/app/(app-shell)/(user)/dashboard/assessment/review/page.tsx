@@ -69,6 +69,9 @@ function mapSubmitErrorMessage(rawMessage: string): string {
 function buildCreateAssessmentPayload(data: AssessmentStepData): CreateAssessmentPayload {
   const skinType = data.skinTypeTone?.skinType;
   const parts: string[] = [];
+  if (data.personalDetails?.fullName?.trim()) {
+    parts.push(`Name: ${data.personalDetails.fullName.trim()}`);
+  }
   if (data.personalDetails) {
     parts.push(`Age: ${data.personalDetails.age}`);
     if (data.personalDetails.gender?.trim()) {
@@ -101,7 +104,9 @@ function buildCreateAssessmentPayload(data: AssessmentStepData): CreateAssessmen
   }
   const lifestyleFactors = parts.length > 0 ? parts.join(" | ").slice(0, 1950) : undefined;
   const sensitivityLevel = skinType === "Sensitive" ? "high" : undefined;
+  const fullName = data.personalDetails?.fullName?.trim() || undefined;
   return {
+    fullName,
     skinType,
     primaryConcern: Array.isArray(data.skinConcerns) ? data.skinConcerns[0] : undefined,
     secondaryConcern: Array.isArray(data.skinConcerns) ? data.skinConcerns[1] : undefined,

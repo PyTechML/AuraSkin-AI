@@ -132,7 +132,44 @@ export class AdminService {
 
   async getReports(): Promise<unknown[]> {
     const supabase = getSupabaseClient();
-    const { data } = await supabase.from("reports").select("*");
-    return data ?? [];
+    const { data: reports } = await supabase
+      .from("reports")
+      .select("*")
+      .order("created_at", { ascending: false });
+    const safeReports = (reports as any[]) ?? [];
+    if (safeReports.length === 0) return [];
+
+    const userIds = Array.from(new Set(safeReports.map((r) => r.user_id).filter(Boolean)));
+    const assessmentIds = Array.from(new Set(safeReports.map((r) => r.assessment_id).filter(Boolean)));
+    const [profilesRes, assessmentsRes] = await Promise.all([
+      userIds.length ? supabase.from("profiles").select("id, full_name, email").in("id", userIds) : Promise.resolve({ data: [] as any[] }),
+      assessmentIds.length
+        ? supabase.from("assessments").select("id, skin_type, lifestyle_factors, created_at").in("id", assessmentIds)
+        : Promise.resolve({ data: [] as any[] }),
+    ]);
+    const profileMap = new Map<string, { full_name?: string | null; email?: string | null }>(
+      ((profilesRes.data as any[]) ?? []).map((row) => [String(row.id), { full_name: row.full_name ?? null, email: row.email ?? null }])
+    );
+    const assessmentMap = new Map<string, { skin_type?: string | null; lifestyle_factors?: string | null; created_at?: string | null }>(
+      ((assessmentsRes.data as any[]) ?? []).map((row) => [
+        String(row.id),
+        { skin_type: row.skin_type ?? null, lifestyle_factors: row.lifestyle_factors ?? null, created_at: row.created_at ?? null },
+      ])
+    );
+
+    return safeReports.map((report) => {
+      const profile = profileMap.get(String(report.user_id));
+      const assessment = assessmentMap.get(String(report.assessment_id));
+      return {
+        ...report,
+        user_full_name: profile?.full_name ?? null,
+        user_email: profile?.email ?? null,
+        skin_type: assessment?.skin_type ?? null,
+        lifestyle_factors: assessment?.lifestyle_factors ?? null,
+        assessment_timestamp: assessment?.created_at ?? null,
+        confidence_score:
+          report.skin_score != null && Number.isFinite(Number(report.skin_score)) ? Number(report.skin_score) : null,
+      };
+    });
   }
 }

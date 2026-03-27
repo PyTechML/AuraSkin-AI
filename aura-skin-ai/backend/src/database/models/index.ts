@@ -158,6 +158,7 @@ export interface DbReport {
   id: string;
   user_id: string;
   assessment_id: string;
+  consultation_id?: string | null;
   skin_condition: string | null;
   skin_score?: number | null;
   acne_score: number | null;
@@ -173,6 +174,7 @@ export interface DbReport {
 export interface DbAssessment {
   id: string;
   user_id: string;
+  assessment_name: string | null;
   skin_type: string | null;
   primary_concern: string | null;
   secondary_concern: string | null;

@@ -18,6 +18,7 @@ import { AdminRefundsController } from "./controllers/refunds.controller";
 import { AdminNotificationsController } from "./controllers/notifications.controller";
 import { AdminSessionsController } from "./controllers/sessions.controller";
 import { AdminRoleRequestsController } from "./controllers/role-requests.controller";
+import { AdminSettingsController } from "./controllers/settings.controller";
 import { AdminUsersService } from "./services/users.service";
 import { RoleRequestsService } from "./services/role-requests.service";
 import { AdminStoresService } from "./services/stores.service";
@@ -36,6 +37,8 @@ import { AdminProductsRepository } from "./repositories/products.repository";
 import { AdminOrdersRepository } from "./repositories/orders.repository";
 import { AdminConsultationsRepository } from "./repositories/consultations.repository";
 import { AdminAiManagementRepository } from "./repositories/ai-management.repository";
+import { AdminSettingsRepository } from "./repositories/settings.repository";
+import { AdminSettingsService } from "./services/settings.service";
 
 @Module({
   imports: [PaymentsModule, NotificationsModule, SessionModule],
@@ -54,6 +57,7 @@ import { AdminAiManagementRepository } from "./repositories/ai-management.reposi
     AdminNotificationsController,
     AdminSessionsController,
     AdminRoleRequestsController,
+    AdminSettingsController,
   ],
   providers: [
     AdminService,
@@ -76,6 +80,8 @@ import { AdminAiManagementRepository } from "./repositories/ai-management.reposi
     AdminOrdersRepository,
     AdminConsultationsRepository,
     AdminAiManagementRepository,
+    AdminSettingsRepository,
+    AdminSettingsService,
   ],
   exports: [AdminService, AuditService, AdminAiManagementRepository],
 })

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createPartnerProduct } from "@/services/apiPartner";
+import { createPartnerProduct, uploadPartnerProductImage } from "@/services/apiPartner";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   Card,
@@ -104,7 +104,9 @@ export default function StoreAddProductPage() {
   const [visitedTabs, setVisitedTabs] = useState<Set<string>>(
     new Set(["basic"])
   );
-  const [images] = useState<{ id: string }[]>([]);
+  const [images, setImages] = useState<{ id: string; url: string }[]>([]);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -177,6 +179,7 @@ export default function StoreAddProductPage() {
       : undefined,
     usage: usage.trim() || undefined,
     visibility,
+    imageUrls: images.map((image) => image.url),
   });
 
   const resetForm = () => {
@@ -200,6 +203,30 @@ export default function StoreAddProductPage() {
     setActiveTab("basic");
     setVisitedTabs(new Set(["basic"]));
     setValidationErrors({});
+    setImages([]);
+  };
+
+  const handleImageSelection = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploadingImages(true);
+    try {
+      const selected = Array.from(files).slice(0, 6);
+      const uploaded = await Promise.all(
+        selected.map(async (file) => {
+          const url = await uploadPartnerProductImage(file);
+          return { id: `${Date.now()}-${file.name}`, url };
+        })
+      );
+      setImages(uploaded);
+      addToast("Image upload completed.");
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message ? err.message : "Failed to upload product images.";
+      addToast(message, "error");
+    } finally {
+      setUploadingImages(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
 
   const handleSaveDraft = async (e: React.FormEvent) => {
@@ -242,17 +269,7 @@ export default function StoreAddProductPage() {
       setLastSavedAt(new Date());
       setSuccessBanner(true);
       addToast("Product submitted for admin approval");
-      if (typeof window !== "undefined") {
-        try {
-          const key = "store-inventory-new-products";
-          const prev = window.sessionStorage.getItem(key);
-          const parsed = prev ? (JSON.parse(prev) as unknown) : [];
-          const safeList = Array.isArray(parsed) ? parsed : [];
-          window.sessionStorage.setItem(key, JSON.stringify([created, ...safeList]));
-        } catch {
-          // Non-critical cache write should never fail product submission UX.
-        }
-      }
+      void created;
       resetForm();
       router.push("/store/inventory");
     } catch (err) {
@@ -571,8 +588,13 @@ export default function StoreAddProductPage() {
                         className="border-2 border-dashed border-border/60 rounded-xl p-8 text-center text-muted-foreground text-sm transition-colors hover:border-muted-foreground/30 min-h-[180px] flex flex-col items-center justify-center"
                         role="button"
                         tabIndex={0}
-                        onClick={() => {}}
-                        onKeyDown={() => {}}
+                        onClick={() => fileInputRef.current?.click()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            fileInputRef.current?.click();
+                          }
+                        }}
                       >
                         <ImageIcon className="h-10 w-10 mx-auto mb-2 opacity-60" />
                         <p>Drag and drop images here, or click to browse.</p>
@@ -580,11 +602,16 @@ export default function StoreAddProductPage() {
                           Accepted: JPG, PNG, WebP. Max 5MB per file.
                         </p>
                         <input
+                          ref={fileInputRef}
                           type="file"
                           multiple
                           accept="image/jpeg,image/png,image/webp"
                           className="hidden"
+                          onChange={(e) => void handleImageSelection(e.target.files)}
                         />
+                        {uploadingImages && (
+                          <p className="text-xs mt-2 text-muted-foreground">Uploading images...</p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <p className="text-xs font-medium text-muted-foreground">
@@ -602,9 +629,9 @@ export default function StoreAddProductPage() {
                             {images.map((img) => (
                               <div
                                 key={img.id}
-                                className="aspect-square rounded-lg border border-border/60 bg-muted/30 flex items-center justify-center"
+                                className="aspect-square rounded-lg border border-border/60 bg-muted/30 flex items-center justify-center overflow-hidden"
                               >
-                                <ImageIcon className="h-6 w-6 text-muted-foreground/50" />
+                                <img src={img.url} alt="" className="h-full w-full object-cover" />
                               </div>
                             ))}
                           </div>
@@ -1024,7 +1051,11 @@ export default function StoreAddProductPage() {
                 <Card className="border-border/60 overflow-hidden">
                   <CardContent className="p-0">
                     <div className="aspect-video w-full max-h-56 bg-muted/40 flex items-center justify-center">
-                      <ImageIcon className="h-12 w-12 text-muted-foreground/50" />
+                      {images[0]?.url ? (
+                        <img src={images[0].url} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <ImageIcon className="h-12 w-12 text-muted-foreground/50" />
+                      )}
                     </div>
                     <div className="p-4 space-y-3">
                       <div className="flex flex-wrap gap-2">
@@ -1106,7 +1137,11 @@ export default function StoreAddProductPage() {
             </CardHeader>
             <CardContent className="p-0">
               <div className="aspect-square w-full max-h-36 rounded-t-lg bg-muted/40 flex items-center justify-center border-b border-border/60">
-                <ImageIcon className="h-10 w-10 text-muted-foreground/50" />
+                {images[0]?.url ? (
+                  <img src={images[0].url} alt="" className="h-full w-full object-cover rounded-t-lg" />
+                ) : (
+                  <ImageIcon className="h-10 w-10 text-muted-foreground/50" />
+                )}
               </div>
               <div className="p-3 space-y-1">
                 <p className="font-heading font-medium truncate">

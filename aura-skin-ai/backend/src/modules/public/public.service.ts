@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
-import { PublicRepository, type ProductFilters, type PublicStoreProfileRow } from "./public.repository";
-import type { DbProduct, DbDermatologist, DbBlog, DbFaq } from "../../database/models";
+import { PublicRepository, type ProductFilters, type PublicStoreProfileRow, type PublicDermatologistRow } from "./public.repository";
+import type { DbProduct, DbBlog, DbFaq } from "../../database/models";
 
 /** API response shapes (camelCase) for frontend compatibility. */
 export interface ProductResponse {
@@ -53,6 +53,8 @@ export interface DermatologistResponse {
   consultationFee?: number;
   timeSlots?: string[];
   photoUrl?: string;
+  bio?: string;
+  availability?: string;
 }
 
 export interface BlogResponse {
@@ -109,20 +111,23 @@ function mapStoreProfile(row: PublicStoreProfileRow): StoreResponse {
   };
 }
 
-function mapDermatologist(row: DbDermatologist): DermatologistResponse {
-  const clinicAddress = [row.clinic_name, row.city].filter(Boolean).join(", ") || undefined;
+function mapDermatologist(row: PublicDermatologistRow): DermatologistResponse {
+  const fallbackClinicAddress = [row.clinic_name, row.city].filter(Boolean).join(", ");
+  const clinicAddress = (row.clinic_address ?? fallbackClinicAddress) || undefined;
   return {
     id: row.id,
     name: row.name,
     specialty: row.specialization ?? "",
     email: row.email ?? "",
-    yearsExperience: row.years_experience,
+    yearsExperience: row.years_experience ?? undefined,
     rating: row.rating != null ? Number(row.rating) : undefined,
     clinicAddress,
     clinicLat: row.latitude != null ? Number(row.latitude) : undefined,
     clinicLng: row.longitude != null ? Number(row.longitude) : undefined,
     consultationFee: row.consultation_fee != null ? Number(row.consultation_fee) : undefined,
-    photoUrl: row.profile_image,
+    photoUrl: row.profile_image ?? undefined,
+    bio: row.bio ?? undefined,
+    availability: row.availability ?? undefined,
   };
 }
 

@@ -89,6 +89,17 @@ export class WebhooksService {
       return;
     }
 
+    const existingPayment = await this.paymentsRepository.findByStripePaymentId(
+      paymentIntentId ?? session.id
+    );
+    if (existingPayment) {
+      await this.paymentAuditRepository.log("checkout.session.completed.duplicate", {
+        session_id: session.id,
+        payment_id: existingPayment.id,
+      });
+      return;
+    }
+
     const payment = await this.paymentsRepository.create({
       user_id: userId,
       amount,
@@ -156,17 +167,39 @@ export class WebhooksService {
     if (!storeId || !productId) return;
 
     const supabase = getSupabaseClient();
-    const { data: order, error: orderError } = await supabase
-      .from("orders")
-      .insert({
-        user_id: userId,
-        store_id: storeId,
-        total_amount: amount,
-        order_status: "confirmed",
-        payment_status: "completed",
-      })
-      .select()
-      .single();
+    const existingOrderId = metadata.order_id;
+    let order: { id: string } | null = null;
+    let orderError: { message?: string } | null = null;
+    if (existingOrderId) {
+      const { data: updatedOrder, error: updatedError } = await supabase
+        .from("orders")
+        .update({
+          order_status: "confirmed",
+          payment_status: "completed",
+          total_amount: amount,
+        })
+        .eq("id", existingOrderId)
+        .eq("user_id", userId)
+        .eq("store_id", storeId)
+        .select("id")
+        .single();
+      order = (updatedOrder as { id: string } | null) ?? null;
+      orderError = updatedError as { message?: string } | null;
+    } else {
+      const { data: insertedOrder, error: insertedError } = await supabase
+        .from("orders")
+        .insert({
+          user_id: userId,
+          store_id: storeId,
+          total_amount: amount,
+          order_status: "confirmed",
+          payment_status: "completed",
+        })
+        .select("id")
+        .single();
+      order = (insertedOrder as { id: string } | null) ?? null;
+      orderError = insertedError as { message?: string } | null;
+    }
 
     if (orderError || !order) {
       await this.paymentAuditRepository.log("order.create_failed", {
@@ -176,12 +209,14 @@ export class WebhooksService {
       return;
     }
 
-    await supabase.from("order_items").insert({
-      order_id: order.id,
-      product_id: productId,
-      quantity,
-      price: unitPrice,
-    });
+    if (!existingOrderId) {
+      await supabase.from("order_items").insert({
+        order_id: order.id,
+        product_id: productId,
+        quantity,
+        price: unitPrice,
+      });
+    }
 
     await this.paymentsRepository.update(paymentId, {
       order_id: order.id,
@@ -246,6 +281,7 @@ export class WebhooksService {
       .from("consultations")
       .insert({
         user_id: userId,
+        doctor_id: dermatologistId,
         dermatologist_id: dermatologistId,
         slot_id: slotId,
         // Keep dermatologist approval loop deterministic: payment creates pending request, dermatologist confirms.
@@ -262,11 +298,19 @@ export class WebhooksService {
       return;
     }
 
-    await supabase
-      .from("consultation_slots")
+    const { error: slotUpdateError } = await supabase
+      .from("availability_slots")
       .update({ status: "booked" })
       .eq("id", slotId)
-      .eq("dermatologist_id", dermatologistId);
+      .eq("doctor_id", dermatologistId);
+    if (slotUpdateError) {
+      // Backward-compatibility path for environments still writing into legacy table.
+      await supabase
+        .from("consultation_slots")
+        .update({ status: "booked" })
+        .eq("id", slotId)
+        .eq("dermatologist_id", dermatologistId);
+    }
 
     await this.paymentsRepository.update(paymentId, {
       consultation_id: consultation.id,

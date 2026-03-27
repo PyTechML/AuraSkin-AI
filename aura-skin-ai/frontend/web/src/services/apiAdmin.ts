@@ -589,6 +589,35 @@ export async function getAdminReports(): Promise<AdminReportRow[]> {
   }
 }
 
+export interface AdminSettingsPayload {
+  siteName?: string;
+  supportEmail?: string;
+  flagRecommendations?: boolean;
+  flagConsultations?: boolean;
+  stripePublishableKey?: string;
+  notificationRulesText?: string;
+  featureFlags?: Record<string, unknown>;
+  ruleEngine?: Record<string, unknown>;
+}
+
+export async function getAdminSettings(): Promise<AdminSettingsPayload> {
+  try {
+    return await apiGet<AdminSettingsPayload>("/admin/settings");
+  } catch {
+    return {};
+  }
+}
+
+export async function saveAdminSettings(
+  payload: AdminSettingsPayload
+): Promise<AdminSettingsPayload | null> {
+  try {
+    return await apiPut<AdminSettingsPayload>("/admin/settings", payload);
+  } catch {
+    return null;
+  }
+}
+
 function mapRawToAdminAuditLog(row: Record<string, unknown>): AdminAuditLog | null {
   const id = row.id != null ? String(row.id) : "";
   if (!id) return null;

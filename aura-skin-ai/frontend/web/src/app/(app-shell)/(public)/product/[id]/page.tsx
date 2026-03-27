@@ -43,12 +43,20 @@ export default async function ProductPage({ params }: { params: { id: string } }
               className="relative w-full aspect-[4/3] lg:aspect-square max-h-[480px] lg:max-h-none bg-muted/80 overflow-hidden rounded-2xl border border-border"
               aria-hidden
             >
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
-                <ImageIcon className="h-16 w-16 text-muted-foreground/60" aria-hidden />
-                <span className="text-sm font-label text-muted-foreground/80">
-                  Image placeholder
-                </span>
-              </div>
+              {product.imageUrl ? (
+                <img
+                  src={product.imageUrl}
+                  alt={product.name}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
+                  <ImageIcon className="h-16 w-16 text-muted-foreground/60" aria-hidden />
+                  <span className="text-sm font-label text-muted-foreground/80">
+                    Image unavailable
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 

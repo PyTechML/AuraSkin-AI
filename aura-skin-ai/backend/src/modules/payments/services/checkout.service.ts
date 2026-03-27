@@ -68,6 +68,27 @@ export class CheckoutService {
       throw new BadRequestException("Product price not available or invalid");
     }
     const amount = Number(unitPrice) * quantity;
+    const { data: order, error: orderError } = await supabase
+      .from("orders")
+      .insert({
+        user_id: userId,
+        store_id: resolvedStoreId,
+        order_status: "pending",
+        payment_status: "pending",
+        total_amount: amount,
+      } as any)
+      .select()
+      .single();
+    if (orderError || !order) {
+      throw new BadRequestException("Failed to create order");
+    }
+    await supabase.from("order_items").insert({
+      order_id: (order as { id: string }).id,
+      product_id: productId,
+      quantity,
+      price: unitPrice,
+      product_name: (product as { name?: string }).name ?? "Product",
+    });
     const session = await this.stripe.checkout.sessions.create({
       mode: "payment",
       success_url: successUrl,
@@ -88,6 +109,7 @@ export class CheckoutService {
       ],
       metadata: {
         type: "order",
+        order_id: (order as { id: string }).id,
         user_id: userId,
         store_id: resolvedStoreId,
         product_id: productId,
@@ -121,13 +143,23 @@ export class CheckoutService {
     if (Number(fee) <= 0) {
       throw new BadRequestException("Consultation fee not set");
     }
-    const { data: slot } = await supabase
-      .from("consultation_slots")
+    const { data: hybridSlot, error: hybridSlotError } = await supabase
+      .from("availability_slots")
       .select("id, status")
       .eq("id", slotId)
-      .eq("dermatologist_id", dermatologistId)
+      .eq("doctor_id", dermatologistId)
       .single();
-    if (!slot || (slot as { status?: string }).status !== "available") {
+    let slot = hybridSlot as { id?: string; status?: string } | null;
+    if (hybridSlotError || !slot) {
+      const { data: legacySlot } = await supabase
+        .from("consultation_slots")
+        .select("id, status")
+        .eq("id", slotId)
+        .eq("dermatologist_id", dermatologistId)
+        .single();
+      slot = legacySlot as { id?: string; status?: string } | null;
+    }
+    if (!slot || slot.status !== "available") {
       throw new BadRequestException("Slot not available");
     }
     const amount = Number(fee);
@@ -168,8 +200,8 @@ export class CheckoutService {
   ): Promise<{ upi_url: string; payment_id: string }> {
     const supabase = getSupabaseClient();
     const { data: derm } = await supabase
-      .from("dermatologists")
-      .select("id, name, consultation_fee")
+      .from("dermatologist_profiles")
+      .select("id, consultation_fee")
       .eq("id", dermatologistId)
       .single();
     if (!derm) throw new BadRequestException("Dermatologist not found");
@@ -177,13 +209,23 @@ export class CheckoutService {
     const amount = derm.consultation_fee ?? 0;
     if (amount <= 0) throw new BadRequestException("Consultation fee not set");
 
-    const { data: slot } = await supabase
-      .from("consultation_slots")
+    const { data: hybridSlot, error: hybridSlotError } = await supabase
+      .from("availability_slots")
       .select("status")
       .eq("id", slotId)
-      .eq("dermatologist_id", dermatologistId)
+      .eq("doctor_id", dermatologistId)
       .single();
-    if (!slot || (slot as { status?: string }).status !== "available") {
+    let slot = hybridSlot as { status?: string } | null;
+    if (hybridSlotError || !slot) {
+      const { data: legacySlot } = await supabase
+        .from("consultation_slots")
+        .select("status")
+        .eq("id", slotId)
+        .eq("dermatologist_id", dermatologistId)
+        .single();
+      slot = legacySlot as { status?: string } | null;
+    }
+    if (!slot || slot.status !== "available") {
       throw new BadRequestException("Slot not available");
     }
 
@@ -224,7 +266,7 @@ export class CheckoutService {
       .insert({
         user_id: userId,
         store_id: resolvedStoreId,
-        order_status: "placed",
+        order_status: "pending",
         payment_status: "pending",
         total_amount: amount,
       } as any)
@@ -300,7 +342,7 @@ export class CheckoutService {
       .insert({
         user_id: userId,
         store_id: resolvedStoreId,
-        order_status: "placed",
+        order_status: "pending",
         payment_status: "pending",
         total_amount: amount,
         shipping_address: shippingAddress,

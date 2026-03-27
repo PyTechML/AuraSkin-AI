@@ -51,18 +51,39 @@ export default function DermatologistReportsPage() {
     if (bookings.length === 0) {
       return {
         totalConsultations: 0,
-        avgRating: 4.8, // demo default
-        responseTimeHours: 4,
-        followUpRate: 60,
+        avgRating: 0,
+        responseTimeHours: 0,
+        followUpRate: 0,
       };
     }
     const totalConsultations = bookings.length;
-    // Demo metrics; can be wired to real data later.
+    const completed = bookings.filter((b) => b.status === "completed");
+    const withFollowUp = completed.filter((b) => b.followUpRequired === true);
+    const followUpRate =
+      completed.length > 0 ? Math.round((withFollowUp.length / completed.length) * 100) : 0;
+
+    // Ratings are not persisted in consultation rows yet; keep deterministic 0 instead of mock value.
+    const avgRating = 0;
+
+    // Approximate first-response latency using booking creation timestamps where available.
+    const responseTimeHours = (() => {
+      const dated = bookings
+        .map((b) => {
+          const created = new Date(b.createdAt ?? "").getTime();
+          const scheduled = new Date(`${b.date}T${(b.timeSlot ?? "").split(" - ")[0] ?? ""}`).getTime();
+          if (!Number.isFinite(created) || !Number.isFinite(scheduled) || scheduled < created) return null;
+          return (scheduled - created) / (1000 * 60 * 60);
+        })
+        .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+      if (dated.length === 0) return 0;
+      return Math.max(0, Math.round(dated.reduce((a, b) => a + b, 0) / dated.length));
+    })();
+
     return {
       totalConsultations,
-      avgRating: 4.8,
-      responseTimeHours: 4,
-      followUpRate: 65,
+      avgRating,
+      responseTimeHours,
+      followUpRate,
     };
   }, [bookings]);
 
@@ -212,7 +233,7 @@ export default function DermatologistReportsPage() {
             <TrendingUp className="h-4 w-4" /> Consultation trend
           </CardTitle>
           <CardDescription>
-            Number of consultations per day (demo data).
+            Number of consultations per day.
           </CardDescription>
         </CardHeader>
         <CardContent>

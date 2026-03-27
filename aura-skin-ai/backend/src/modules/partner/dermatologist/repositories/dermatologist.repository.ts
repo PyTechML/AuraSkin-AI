@@ -39,6 +39,21 @@ export interface UpdateDermatologistProfileRow {
   license_number?: string | null;
 }
 
+export interface CreatePatientRow {
+  doctor_id: string;
+  name: string;
+  age?: number | null;
+  notes?: string | null;
+  user_id?: string | null;
+}
+
+export interface UpdatePatientRow {
+  name?: string;
+  age?: number | null;
+  notes?: string | null;
+  user_id?: string | null;
+}
+
 @Injectable()
 export class DermatologistRepository {
   async getProfileById(id: string): Promise<DbDermatologistProfile | null> {
@@ -254,5 +269,80 @@ export class DermatologistRepository {
       .single();
     if (error || !data) return null;
     return data as { id: string; full_name: string | null; email: string | null };
+  }
+
+  async createPatient(row: CreatePatientRow): Promise<any | null> {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("patients")
+      .insert({
+        doctor_id: row.doctor_id,
+        user_id: row.user_id ?? null,
+        name: row.name,
+        age: row.age ?? null,
+        notes: row.notes ?? null,
+      })
+      .select("*")
+      .single();
+    if (error || !data) return null;
+    return data;
+  }
+
+  async updatePatient(
+    patientId: string,
+    doctorId: string,
+    row: UpdatePatientRow
+  ): Promise<any | null> {
+    const supabase = getSupabaseClient();
+    const payload: Record<string, unknown> = {};
+    if (row.name != null) payload.name = row.name;
+    if (row.age != null) payload.age = row.age;
+    if (row.notes != null) payload.notes = row.notes;
+    if (row.user_id !== undefined) payload.user_id = row.user_id;
+    if (Object.keys(payload).length === 0) {
+      return this.getPatientById(patientId, doctorId);
+    }
+    const { data, error } = await supabase
+      .from("patients")
+      .update(payload)
+      .eq("id", patientId)
+      .eq("doctor_id", doctorId)
+      .select("*")
+      .single();
+    if (error || !data) return null;
+    return data;
+  }
+
+  async deletePatient(patientId: string, doctorId: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from("patients")
+      .delete()
+      .eq("id", patientId)
+      .eq("doctor_id", doctorId);
+    return !error;
+  }
+
+  async getPatientById(patientId: string, doctorId: string): Promise<any | null> {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("id", patientId)
+      .eq("doctor_id", doctorId)
+      .single();
+    if (error || !data) return null;
+    return data;
+  }
+
+  async getPatientsByDoctorId(doctorId: string): Promise<any[]> {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("doctor_id", doctorId)
+      .order("created_at", { ascending: false });
+    if (error) return [];
+    return (data as any[]) ?? [];
   }
 }

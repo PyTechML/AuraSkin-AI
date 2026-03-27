@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useUserLocation } from "@/hooks/useUserLocation";
 import { getStoresNearby, getStores } from "@/services/api";
 import type { PublicStore } from "@/types/store";
+import { isDocumentVisible, PANEL_LIVE_POLL_INTERVAL_MS, takeFreshList } from "@/lib/panelPolling";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { MapPin, Star } from "lucide-react";
@@ -48,6 +49,22 @@ export default function StoresPage() {
       }
     };
     load();
+  }, [lat, lng, allowed, hasAccurateLocation, locLoading]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      const fetcher =
+        hasAccurateLocation && allowed && !locLoading
+          ? getStoresNearby(lat, lng)
+          : getStores();
+      fetcher
+        .then((fresh) => {
+          setStores((prev) => takeFreshList(prev, Array.isArray(fresh) ? fresh : []));
+        })
+        .catch(() => {});
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, [lat, lng, allowed, hasAccurateLocation, locLoading]);
 
   const mapPoints = useMemo(
@@ -132,9 +149,17 @@ export default function StoresPage() {
                 <Card key={store.id} className="border-border hover:shadow-[0_0_20px_rgba(229,190,181,0.15)] transition-shadow">
                   <CardContent className="p-4">
                     <div className="flex gap-4">
-                      <div className="w-24 h-24 shrink-0 rounded-xl bg-muted/80 flex items-center justify-center">
-                        <MapPin className="h-8 w-8 text-muted-foreground/60" />
-                      </div>
+                      {store.imageUrl ? (
+                        <img
+                          src={store.imageUrl}
+                          alt={store.name ?? "Store"}
+                          className="w-24 h-24 shrink-0 rounded-xl object-cover"
+                        />
+                      ) : (
+                        <div className="w-24 h-24 shrink-0 rounded-xl bg-muted/80 flex items-center justify-center">
+                          <MapPin className="h-8 w-8 text-muted-foreground/60" />
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
                         <h3 className="font-heading font-semibold">{store.name ?? "Store"}</h3>
                         {store.location ? (
@@ -161,6 +186,9 @@ export default function StoresPage() {
                             {store.description}
                           </p>
                         )}
+                        {store.contact ? (
+                          <p className="text-sm text-muted-foreground mt-1">{store.contact}</p>
+                        ) : null}
                         <Button variant="outline" size="sm" className="mt-3" asChild>
                           <Link href={`/stores/${store.id}`}>View Store</Link>
                         </Button>

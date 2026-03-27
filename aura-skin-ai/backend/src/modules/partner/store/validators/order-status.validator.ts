@@ -1,17 +1,25 @@
 /**
  * Allowed order status transitions for store partner.
- * pending → confirmed | cancelled
+ * pending/placed → confirmed | cancelled | cancel_requested
  * confirmed → packed | cancelled
  * packed → shipped
- * shipped → delivered
+ * shipped → out_for_delivery | delivered
+ * out_for_delivery → delivered
+ * delivered → return_requested
+ * return_requested → refunded
  */
 
 export const ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
-  pending: ["confirmed", "cancelled"],
-  confirmed: ["packed", "cancelled"],
+  pending: ["confirmed", "cancelled", "cancel_requested"],
+  placed: ["confirmed", "cancel_requested", "cancelled"],
+  confirmed: ["packed", "cancel_requested", "cancelled"],
   packed: ["shipped"],
-  shipped: ["delivered"],
-  delivered: [],
+  shipped: ["out_for_delivery", "delivered"],
+  out_for_delivery: ["delivered"],
+  delivered: ["return_requested"],
+  cancel_requested: ["cancelled"],
+  return_requested: ["refunded"],
+  refunded: [],
   cancelled: [],
 };
 

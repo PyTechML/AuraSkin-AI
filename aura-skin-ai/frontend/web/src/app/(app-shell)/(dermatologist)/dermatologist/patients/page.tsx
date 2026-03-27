@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/providers/AuthProvider";
-import { getDermatologistPatients } from "@/services/apiPartner";
+import {
+  createDermatologistPatient,
+  deleteDermatologistPatient,
+  getDermatologistPatients,
+  updateDermatologistPatient,
+} from "@/services/apiPartner";
 import type { NormalizedPatient } from "@/types/patient";
 import {
   Card,
@@ -31,9 +36,11 @@ import { Users, UserCircle } from "lucide-react";
 import { TableRowSkeleton } from "@/components/ui/skeleton-primitives";
 import { PanelPageHeader } from "@/components/layouts/PanelPageHeader";
 import { PanelSectionReveal } from "@/components/panel/PanelReveal";
+import { usePanelToast } from "@/components/panel/PanelToast";
 
 export default function DermatologistPatientsPage() {
   const { session } = useAuth();
+  const { addToast } = usePanelToast();
   const partnerId = session?.user?.id ?? "";
   const [patients, setPatients] = useState<NormalizedPatient[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,6 +74,60 @@ export default function DermatologistPatientsPage() {
       cancelled = true;
     };
   }, [partnerId]);
+
+  const reloadPatients = () => {
+    setLoading(true);
+    setError(null);
+    return getDermatologistPatients()
+      .then((data) => setPatients(Array.isArray(data) ? data : []))
+      .catch(() => setError("Failed to load patients."))
+      .finally(() => setLoading(false));
+  };
+
+  const handleAddPatient = async () => {
+    const name = window.prompt("Patient name");
+    if (!name || !name.trim()) return;
+    const ageRaw = window.prompt("Patient age (optional)");
+    const notes = window.prompt("Clinical notes (optional)") ?? "";
+    const ageNum =
+      ageRaw && ageRaw.trim() !== "" && Number.isFinite(Number(ageRaw))
+        ? Number(ageRaw)
+        : undefined;
+    const created = await createDermatologistPatient({
+      name: name.trim(),
+      age: ageNum,
+      notes: notes.trim() || undefined,
+    });
+    if (!created) {
+      addToast("Failed to add patient.", "error");
+      return;
+    }
+    addToast("Patient added.");
+    await reloadPatients();
+  };
+
+  const handleEditPatient = async (patient: NormalizedPatient) => {
+    const name = window.prompt("Patient name", patient.name);
+    if (!name || !name.trim()) return;
+    const updated = await updateDermatologistPatient(patient.id, { name: name.trim() });
+    if (!updated) {
+      addToast("Failed to update patient.", "error");
+      return;
+    }
+    addToast("Patient updated.");
+    await reloadPatients();
+  };
+
+  const handleDeletePatient = async (patient: NormalizedPatient) => {
+    if (!window.confirm(`Delete patient "${patient.name}"?`)) return;
+    const ok = await deleteDermatologistPatient(patient.id);
+    if (!ok) {
+      addToast("Failed to delete patient.", "error");
+      return;
+    }
+    addToast("Patient deleted.");
+    await reloadPatients();
+  };
 
   const filtered = useMemo(() => {
     const safePatients = Array.isArray(patients) ? patients : [];
@@ -149,7 +210,8 @@ export default function DermatologistPatientsPage() {
       <PanelSectionReveal>
       <Card className="border-border">
         <CardContent className="py-4">
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4 justify-between">
+            <div className="flex flex-wrap items-center gap-4">
             <Input
               placeholder="Search by name or email..."
               className="max-w-xs"
@@ -166,6 +228,10 @@ export default function DermatologistPatientsPage() {
                 <SelectItem value="inactive">Inactive</SelectItem>
               </SelectContent>
             </Select>
+            </div>
+            <Button size="sm" onClick={handleAddPatient}>
+              Add patient
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -201,7 +267,7 @@ export default function DermatologistPatientsPage() {
                 <TableHead>Last consultation</TableHead>
                 <TableHead>Skin condition summary</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-[100px]">Actions</TableHead>
+                <TableHead className="w-[180px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -223,12 +289,20 @@ export default function DermatologistPatientsPage() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <Button variant="outline" size="sm" asChild>
-                      <Link href={`/dermatologist/patients/${p.id}`}>
-                        <UserCircle className="h-4 w-4 mr-1" />
-                        View
-                      </Link>
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" asChild>
+                        <Link href={`/dermatologist/patients/${p.id}`}>
+                          <UserCircle className="h-4 w-4 mr-1" />
+                          View
+                        </Link>
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => void handleEditPatient(p)}>
+                        Edit
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => void handleDeletePatient(p)}>
+                        Delete
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

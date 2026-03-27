@@ -70,6 +70,8 @@ export class AiReportService {
   }
 
   private fallback(answers: UserAnswerInput, analysis: AiAnalysisInput): GeneratedAiReport {
+    const nameText = answers.userName?.trim() ? `${answers.userName.trim()}, ` : "";
+    const skinTypeText = answers.skinType?.trim() ? `${answers.skinType.trim()} skin` : "your skin";
     const concernText = (answers.concerns ?? []).join(", ") || "general skin health";
     const confidence = analysis.confidence ?? 0;
     const sleepText =
@@ -83,7 +85,7 @@ export class AiReportService {
         : null;
     return {
       skinReport: [
-        `Your assessment indicates focus areas around ${concernText}.`,
+        `${nameText}your assessment indicates focus areas around ${concernText} for ${skinTypeText}.`,
         `Confidence score: ${Math.round(confidence * 100)}%.`,
         `Lifestyle context: sleep ${sleepText}, sun exposure ${sunText}.`,
         hydrationScore != null ? `Hydration score: ${hydrationScore}/100.` : null,
@@ -91,9 +93,9 @@ export class AiReportService {
         .filter((x): x is string => typeof x === "string" && x.length > 0)
         .join(" "),
       routine: [
-        "AM: gentle cleanser → moisturizer → broad-spectrum SPF.",
-        "PM: gentle cleanser → targeted treatment for your concerns → moisturizer.",
-        "Avoid harsh scrubs and over-exfoliation while your barrier is rebuilding.",
+        `AM: gentle cleanser → ${concernText.toLowerCase().includes("dry") ? "hydrating serum" : "light treatment serum"} → broad-spectrum SPF.`,
+        `PM: gentle cleanser → targeted treatment for ${concernText} → barrier-support moisturizer.`,
+        `Avoid harsh scrubs and over-exfoliation while rebuilding ${skinTypeText}.`,
       ].join("\n"),
       productSuggestions: [
         "Gentle cleanser",
@@ -137,7 +139,7 @@ export class AiReportService {
       ].join("\n");
       const completion = await this.openai.chat.completions.create({
         model: this.model || "gpt-4o-mini",
-        temperature: 0.2,
+        temperature: 0.45,
         max_tokens: 350,
         response_format: { type: "json_object" },
         messages: [
@@ -171,6 +173,11 @@ export class AiReportService {
     const answers: UserAnswerInput = {
       skinType: questionnaire.skinType,
       concerns: questionnaire.concerns,
+      userName: questionnaire.userName,
+      age: questionnaire.age,
+      gender: questionnaire.gender,
+      sleepHours: questionnaire.sleepHours,
+      sunExposure: questionnaire.sunExposure,
     };
     const now = Date.now();
     const calls = pruneCalls(now, perUserCalls.get(userKey) ?? []);
@@ -209,7 +216,7 @@ export class AiReportService {
       ].join("\n");
       const completion = await this.openai!.chat.completions.create({
         model: this.model || "gpt-4o-mini",
-        temperature: 0.2,
+        temperature: 0.45,
         max_tokens: 450,
         response_format: { type: "json_object" },
         messages: [

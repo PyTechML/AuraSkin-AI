@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useUserLocation } from "@/hooks/useUserLocation";
 import { getDermatologistsNearby, getDermatologists } from "@/services/api";
+import { isDocumentVisible, PANEL_LIVE_POLL_INTERVAL_MS, takeFreshList } from "@/lib/panelPolling";
 import type { Dermatologist } from "@/types";
 import type { LocationMapPoint } from "@/components/stores/LocationsMap";
 import { Card, CardContent } from "@/components/ui/card";
@@ -49,6 +50,22 @@ export default function DermatologistsPage() {
       }
     };
     load();
+  }, [lat, lng, allowed, hasAccurateLocation, locLoading]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      const fetcher =
+        hasAccurateLocation && allowed && !locLoading
+          ? getDermatologistsNearby(lat, lng)
+          : getDermatologists();
+      fetcher
+        .then((fresh) => {
+          setDermatologists((prev) => takeFreshList(prev, Array.isArray(fresh) ? fresh : []));
+        })
+        .catch(() => {});
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, [lat, lng, allowed, hasAccurateLocation, locLoading]);
 
   const mapPoints = useMemo((): LocationMapPoint[] => {
@@ -136,9 +153,17 @@ export default function DermatologistsPage() {
             <Card key={d.id} className="border-border hover:shadow-[0_0_20px_rgba(229,190,181,0.15)] transition-shadow">
               <CardContent className="p-4">
                 <div className="flex gap-4">
-                  <div className="w-16 h-16 shrink-0 rounded-full bg-muted/80 flex items-center justify-center">
-                    <User className="h-8 w-8 text-muted-foreground/60" />
-                  </div>
+                  {d.photoUrl ? (
+                    <img
+                      src={d.photoUrl}
+                      alt={d.name ?? "Dermatologist"}
+                      className="w-16 h-16 shrink-0 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-16 h-16 shrink-0 rounded-full bg-muted/80 flex items-center justify-center">
+                      <User className="h-8 w-8 text-muted-foreground/60" />
+                    </div>
+                  )}
                   <div className="flex-1 min-w-0">
                     <h3 className="font-heading font-semibold">{d.name}</h3>
                     <p className="text-sm text-muted-foreground">{d.specialty}</p>
@@ -159,6 +184,12 @@ export default function DermatologistsPage() {
                         {d.distance.toFixed(1)} km away
                       </p>
                     )}
+                    {d.availability ? (
+                      <p className="text-xs text-muted-foreground mt-1">{d.availability}</p>
+                    ) : null}
+                    {d.bio ? (
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{d.bio}</p>
+                    ) : null}
                     <Button variant="outline" size="sm" className="mt-3" asChild>
                       <Link href={`/dermatologists/${d.id}`}>View Profile</Link>
                     </Button>

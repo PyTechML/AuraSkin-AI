@@ -113,6 +113,7 @@ function CheckoutContent() {
         const result = await createUpiPayment({
           product_id: line.product.id,
           quantity: line.quantity,
+          store_id: line.product.storeId,
         });
         if (result?.upi_url && result?.payment_id) {
           setUpiPayment(result);
@@ -130,6 +131,7 @@ function CheckoutContent() {
         const result = await createCodPayment({
           product_id: line.product.id,
           quantity: line.quantity,
+          store_id: line.product.storeId,
           shipping_address: shippingStr,
         });
         if (result?.order_id) {
@@ -145,6 +147,7 @@ function CheckoutContent() {
       const { checkout_url: checkoutUrl } = await createCheckoutSession({
         product_id: line.product.id,
         quantity: line.quantity,
+        store_id: line.product.storeId,
       });
       if (checkoutUrl) {
         window.location.href = checkoutUrl;

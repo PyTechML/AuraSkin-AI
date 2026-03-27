@@ -8,6 +8,7 @@ const SLOW_QUERY_MS = 500;
 
 export interface CreateAssessmentRow {
   user_id: string;
+  assessment_name?: string | null;
   skin_type?: string | null;
   primary_concern?: string | null;
   secondary_concern?: string | null;
@@ -39,23 +40,49 @@ export class AssessmentRepository {
 
   async create(row: CreateAssessmentRow): Promise<DbAssessment | null> {
     const supabase = getSupabaseClient();
+    const insertPayload = {
+      user_id: row.user_id,
+      assessment_name: row.assessment_name ?? null,
+      skin_type: row.skin_type ?? null,
+      primary_concern: row.primary_concern ?? null,
+      secondary_concern: row.secondary_concern ?? null,
+      sensitivity_level: row.sensitivity_level ?? null,
+      current_products: row.current_products ?? null,
+      lifestyle_factors: row.lifestyle_factors ?? null,
+    };
     const { data, error } = await this.withDbMetrics<DbAssessment>("assessments", () =>
       supabase
         .from("assessments")
-        .insert({
-          user_id: row.user_id,
-          skin_type: row.skin_type ?? null,
-          primary_concern: row.primary_concern ?? null,
-          secondary_concern: row.secondary_concern ?? null,
-          sensitivity_level: row.sensitivity_level ?? null,
-          current_products: row.current_products ?? null,
-          lifestyle_factors: row.lifestyle_factors ?? null,
-        })
+        .insert(insertPayload)
         .select()
         .single()
         .then((r) => ({ data: r.data as DbAssessment | null, error: r.error }))
     );
-    if (error || !data) return null;
+    if (error || !data) {
+      const errorMessage =
+        typeof error === "object" && error !== null && "message" in error
+          ? String((error as { message?: unknown }).message ?? "")
+          : "";
+      const missingAssessmentNameColumn =
+        errorMessage.includes("assessment_name") &&
+        (errorMessage.toLowerCase().includes("column") ||
+          errorMessage.toLowerCase().includes("schema cache"));
+      if (!missingAssessmentNameColumn) return null;
+
+      // Compatibility fallback for environments where assessment_name migration
+      // has not been applied yet.
+      const { assessment_name: _ignored, ...legacyPayload } = insertPayload;
+      const legacyResult = await this.withDbMetrics<DbAssessment>("assessments", () =>
+        supabase
+          .from("assessments")
+          .insert(legacyPayload)
+          .select()
+          .single()
+          .then((r) => ({ data: r.data as DbAssessment | null, error: r.error }))
+      );
+      if (legacyResult.error || !legacyResult.data) return null;
+      return legacyResult.data as DbAssessment;
+    }
     return data as DbAssessment;
   }
 

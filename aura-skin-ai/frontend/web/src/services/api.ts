@@ -10,12 +10,6 @@ import type {
 import type { PublicStore } from "@/types/store";
 import { API_BASE } from "./apiBase";
 import { apiPost, apiPostMultipart, getAuthHeaders } from "./apiInternal";
-import {
-  createDermatologistSlot,
-  deleteDermatologistSlot,
-  getDermatologistSlots,
-  updateDermatologistSlot,
-} from "./apiPartner";
 import type { CreateDermatologistSlotPayload, NormalizedSlot } from "@/types/availability";
 import { buildAssessmentResultFromReportPayload } from "@/types/assessment";
 
@@ -228,13 +222,30 @@ function normalizeReport(
     Number.isFinite(skinScoreNum) && skinScoreNum >= 0 && skinScoreNum <= 100 ? skinScoreNum : undefined;
   const structured = buildAssessmentResultFromReportPayload(r, options);
   const confidenceScore =
-    skinScore != null && Number.isFinite(skinScore) ? skinScore : structured.confidenceScore;
+    skinScore != null && Number.isFinite(skinScore) ? skinScore : (typeof r.confidence_score === "number" ? r.confidence_score : structured.confidenceScore);
+  const assessmentTimestamp =
+    typeof r.assessment_timestamp === "string"
+      ? r.assessment_timestamp
+      : typeof r.created_at === "string"
+      ? r.created_at
+      : undefined;
+  const fallbackTitleDate = assessmentTimestamp ? new Date(assessmentTimestamp).toISOString().slice(0, 10) : date;
+  const userFullName = typeof r.user_full_name === "string" ? r.user_full_name : undefined;
+  const skinType = typeof r.skin_type === "string" ? r.skin_type : undefined;
   return {
     id,
-    title: `Skin Report · ${date}`,
+    title: userFullName?.trim() ? userFullName : `Skin Report · ${fallbackTitleDate}`,
     date,
     summary: String(summary).slice(0, 500) || "No summary.",
-    skinType: typeof r.skin_type === "string" ? r.skin_type : undefined,
+    userFullName,
+    userEmail: typeof r.user_email === "string" ? r.user_email : undefined,
+    userAge: typeof r.user_age === "number" && Number.isFinite(r.user_age) ? r.user_age : undefined,
+    hydrationLevel: typeof r.hydration_score === "number" && Number.isFinite(r.hydration_score) ? r.hydration_score : undefined,
+    sleepHours: typeof r.sleep_hours === "number" && Number.isFinite(r.sleep_hours) ? r.sleep_hours : undefined,
+    sunExposure: typeof r.sun_exposure === "string" ? r.sun_exposure : undefined,
+    lifestyleInputs: typeof r.lifestyle_factors === "string" ? r.lifestyle_factors : undefined,
+    assessmentTimestamp,
+    skinType,
     concerns: Array.isArray(concernsRaw) ? concernsRaw.filter((c): c is string => typeof c === "string") : undefined,
     skinScore,
     routineSteps: structured.routineSteps,
@@ -338,6 +349,7 @@ export async function getReportWithRecommendations(id: string): Promise<ReportWi
 
 /** Assessment: create (questionnaire). Returns assessment_id. */
 export interface CreateAssessmentPayload {
+  fullName?: string;
   skinType?: string;
   primaryConcern?: string;
   secondaryConcern?: string;
@@ -623,7 +635,7 @@ export async function createCodPayment(payload: {
   quantity: number;
   store_id?: string;
   shipping_address?: string;
-}): Promise<{ order_id: string; status: string }> {
+}): Promise<{ order_id: string; status?: string }> {
   return await apiPost("/payments/cod", payload);
 }
 
@@ -797,8 +809,11 @@ export async function getBookingsByDermatologist(
 }
 
 export async function getPatients(): Promise<Patient[]> {
-  // TODO: replace with dermatologist patients endpoint when available.
-  return [];
+  try {
+    return await apiGet<Patient[]>("/partner/dermatologist/patients");
+  } catch {
+    return [];
+  }
 }
 
 export interface UserRoutineCurrent {
@@ -913,6 +928,98 @@ function toDateFromDayLabel(dayLabel: string): string {
   const result = new Date(now);
   result.setDate(now.getDate() + delta);
   return result.toISOString().slice(0, 10);
+}
+
+type BackendDermatologistSlotRow = {
+  id: string;
+  slot_date?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  status?: string | null;
+  consultation_id?: string | null;
+  consultationId?: string | null;
+  is_blocked?: boolean | null;
+};
+
+function normalizeDermatologistSlotStatus(slot: BackendDermatologistSlotRow): NormalizedSlot["status"] {
+  const rawStatus = String(slot.status ?? "").toLowerCase();
+  if (slot.is_blocked === true || rawStatus === "blocked") return "blocked";
+  if (slot.consultation_id || slot.consultationId || rawStatus === "booked") return "booked";
+  return "available";
+}
+
+function normalizeDermatologistSlotRow(
+  slot: BackendDermatologistSlotRow | null | undefined
+): NormalizedSlot | null {
+  if (!slot?.id) return null;
+  const date = typeof slot.slot_date === "string" ? slot.slot_date : "";
+  const startTime = typeof slot.start_time === "string" ? slot.start_time.slice(0, 5) : "";
+  const endTime = typeof slot.end_time === "string" ? slot.end_time.slice(0, 5) : "";
+  return {
+    id: slot.id,
+    date,
+    startTime,
+    endTime,
+    status: normalizeDermatologistSlotStatus(slot),
+    consultationId:
+      typeof slot.consultation_id === "string"
+        ? slot.consultation_id
+        : typeof slot.consultationId === "string"
+        ? slot.consultationId
+        : undefined,
+  };
+}
+
+async function getDermatologistSlots(): Promise<NormalizedSlot[]> {
+  const rows = await apiGet<BackendDermatologistSlotRow[]>("/partner/dermatologist/slots");
+  const safeRows = Array.isArray(rows) ? rows : [];
+  return safeRows
+    .map((slot) => normalizeDermatologistSlotRow(slot))
+    .filter((slot): slot is NormalizedSlot => slot !== null);
+}
+
+async function createDermatologistSlot(
+  payload: CreateDermatologistSlotPayload
+): Promise<NormalizedSlot | null> {
+  const response = await apiPost<BackendDermatologistSlotRow | unknown>(
+    "/partner/dermatologist/slots/create",
+    payload
+  );
+  return normalizeDermatologistSlotRow(response as BackendDermatologistSlotRow);
+}
+
+async function updateDermatologistSlot(
+  id: string,
+  payload: { date?: string; startTime?: string; endTime?: string; status?: "available" | "booked" | "blocked" }
+): Promise<NormalizedSlot | null> {
+  const response = await fetch(`${API_BASE}/api/partner/dermatologist/slots/update/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const msg = (json as any)?.message ?? `Request failed: ${response.status}`;
+    throw new Error(msg);
+  }
+  return normalizeDermatologistSlotRow(((json as any)?.data ?? json) as BackendDermatologistSlotRow);
+}
+
+async function deleteDermatologistSlot(id: string): Promise<boolean> {
+  const response = await fetch(`${API_BASE}/api/partner/dermatologist/slots/delete/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const msg = (json as any)?.message ?? `Request failed: ${response.status}`;
+    throw new Error(msg);
+  }
+  const payload = ((json as any)?.data ?? json) as { deleted?: boolean } | null;
+  return Boolean(payload?.deleted);
 }
 
 function ensureNoOverlap(slots: Array<{ day: string; start: string; end: string }>) {

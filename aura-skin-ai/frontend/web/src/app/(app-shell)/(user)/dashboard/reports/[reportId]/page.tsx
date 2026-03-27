@@ -11,6 +11,7 @@ import { CardSkeleton } from "@/components/ui/skeleton-primitives";
 import { AssessmentResultPanel } from "@/components/assessment/AssessmentResultPanel";
 import { ReportActionsSection } from "@/components/reports/ReportActionsSection";
 import { sortReportsNewestFirst } from "@/lib/reportInsights";
+import { setReportBreadcrumbLabel } from "@/lib/reportBreadcrumbLabelStore";
 
 export default function ReportDetailPage() {
   const params = useParams();
@@ -53,6 +54,12 @@ export default function ReportDetailPage() {
     };
   }, [reportId]);
 
+  useEffect(() => {
+    const label = report?.userFullName?.trim();
+    if (!reportId || !label) return;
+    setReportBreadcrumbLabel(reportId, label);
+  }, [reportId, report?.userFullName]);
+
   if (!loaded) {
     return (
       <div className="space-y-6">
@@ -92,8 +99,14 @@ export default function ReportDetailPage() {
       </Button>
       <Card className="border-border">
         <CardHeader>
-          <h1 className="font-heading text-2xl font-semibold">{report.title}</h1>
-          <p className="text-sm text-muted-foreground">{report.date}</p>
+          <h1 className="font-heading text-2xl font-semibold">
+            {report.userFullName?.trim() || report.title}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            {report.assessmentTimestamp
+              ? new Date(report.assessmentTimestamp).toLocaleString()
+              : report.date}
+          </p>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-foreground">

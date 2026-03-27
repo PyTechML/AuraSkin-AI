@@ -22,6 +22,7 @@ const computeSkinScore = (acneScore: number, pigmentationScore: number, hydratio
 };
 
 function parseLifestyleFactors(lifestyle: string | null): {
+  name?: string;
   age?: number;
   gender?: string;
   sleepHours?: number;
@@ -29,8 +30,9 @@ function parseLifestyleFactors(lifestyle: string | null): {
 } {
   if (!lifestyle) return {};
   const parts = lifestyle.split(" | ");
-  const result: { age?: number; gender?: string; sleepHours?: number; sunExposure?: string } = {};
+  const result: { name?: string; age?: number; gender?: string; sleepHours?: number; sunExposure?: string } = {};
   for (const p of parts) {
+    if (p.startsWith("Name: ")) result.name = p.replace("Name: ", "");
     if (p.startsWith("Age: ")) result.age = parseInt(p.replace("Age: ", ""), 10);
     if (p.startsWith("Gender: ")) result.gender = p.replace("Gender: ", "");
     if (p.startsWith("Sun: ")) result.sunExposure = p.replace("Sun: ", "");
@@ -46,8 +48,18 @@ function parseLifestyleFactors(lifestyle: string | null): {
 
 /** Report with optional assessment-derived fields for API response. */
 export interface ReportForUser extends DbReport {
+  assessment_name?: string | null;
   skin_type?: string | null;
   skin_concerns?: string[] | null;
+  user_full_name?: string | null;
+  user_email?: string | null;
+  user_age?: number | null;
+  lifestyle_factors?: string | null;
+  sleep_hours?: number | null;
+  sun_exposure?: string | null;
+  assessment_timestamp?: string | null;
+  confidence_score?: number | null;
+  consultation_user_id?: string | null;
 }
 
 @Injectable()
@@ -79,9 +91,77 @@ export class ReportService {
       );
     return {
       ...report,
+      assessment_name: asm?.assessment_name ?? null,
       skin_type: asm?.skin_type ?? null,
       skin_concerns: concerns?.length ? concerns : null,
+      assessment_timestamp: asm?.created_at ?? null,
+      lifestyle_factors: asm?.lifestyle_factors ?? null,
     };
+  }
+
+  private async attachRelationalContext(reports: ReportForUser[]): Promise<ReportForUser[]> {
+    if (reports.length === 0) return [];
+    const supabase = getSupabaseClient();
+    const userIds = Array.from(new Set(reports.map((r) => r.user_id).filter(Boolean)));
+    const consultationIds = Array.from(
+      new Set(
+        reports
+          .map((r) => (typeof r.consultation_id === "string" ? r.consultation_id : null))
+          .filter((id): id is string => !!id)
+      )
+    );
+
+    const [profilesRes, consultationsRes] = await Promise.all([
+      userIds.length
+        ? supabase.from("profiles").select("id, full_name, email, user_metadata").in("id", userIds)
+        : Promise.resolve({ data: [] as any[] }),
+      consultationIds.length
+        ? supabase.from("consultations").select("id, user_id").in("id", consultationIds)
+        : Promise.resolve({ data: [] as any[] }),
+    ]);
+
+    const profileMap = new Map<string, { full_name?: string | null; email?: string | null; user_metadata?: Record<string, unknown> }>(
+      ((profilesRes.data as any[]) ?? []).map((p) => [
+        String(p.id),
+        {
+          full_name: typeof p.full_name === "string" ? p.full_name : null,
+          email: typeof p.email === "string" ? p.email : null,
+          user_metadata: p.user_metadata && typeof p.user_metadata === "object" ? (p.user_metadata as Record<string, unknown>) : undefined,
+        },
+      ])
+    );
+    const consultationMap = new Map<string, { user_id?: string | null }>(
+      ((consultationsRes.data as any[]) ?? []).map((c) => [String(c.id), { user_id: c.user_id ?? null }])
+    );
+
+    return reports.map((report) => {
+      const profile = profileMap.get(report.user_id);
+      const lifestyle = report.lifestyle_factors ?? null;
+      const parsedLifestyle = parseLifestyleFactors(lifestyle);
+      const confidence = report.skin_score != null && Number.isFinite(Number(report.skin_score)) ? Number(report.skin_score) : null;
+      const consultationUserId =
+        typeof report.consultation_id === "string" ? consultationMap.get(report.consultation_id)?.user_id ?? null : null;
+      const metaAge = profile?.user_metadata?.age;
+      const ageFromMetadata = typeof metaAge === "number" && Number.isFinite(metaAge) ? metaAge : null;
+      const preferredName =
+        typeof report.assessment_name === "string" && report.assessment_name.trim().length > 0
+          ? report.assessment_name.trim()
+          : parsedLifestyle.name?.trim()
+          ? parsedLifestyle.name.trim()
+          : profile?.full_name ?? null;
+      return {
+        ...report,
+        user_full_name: preferredName,
+        user_email: profile?.email ?? null,
+        user_age: parsedLifestyle.age ?? ageFromMetadata,
+        sleep_hours: parsedLifestyle.sleepHours ?? null,
+        sun_exposure: parsedLifestyle.sunExposure ?? null,
+        lifestyle_factors: lifestyle,
+        assessment_timestamp: report.assessment_timestamp ?? report.created_at ?? null,
+        confidence_score: confidence,
+        consultation_user_id: consultationUserId,
+      };
+    });
   }
 
   /** Returns structured list: latest report (with associations) and past reports, ordered by created_at DESC. */
@@ -106,21 +186,23 @@ export class ReportService {
     const assessmentsRaw: DbAssessment[] = await this.assessmentRepository.findByIds(assessmentIds);
     const assessmentsMap = new Map<string, DbAssessment>(assessmentsRaw.map((a: DbAssessment) => [a.id, a]));
 
-    const [enrichedLatest, recommendedProducts, recommendedDermatologists, enrichedPast] =
+    const [enrichedLatest, recommendedProducts, recommendedDermatologists, enrichedPastRaw] =
       await Promise.all([
         this.enrichReportWithAssessment(latest, assessmentsMap.get(latest.assessment_id)),
         this.reportRepository.getRecommendedProducts(latest.id),
         this.reportRepository.getRecommendedDermatologists(latest.id),
         Promise.all(past_reports.map((r) => this.enrichReportWithAssessment(r, assessmentsMap.get(r.assessment_id)))),
       ]);
+    const enrichedAll = await this.attachRelationalContext([enrichedLatest, ...enrichedPastRaw]);
+    const [latestWithRelations, ...pastWithRelations] = enrichedAll;
 
     return {
       latest_report: {
-        report: enrichedLatest,
+        report: latestWithRelations ?? enrichedLatest,
         recommendedProducts,
         recommendedDermatologists,
       },
-      past_reports: enrichedPast,
+      past_reports: pastWithRelations,
     };
   }
 
@@ -143,12 +225,13 @@ export class ReportService {
   } | null> {
     const report = await this.reportRepository.findByIdAndUser(reportId, userId);
     if (!report) return null;
-    const [enrichedReport, recommendedProducts, recommendedDermatologists] = await Promise.all([
+    const [enrichedRaw, recommendedProducts, recommendedDermatologists] = await Promise.all([
       this.enrichReportWithAssessment(report),
       this.reportRepository.getRecommendedProducts(reportId),
       this.reportRepository.getRecommendedDermatologists(reportId),
     ]);
-    return { report: enrichedReport, recommendedProducts, recommendedDermatologists };
+    const [enrichedReport] = await this.attachRelationalContext([enrichedRaw]);
+    return { report: enrichedReport ?? enrichedRaw, recommendedProducts, recommendedDermatologists };
   }
 
   async getByAssessmentId(
@@ -177,12 +260,14 @@ export class ReportService {
     );
     const supabase = getSupabaseClient();
     const { data: userData } = await supabase.from("profiles").select("full_name").eq("id", assessment.user_id).single();
-    const userName = (userData as { full_name?: string })?.full_name ?? "User";
-    const { age, gender, sleepHours, sunExposure } = parseLifestyleFactors(assessment.lifestyle_factors);
+    const profileName = (userData as { full_name?: string })?.full_name ?? null;
+    const parsedLifestyle = parseLifestyleFactors(assessment.lifestyle_factors);
+    const { age, gender, sleepHours, sunExposure } = parsedLifestyle;
+    const resolvedUserName = assessment.assessment_name?.trim() || parsedLifestyle.name?.trim() || profileName || "User";
 
     const llm = await this.aiReportService.generate(
       assessment.user_id,
-      { skinType: assessment.skin_type, concerns, userName, age, gender, sleepHours, sunExposure },
+      { skinType: assessment.skin_type, concerns, userName: resolvedUserName, age, gender, sleepHours, sunExposure },
       {
         acne_score: generated.acne_score,
         pigmentation: generated.pigmentation_score,
@@ -350,8 +435,10 @@ export class ReportService {
 
     const supabase = getSupabaseClient();
     const { data: userData } = await supabase.from("profiles").select("full_name").eq("id", assessment.user_id).single();
-    const userName = (userData as { full_name?: string })?.full_name ?? "User";
-    const { age, gender, sleepHours, sunExposure } = parseLifestyleFactors(assessment.lifestyle_factors);
+    const profileName = (userData as { full_name?: string })?.full_name ?? null;
+    const parsedLifestyle = parseLifestyleFactors(assessment.lifestyle_factors);
+    const { age, gender, sleepHours, sunExposure } = parsedLifestyle;
+    const resolvedUserName = assessment.assessment_name?.trim() || parsedLifestyle.name?.trim() || profileName || "User";
 
     const llm = await this.aiReportService.generateForQuestionnaire(
       assessment.user_id,
@@ -360,7 +447,7 @@ export class ReportService {
         concerns,
         lifestyleFactors: assessment.lifestyle_factors,
         sensitivityLevel: assessment.sensitivity_level,
-        userName,
+        userName: resolvedUserName,
         age,
         gender,
         sleepHours,

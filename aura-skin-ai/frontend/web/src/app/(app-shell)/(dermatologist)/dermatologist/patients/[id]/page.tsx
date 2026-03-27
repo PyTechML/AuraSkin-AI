@@ -4,8 +4,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@/providers/AuthProvider";
-import { getAssignedUserDetail, getDermatologistConsultations } from "@/services/apiPartner";
-import type { AssignedUserDetail } from "@/types";
+import {
+  getDermatologistConsultations,
+  getDermatologistPatientById,
+  updateDermatologistPatient,
+} from "@/services/apiPartner";
 import type { NormalizedConsultation } from "@/types/consultation";
 import {
   Card,
@@ -27,7 +30,12 @@ export default function DermatologistPatientDetailPage() {
   const patientId = params.id as string;
   const { session } = useAuth();
   const partnerId = session?.user?.id ?? "";
-  const [patient, setPatient] = useState<AssignedUserDetail | null>(null);
+  const [patient, setPatient] = useState<{
+    id: string;
+    name: string;
+    email?: string;
+    notes?: string;
+  } | null>(null);
   const [consultationHistory, setConsultationHistory] = useState<
     NormalizedConsultation[]
   >([]);
@@ -41,8 +49,22 @@ export default function DermatologistPatientDetailPage() {
     }
     setLoading(true);
     setError(null);
-    getAssignedUserDetail(partnerId, patientId)
-      .then(setPatient)
+    getDermatologistPatientById(patientId)
+      .then((data) => {
+        if (!data?.patient) {
+          setPatient(null);
+          return;
+        }
+        setPatient({
+          id: data.patient.id,
+          name:
+            data.patient.name?.trim() ||
+            data.patient.full_name?.trim() ||
+            "Unknown",
+          email: data.patient.email ?? undefined,
+          notes: data.patient.notes ?? undefined,
+        });
+      })
       .catch(() => setError("Failed to load patient."))
       .finally(() => setLoading(false));
   }, [partnerId, patientId]);
@@ -104,6 +126,18 @@ export default function DermatologistPatientDetailPage() {
     );
   }
 
+  const handleSaveNotes = async () => {
+    if (!patient) return;
+    const nextNotes = window.prompt("Update clinical notes", patient.notes ?? "");
+    if (nextNotes == null) return;
+    const updated = await updateDermatologistPatient(patient.id, {
+      notes: nextNotes,
+    });
+    if (updated) {
+      setPatient((prev) => (prev ? { ...prev, notes: nextNotes } : prev));
+    }
+  };
+
   return (
     <div className="space-y-8">
       <Button variant="outline" size="sm" asChild>
@@ -116,12 +150,7 @@ export default function DermatologistPatientDetailPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="font-heading text-2xl font-semibold">{patient.name}</h1>
         <div className="flex items-center gap-2 flex-wrap">
-          {patient.lifetimeValue != null && (
-            <span className="text-sm font-label text-muted-foreground">
-              Lifetime value: ${patient.lifetimeValue.toFixed(2)}
-            </span>
-          )}
-          <Badge variant="secondary">{patient.status}</Badge>
+          <Badge variant="secondary">Patient</Badge>
         </div>
       </div>
 
@@ -133,23 +162,9 @@ export default function DermatologistPatientDetailPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {patient.activityTimeline && patient.activityTimeline.length > 0 ? (
-              <ul className="space-y-2 text-sm">
-                {patient.activityTimeline.map((a) => (
-                  <li
-                    key={a.id}
-                    className="flex justify-between"
-                  >
-                    <span className="text-muted-foreground">{a.title}</span>
-                    <span className="text-muted-foreground">{a.date}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No assessment history yet.
-              </p>
-            )}
+            <p className="text-sm text-muted-foreground">
+              Assessment history is available when linked user assessment records exist.
+            </p>
           </CardContent>
         </Card>
 
@@ -160,25 +175,9 @@ export default function DermatologistPatientDetailPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {patient.purchaseHistory.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No purchases yet.
-              </p>
-            ) : (
-              <ul className="space-y-2 text-sm">
-                {patient.purchaseHistory.map((p) => (
-                  <li
-                    key={p.orderId}
-                    className="flex justify-between"
-                  >
-                    <span>
-                      {p.orderId} · {p.date}
-                    </span>
-                    <span>${p.total.toFixed(2)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <p className="text-sm text-muted-foreground">
+              Purchase history is shown when this patient is linked to a user account.
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -244,6 +243,9 @@ export default function DermatologistPatientDetailPage() {
             <p className="text-sm text-muted-foreground whitespace-pre-wrap">
               {patient.notes || "No notes recorded yet."}
             </p>
+            <Button variant="outline" size="sm" className="mt-2" onClick={() => void handleSaveNotes()}>
+              Edit notes
+            </Button>
           </div>
           <div>
             <p className="text-sm font-medium mb-1">Prescribed routine</p>

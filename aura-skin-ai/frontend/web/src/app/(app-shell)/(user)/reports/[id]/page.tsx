@@ -12,6 +12,8 @@ import { CardSkeleton } from "@/components/ui/skeleton-primitives";
 import { AssessmentResultPanel } from "@/components/assessment/AssessmentResultPanel";
 import { ReportActionsSection } from "@/components/reports/ReportActionsSection";
 import { sortReportsNewestFirst } from "@/lib/reportInsights";
+import { isDocumentVisible, PANEL_LIVE_POLL_INTERVAL_MS } from "@/lib/panelPolling";
+import { setReportBreadcrumbLabel } from "@/lib/reportBreadcrumbLabelStore";
 
 export default function ReportDetailPage() {
   const params = useParams();
@@ -80,6 +82,43 @@ export default function ReportDetailPage() {
     };
   }, [reportId]);
 
+  useEffect(() => {
+    if (!reportId || typeof reportId !== "string") return;
+    const id = window.setInterval(() => {
+      if (!isDocumentVisible()) return;
+      getReportWithRecommendations(reportId)
+        .then((result) => {
+          if (!result) return;
+          setReport(result.report);
+          const products = result.recommendedProducts
+            .map((item) => {
+              const p = item.product;
+              if (!p) return null;
+              return {
+                id: p.id,
+                name: p.name ?? "Unknown Product",
+                description: p.description ?? "",
+                category: "Skincare",
+                imageUrl: (p as any).image_url ?? (p as any).imageUrl,
+                price: (p as any).price,
+                brand: (p as any).brand,
+              } as Product;
+            })
+            .filter((p): p is Product => p !== null);
+          setRecommendations(products);
+        })
+        .catch(() => {});
+    }, PANEL_LIVE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [reportId]);
+
+  useEffect(() => {
+    if (!reportId || typeof reportId !== "string") return;
+    const label = report?.userFullName?.trim();
+    if (!label) return;
+    setReportBreadcrumbLabel(reportId, label);
+  }, [reportId, report?.userFullName]);
+
   if (!loaded) {
     return (
       <div className="space-y-6">
@@ -119,10 +158,43 @@ export default function ReportDetailPage() {
       </Button>
       <Card className="border-border">
         <CardHeader>
-          <h1 className="font-heading text-2xl font-semibold">{report.title}</h1>
-          <p className="text-sm text-muted-foreground">{report.date}</p>
+          <h1 className="font-heading text-2xl font-semibold">{report.userFullName?.trim() || "Assessment Report"}</h1>
+          <p className="text-sm text-muted-foreground">
+            {report.assessmentTimestamp
+              ? new Date(report.assessmentTimestamp).toLocaleString()
+              : report.date}
+          </p>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="grid gap-3 rounded-xl border border-border/60 bg-muted/30 p-3 sm:grid-cols-2">
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Skin type:</span> {report.skinType ?? "—"}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Confidence score:</span>{" "}
+              {typeof report.confidenceScore === "number" ? `${Math.round(report.confidenceScore)}%` : "—"}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Hydration level:</span>{" "}
+              {typeof report.hydrationLevel === "number" ? report.hydrationLevel : "—"}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Age:</span>{" "}
+              {typeof report.userAge === "number" ? report.userAge : "—"}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Sleep hours:</span>{" "}
+              {typeof report.sleepHours === "number" ? report.sleepHours : "—"}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Sun exposure:</span> {report.sunExposure ?? "—"}
+            </p>
+          </div>
+          {report.lifestyleInputs ? (
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Lifestyle inputs:</span> {report.lifestyleInputs}
+            </p>
+          ) : null}
           <p className="text-sm text-foreground">
             {report.summary?.trim() ? report.summary : "—"}
           </p>
