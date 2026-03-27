@@ -1,6 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Helps App Router + Supabase: avoid broken vendor chunk resolution for scoped packages on some Windows dev setups.
+  experimental: {
+    serverComponentsExternalPackages: ["@supabase/supabase-js"],
+  },
   async redirects() {
     return [
       { source: "/dashboard/assessment/start", destination: "/start-assessment", permanent: true },

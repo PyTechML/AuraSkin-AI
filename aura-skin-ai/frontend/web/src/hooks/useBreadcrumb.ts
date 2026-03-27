@@ -61,9 +61,38 @@ const pathLabels: Record<string, string> = {
 const partnerCommerceSegments = new Set(["orders", "inventory"]);
 const partnerOperationsSegments = new Set(["assigned-users", "notifications", "bookings"]);
 
+/** Loose UUID match for URL segments (v4-style hex + dashes). */
+const UUID_LIKE_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function labelForUuidSegment(segment: string, prevSegment: string | undefined): string | null {
+  if (!UUID_LIKE_SEGMENT.test(segment)) return null;
+  switch (prevSegment) {
+    case "stores":
+      return "Store";
+    case "dermatologists":
+      return "Dermatologist";
+    case "shop":
+      return "Product";
+    case "orders":
+      return segment.startsWith("ord-") ? `Order #${segment.replace(/^ord-/, "")}` : "Order";
+    case "cart":
+    case "checkout":
+      return "Details";
+    case "reports":
+      return "Assessment Report";
+    case "tracking":
+    case "assessment":
+      return "Details";
+    default:
+      return "Details";
+  }
+}
+
 function getSegmentLabel(segment: string, prevSegment: string | undefined): string {
   if (pathLabels[segment]) return pathLabels[segment];
   if (/^\[.*\]$/.test(segment)) return "Detail";
+  const uuidLabel = labelForUuidSegment(segment, prevSegment);
+  if (uuidLabel) return uuidLabel;
   if (prevSegment === "orders") return segment.startsWith("ord-") ? `Order #${segment.replace(/^ord-/, "")}` : "Order";
   if (prevSegment === "inventory") return segment === "add" ? "Add Product" : "Edit Product";
   if (prevSegment === "assigned-users") return "User";

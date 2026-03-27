@@ -23,7 +23,6 @@ import type { NormalizedPatient } from "@/types/patient";
 import type { NormalizedDermatologistProfile } from "@/types/profile";
 import type { DermatologistEarnings } from "@/types/earnings";
 import type { DermatologistNotification } from "@/types/notification";
-import { supabase } from "@/lib/supabase";
 import { API_BASE } from "./apiBase";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import {
@@ -1565,6 +1564,16 @@ export async function deleteProduct(
 }
 
 export async function uploadPartnerProductImage(file: File): Promise<string> {
+  // Dynamic import keeps @supabase/supabase-js out of the main client/server graphs (Navbar → apiPartner).
+  // A static import caused webpack to emit vendor-chunks/@supabase.js which failed to resolve on some Windows dev builds.
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error("Supabase environment variables are not configured.");
+  }
+  const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
   const path = `store-products/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
   const { error } = await supabase.storage
