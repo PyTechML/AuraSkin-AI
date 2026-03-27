@@ -68,14 +68,16 @@ export class PublicRepository {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, status, is_active")
-      .eq("role", role);
+      .select("id, role, status, is_active");
     if (error || !data?.length) return new Set<string>();
-    const eligible = (data as Array<{ id: string; status?: string | null; is_active?: boolean | null }>).filter(
+    const eligible = (
+      data as Array<{ id: string; role?: string | null; status?: string | null; is_active?: boolean | null }>
+    ).filter(
       (row) => {
+        const rowRole = String(row.role ?? "").trim().toLowerCase();
         const status = String(row.status ?? "approved").trim().toLowerCase();
         const isActive = row.is_active ?? true;
-        return status === "approved" && isActive === true;
+        return rowRole === role && status === "approved" && isActive === true;
       }
     );
     return new Set(eligible.map((row) => row.id));

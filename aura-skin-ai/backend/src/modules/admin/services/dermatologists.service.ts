@@ -5,12 +5,14 @@ import {
   type DermatologistVerificationRow,
 } from "../repositories/dermatologists.repository";
 import { AuditService } from "./audit.service";
+import { PartnerActivationService } from "./partner-activation.service";
 
 @Injectable()
 export class AdminDermatologistsService {
   constructor(
     private readonly dermRepo: AdminDermatologistsRepository,
-    private readonly audit: AuditService
+    private readonly audit: AuditService,
+    private readonly partnerActivationService: PartnerActivationService
   ) {}
 
   async getPendingVerifications(): Promise<AdminDermatologistWithVerification[]> {
@@ -35,6 +37,9 @@ export class AdminDermatologistsService {
     );
     if (!ok) throw new NotFoundException("Failed to update verification");
     await this.dermRepo.setDermatologistVerified(verification.dermatologist_id, true);
+    const identity = await this.partnerActivationService.getProfileIdentity(verification.dermatologist_id);
+    await this.partnerActivationService.ensureRoleProfileRow(verification.dermatologist_id, "dermatologist", identity);
+    await this.partnerActivationService.activateRole(verification.dermatologist_id, "dermatologist");
     await this.audit.log(adminId, "verify_dermatologist", "dermatologist_verification", verificationId, {
       dermatologist_id: verification.dermatologist_id,
     });

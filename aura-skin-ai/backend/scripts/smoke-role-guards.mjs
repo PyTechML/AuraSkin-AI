@@ -4,6 +4,8 @@ const EXPECTED_STORE_ID =
   process.env.EXPECTED_STORE_ID ?? "9dff9b25-a7eb-44d7-ae12-42aca4dc77c3";
 const EXPECTED_DERM_EMAIL =
   (process.env.EXPECTED_DERM_EMAIL ?? "doctor@auraskin.ai").toLowerCase();
+const EXPECTED_STORE_NAME = process.env.EXPECTED_STORE_NAME ?? "";
+const EXPECTED_DERM_ID = process.env.EXPECTED_DERM_ID ?? "";
 const NEARBY_QUERY = process.env.NEARBY_QUERY ?? "lat=19.076&lng=72.8777";
 
 function toArrayPayload(payload) {
@@ -101,6 +103,23 @@ async function main() {
     hasExpectedDerm,
     `Expected dermatologist email not found on /api/dermatologists: ${EXPECTED_DERM_EMAIL}`
   );
+  if (EXPECTED_STORE_NAME.trim().length > 0) {
+    const hasStoreByName = storesBase.some((s) => {
+      if (!s || typeof s !== "object") return false;
+      const name = typeof s.name === "string" ? s.name.trim().toLowerCase() : "";
+      return name === EXPECTED_STORE_NAME.trim().toLowerCase();
+    });
+    assert(
+      hasStoreByName,
+      `Expected store name not found on /api/stores: ${EXPECTED_STORE_NAME}`
+    );
+  }
+  if (EXPECTED_DERM_ID.trim().length > 0) {
+    assert(
+      dermBaseIds.has(EXPECTED_DERM_ID.trim()),
+      `Expected dermatologist id not found on /api/dermatologists: ${EXPECTED_DERM_ID}`
+    );
+  }
 
   console.log("Smoke role guards passed.");
   console.log(
@@ -110,6 +129,8 @@ async function main() {
         dermatologistsCount: dermBase.length,
         expectedStoreId: EXPECTED_STORE_ID,
         expectedDermEmail: EXPECTED_DERM_EMAIL,
+        expectedStoreName: EXPECTED_STORE_NAME || undefined,
+        expectedDermId: EXPECTED_DERM_ID || undefined,
       },
       null,
       2

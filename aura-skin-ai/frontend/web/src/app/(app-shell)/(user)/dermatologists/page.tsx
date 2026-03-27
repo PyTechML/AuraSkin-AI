@@ -176,7 +176,7 @@ export default function DermatologistsPage() {
                     <p className="text-sm text-muted-foreground">
                       {d.specialty?.trim() ? d.specialty : "General Dermatology"}
                     </p>
-                    {d.yearsExperience != null && (
+                    {typeof d.yearsExperience === "number" && d.yearsExperience > 0 && (
                       <p className="text-xs text-muted-foreground mt-1">
                         {d.yearsExperience}+ years experience
                       </p>

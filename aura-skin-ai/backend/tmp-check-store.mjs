@@ -1,0 +1,10 @@
+import "dotenv/config";
+import { createClient } from "@supabase/supabase-js";
+const url=process.env.SUPABASE_URL||process.env.NEXT_PUBLIC_SUPABASE_URL;
+const key=process.env.SUPABASE_SERVICE_ROLE_KEY;
+const s=createClient(url,key,{auth:{persistSession:false}});
+const {data:p}=await s.from("profiles").select("id,email,role,status,is_active").eq("role","store");
+const {data:sp}=await s.from("store_profiles").select("id");
+const ids=new Set((sp||[]).map(r=>r.id));
+const eligible=(p||[]).filter(r=>String(r.status??'approved').toLowerCase()==='approved' && (r.is_active??true)===true);
+console.log(JSON.stringify({store_profiles_role_count:(p||[]).length,eligible_store_profiles_count:eligible.length,eligible_without_store_profile:eligible.filter(r=>!ids.has(r.id)).map(r=>({id:r.id,email:r.email}))},null,2));

@@ -10,6 +10,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "smoke:role-guards": "node scripts/smoke-role-guards.mjs",
+    "seed:test-partners": "node scripts/seed-test-partners.mjs",
     "seed:initial": "ts-node -r tsconfig-paths/register src/scripts/seed-initial-data.ts",
     "seed:accounts": "ts-node -r tsconfig-paths/register src/scripts/seed-default-accounts.ts",
     "test": "jest",

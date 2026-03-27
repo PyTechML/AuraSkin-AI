@@ -124,12 +124,14 @@ function mapStoreProfile(row: PublicStoreProfileRow): StoreResponse {
 function mapDermatologist(row: PublicDermatologistRow): DermatologistResponse {
   const fallbackClinicAddress = [row.clinic_name, row.city].filter(Boolean).join(", ");
   const clinicAddress = (row.clinic_address ?? fallbackClinicAddress) || undefined;
+  const yearsExperience =
+    row.years_experience != null && Number(row.years_experience) > 0 ? Number(row.years_experience) : undefined;
   return {
     id: row.id,
     name: row.name,
     specialty: row.specialization ?? "",
     email: row.email ?? "",
-    yearsExperience: row.years_experience ?? undefined,
+    yearsExperience,
     rating: row.rating != null ? Number(row.rating) : undefined,
     clinicAddress,
     clinicLat: row.latitude != null ? Number(row.latitude) : undefined,

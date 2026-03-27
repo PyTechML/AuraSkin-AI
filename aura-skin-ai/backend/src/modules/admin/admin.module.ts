@@ -29,6 +29,7 @@ import { AdminAiManagementService } from "./services/ai-management.service";
 import { AdminOrdersService } from "./services/orders.service";
 import { AdminConsultationsService } from "./services/consultations.service";
 import { AdminSessionsService } from "./services/sessions.service";
+import { PartnerActivationService } from "./services/partner-activation.service";
 import { AdminUsersRepository } from "./repositories/users.repository";
 import { RoleRequestsRepository } from "./repositories/role-requests.repository";
 import { AdminStoresRepository } from "./repositories/stores.repository";
@@ -63,6 +64,7 @@ import { AdminSettingsService } from "./services/settings.service";
     AdminService,
     AuditService,
     AdminUsersService,
+    PartnerActivationService,
     RoleRequestsService,
     AdminStoresService,
     AdminDermatologistsService,
