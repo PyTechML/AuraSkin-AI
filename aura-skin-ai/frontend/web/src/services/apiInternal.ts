@@ -18,12 +18,21 @@ export function getAuthHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
+function formatNestMessage(raw: unknown): string {
+  if (Array.isArray(raw)) {
+    return raw.map((m) => String(m)).filter(Boolean).join("; ");
+  }
+  if (typeof raw === "string" && raw.trim()) return raw.trim();
+  return "";
+}
+
 function getErrorMessage(res: Response, json: Record<string, unknown>): string {
   if (res.status === 401) {
     return "Session expired. Please login again.";
   }
   const code = typeof json?.code === "string" ? json.code : "UNKNOWN_BACKEND_ERROR";
-  const message = (json?.message as string) ?? `Request failed: ${res.status}`;
+  const message =
+    formatNestMessage(json?.message) || `Request failed: ${res.status}`;
   return `[${code}] ${message} (status=${res.status})`;
 }
 

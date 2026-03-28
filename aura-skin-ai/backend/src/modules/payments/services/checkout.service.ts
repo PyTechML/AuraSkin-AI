@@ -20,6 +20,41 @@ export class CheckoutService {
     }
   }
 
+  private formatSupabaseError(
+    err: { message?: string; details?: string; hint?: string } | null | undefined
+  ): string {
+    if (!err) return "";
+    return [err.message, err.details, err.hint].filter(Boolean).join(" — ");
+  }
+
+  private async insertOrderLines(
+    orderId: string,
+    lines: Array<{
+      productId: string;
+      quantity: number;
+      unitPrice: number;
+      productName: string;
+    }>
+  ): Promise<void> {
+    const supabase = getSupabaseClient();
+    for (const l of lines) {
+      const { error } = await supabase.from("order_items").insert({
+        order_id: orderId,
+        product_id: l.productId,
+        quantity: l.quantity,
+        price: l.unitPrice,
+        product_name: l.productName,
+      });
+      if (error) {
+        await supabase.from("orders").delete().eq("id", orderId);
+        const msg = this.formatSupabaseError(error);
+        throw new BadRequestException(
+          msg ? `Failed to save order items: ${msg}` : "Failed to save order items"
+        );
+      }
+    }
+  }
+
   private async getProfileDisplayName(userId: string): Promise<string | null> {
     const supabase = getSupabaseClient();
     const { data } = await supabase
@@ -42,11 +77,54 @@ export class CheckoutService {
     return fromProfile || undefined;
   }
 
+  private async resolveCheckoutLines(
+    lines: { productId: string; quantity: number; storeId?: string }[]
+  ): Promise<
+    Array<{
+      productId: string;
+      quantity: number;
+      unitPrice: number;
+      productName: string;
+      storeId: string;
+    }>
+  > {
+    if (!lines.length) {
+      throw new BadRequestException("No checkout items");
+    }
+    const out: Array<{
+      productId: string;
+      quantity: number;
+      unitPrice: number;
+      productName: string;
+      storeId: string;
+    }> = [];
+    let canonicalStore: string | null = null;
+    for (const line of lines) {
+      const explicit = line.storeId?.trim();
+      const storeHint = explicit || canonicalStore || undefined;
+      const { product, unitPrice, resolvedStoreId } = await this.getProductAndPrice(
+        line.productId,
+        storeHint
+      );
+      if (canonicalStore == null) {
+        canonicalStore = resolvedStoreId;
+      } else if (resolvedStoreId !== canonicalStore) {
+        throw new BadRequestException("All cart items must be from the same store");
+      }
+      out.push({
+        productId: line.productId,
+        quantity: line.quantity,
+        unitPrice,
+        productName: (product as { name?: string }).name ?? "Product",
+        storeId: resolvedStoreId,
+      });
+    }
+    return out;
+  }
+
   async createCheckoutSession(
     userId: string,
-    productId: string,
-    quantity: number,
-    storeId: string | undefined,
+    lines: { productId: string; quantity: number; storeId?: string }[],
     successUrl: string,
     cancelUrl: string,
     customerNameHint?: string | null
@@ -55,43 +133,12 @@ export class CheckoutService {
       throw new BadRequestException("Payment service is not configured");
     }
     const supabase = getSupabaseClient();
-    let resolvedStoreId = storeId?.trim() ?? "";
-    if (!resolvedStoreId) {
-      const { data: invRow, error: invError } = await supabase
-        .from("inventory")
-        .select("store_id")
-        .eq("product_id", productId)
-        .eq("status", "approved")
-        .limit(1)
-        .maybeSingle();
-      const sid = (invRow as { store_id?: string } | null)?.store_id;
-      if (invError || !sid) {
-        throw new BadRequestException("No approved inventory for product");
-      }
-      resolvedStoreId = sid;
-    }
-    const { data: inventory } = await supabase
-      .from("inventory")
-      .select("price_override")
-      .eq("store_id", resolvedStoreId)
-      .eq("product_id", productId)
-      .eq("status", "approved")
-      .single();
-    const { data: product } = await supabase
-      .from("products")
-      .select("id, name, price")
-      .eq("id", productId)
-      .single();
-    if (!product) {
-      throw new BadRequestException("Product not found");
-    }
-    const unitPriceRaw = inventory?.price_override ?? product.price ?? 0;
-    const unitPrice = typeof unitPriceRaw === "number" ? unitPriceRaw : parseFloat(String(unitPriceRaw).replace(/[^0-9.]/g, ""));
-    
-    if (isNaN(unitPrice) || unitPrice <= 0) {
-      throw new BadRequestException("Product price not available or invalid");
-    }
-    const amount = Number(unitPrice) * quantity;
+    const resolved = await this.resolveCheckoutLines(lines);
+    const resolvedStoreId = resolved[0].storeId;
+    const amount = resolved.reduce(
+      (sum, l) => sum + Number(l.unitPrice) * l.quantity,
+      0
+    );
     const customerName = await this.resolveCustomerName(userId, customerNameHint);
     const { data: order, error: orderError } = await supabase
       .from("orders")
@@ -99,49 +146,55 @@ export class CheckoutService {
         user_id: userId,
         store_id: resolvedStoreId,
         order_status: "pending",
+        payment_status: "pending",
         total_amount: amount,
         ...(customerName ? { customer_name: customerName } : {}),
       } as any)
       .select()
       .single();
     if (orderError || !order) {
-      throw new BadRequestException("Failed to create order");
+      const msg = this.formatSupabaseError(orderError);
+      throw new BadRequestException(
+        msg ? `Failed to create order: ${msg}` : "Failed to create order"
+      );
     }
-    await supabase.from("order_items").insert({
-      order_id: (order as { id: string }).id,
-      product_id: productId,
-      quantity,
-      price: unitPrice,
-      product_name: (product as { name?: string }).name ?? "Product",
-    });
+    const orderId = (order as { id: string }).id;
+    await this.insertOrderLines(
+      orderId,
+      resolved.map((l) => ({
+        productId: l.productId,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        productName: l.productName,
+      }))
+    );
+    const first = resolved[0];
     const session = await this.stripe.checkout.sessions.create({
       mode: "payment",
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: userId,
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: {
-              name: (product as { name?: string }).name ?? "Product",
-              images: [],
-            },
-            unit_amount: Math.round(Number(unitPrice) * 100),
+      line_items: resolved.map((l) => ({
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: l.productName,
+            images: [],
           },
-          quantity,
+          unit_amount: Math.round(Number(l.unitPrice) * 100),
         },
-      ],
+        quantity: l.quantity,
+      })),
       metadata: {
         type: "order",
-        order_id: (order as { id: string }).id,
+        order_id: orderId,
         user_id: userId,
         store_id: resolvedStoreId,
-        product_id: productId,
-        quantity: String(quantity),
-        unit_price: String(unitPrice),
+        product_id: first.productId,
+        quantity: String(resolved.reduce((s, l) => s + l.quantity, 0)),
+        unit_price: String(first.unitPrice),
         total_amount: String(amount),
-        product_name: (product as { name?: string }).name ?? "",
+        product_name: resolved.map((l) => l.productName).join(", ").slice(0, 500),
       },
     });
     const url = session.url ?? "";
@@ -299,17 +352,18 @@ export class CheckoutService {
 
   async createUpiSession(
     userId: string,
-    productId: string,
-    quantity: number,
-    storeId: string | undefined,
+    lines: { productId: string; quantity: number; storeId?: string }[],
     customerNameHint?: string | null
   ): Promise<{ upi_url: string; payment_id: string; amount: number }> {
-    const { product, unitPrice, resolvedStoreId } = await this.getProductAndPrice(productId, storeId);
-    const amount = Number(unitPrice) * quantity;
+    const resolved = await this.resolveCheckoutLines(lines);
+    const resolvedStoreId = resolved[0].storeId;
+    const amount = resolved.reduce(
+      (sum, l) => sum + Number(l.unitPrice) * l.quantity,
+      0
+    );
     const supabase = getSupabaseClient();
     const customerName = await this.resolveCustomerName(userId, customerNameHint);
 
-    // Create a pending order
     const { data: order, error: orderError } = await supabase
       .from("orders")
       .insert({
@@ -324,23 +378,28 @@ export class CheckoutService {
       .single();
 
     if (orderError || !order) {
-      throw new BadRequestException("Failed to create order");
+      const msg = this.formatSupabaseError(orderError);
+      throw new BadRequestException(
+        msg ? `Failed to create order: ${msg}` : "Failed to create order"
+      );
     }
 
-    // Insert order item
-    await supabase.from("order_items").insert({
-      order_id: order.id,
-      product_id: productId,
-      quantity: quantity,
-      price: unitPrice,
-      product_name: product.name ?? "Product",
-    });
+    const orderIdU = (order as { id: string }).id;
+    await this.insertOrderLines(
+      orderIdU,
+      resolved.map((l) => ({
+        productId: l.productId,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        productName: l.productName,
+      }))
+    );
 
     const { data: payment, error: payError } = await supabase
       .from("payments")
       .insert({
         user_id: userId,
-        order_id: order.id,
+        order_id: orderIdU,
         amount,
         currency: "inr",
         payment_status: "pending",
@@ -353,9 +412,10 @@ export class CheckoutService {
       throw new BadRequestException("Failed to initiate payment");
     }
 
+    const orderId = orderIdU;
     await this.eventsService.emit("order_update", {
       store_id: resolvedStoreId,
-      order_id: order.id,
+      order_id: orderId,
       message: "New UPI order received",
       recipient_role: "store",
     });
@@ -364,11 +424,15 @@ export class CheckoutService {
       user_id: userId,
       store_id: resolvedStoreId,
       entity_type: "order",
-      entity_id: order.id,
-      metadata: { amount, product_id: productId, method: "upi" },
+      entity_id: orderId,
+      metadata: {
+        amount,
+        product_id: resolved[0].productId,
+        method: "upi",
+        line_count: resolved.length,
+      },
     });
 
-    // Ideally fetched from a store config or env
     const vpa = "auraskin@upi";
     const name = "AuraSkin AI";
     const upiUrl = `upi://pay?pa=${vpa}&pn=${encodeURIComponent(name)}&am=${amount}&cu=INR&tr=${(payment as any).id}`;
@@ -378,14 +442,16 @@ export class CheckoutService {
 
   async createCodSession(
     userId: string,
-    productId: string,
-    quantity: number,
-    storeId: string | undefined,
+    lines: { productId: string; quantity: number; storeId?: string }[],
     shippingAddress: string,
     customerNameHint?: string | null
   ): Promise<{ order_id: string }> {
-    const { product, unitPrice, resolvedStoreId } = await this.getProductAndPrice(productId, storeId);
-    const amount = Number(unitPrice) * quantity;
+    const resolved = await this.resolveCheckoutLines(lines);
+    const resolvedStoreId = resolved[0].storeId;
+    const amount = resolved.reduce(
+      (sum, l) => sum + Number(l.unitPrice) * l.quantity,
+      0
+    );
     const supabase = getSupabaseClient();
     const customerName = await this.resolveCustomerName(userId, customerNameHint);
     const ship = shippingAddress?.trim() ?? "";
@@ -396,6 +462,7 @@ export class CheckoutService {
         user_id: userId,
         store_id: resolvedStoreId,
         order_status: "pending",
+        payment_status: "pending",
         total_amount: amount,
         ...(customerName ? { customer_name: customerName } : {}),
         ...(ship ? { shipping_address: ship } : {}),
@@ -404,21 +471,26 @@ export class CheckoutService {
       .single();
 
     if (orderError || !order) {
-      throw new BadRequestException("Failed to create COD order");
+      const msg = this.formatSupabaseError(orderError);
+      throw new BadRequestException(
+        msg ? `Failed to create COD order: ${msg}` : "Failed to create COD order"
+      );
     }
 
-    // Insert order item
-    await supabase.from("order_items").insert({
-      order_id: order.id,
-      product_id: productId,
-      quantity: quantity,
-      price: unitPrice,
-      product_name: product.name ?? "Product",
-    });
+    const orderId = (order as { id: string }).id;
+    await this.insertOrderLines(
+      orderId,
+      resolved.map((l) => ({
+        productId: l.productId,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        productName: l.productName,
+      }))
+    );
 
     await this.eventsService.emit("order_update", {
       store_id: resolvedStoreId,
-      order_id: order.id,
+      order_id: orderId,
       message: "New COD order received",
       recipient_role: "store",
     });
@@ -427,11 +499,16 @@ export class CheckoutService {
       user_id: userId,
       store_id: resolvedStoreId,
       entity_type: "order",
-      entity_id: order.id,
-      metadata: { amount, product_id: productId, method: "cod" },
+      entity_id: orderId,
+      metadata: {
+        amount,
+        product_id: resolved[0].productId,
+        method: "cod",
+        line_count: resolved.length,
+      },
     });
 
-    return { order_id: order.id };
+    return { order_id: orderId };
   }
 
   private async getProductAndPrice(productId: string, storeId?: string) {
@@ -443,6 +520,7 @@ export class CheckoutService {
         .select("store_id")
         .eq("product_id", productId)
         .eq("status", "approved")
+        .order("created_at", { ascending: true })
         .limit(1)
         .maybeSingle();
       resolvedStoreId = (invRow as { store_id?: string } | null)?.store_id ?? "";

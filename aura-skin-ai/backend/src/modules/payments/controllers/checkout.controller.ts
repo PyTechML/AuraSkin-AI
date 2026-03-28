@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Post, Req, UseGuards } from "@nestjs/common";
 import { Request } from "express";
 import { Throttle } from "@nestjs/throttler";
 import { AuthGuard, AuthenticatedUser } from "../../../shared/guards/auth.guard";
@@ -8,6 +8,28 @@ import type { BackendRole } from "../../../shared/constants/roles";
 import { CheckoutService } from "../services/checkout.service";
 import { formatSuccess } from "../../../shared/utils/responseFormatter";
 import { CreateCheckoutDto } from "../dto/create-checkout.dto";
+
+type CheckoutLineInput = { productId: string; quantity: number; storeId?: string };
+
+function checkoutLinesFromDto(dto: CreateCheckoutDto): CheckoutLineInput[] {
+  if (dto.items?.length) {
+    return dto.items.map((i) => ({
+      productId: i.product_id,
+      quantity: i.quantity,
+      storeId: i.store_id,
+    }));
+  }
+  if (dto.product_id != null && dto.quantity != null) {
+    return [
+      {
+        productId: dto.product_id,
+        quantity: dto.quantity,
+        storeId: dto.store_id,
+      },
+    ];
+  }
+  throw new BadRequestException("Provide items[] or product_id with quantity");
+}
 import { ConsultationPaymentDto } from "../dto/consultation-payment.dto";
 
 const RequireUser = () => SetMetadata(ROLES_KEY, ["user"] as BackendRole[]);
@@ -30,11 +52,10 @@ export class CheckoutController {
       (req.headers.origin ?? req.headers.referer ?? "http://localhost:3000").replace(/\/$/, "");
     const successUrl = `${baseUrl}/payment/success`;
     const cancelUrl = `${baseUrl}/payment/cancel`;
+    const lines = checkoutLinesFromDto(dto);
     const data = await this.checkoutService.createCheckoutSession(
       userId,
-      dto.product_id,
-      dto.quantity,
-      dto.store_id,
+      lines,
       successUrl,
       cancelUrl,
       dto.customer_name
@@ -70,11 +91,10 @@ export class CheckoutController {
   ) {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const userId = user?.id ?? "";
+    const lines = checkoutLinesFromDto(dto);
     const data = await this.checkoutService.createUpiSession(
       userId,
-      dto.product_id,
-      dto.quantity,
-      dto.store_id,
+      lines,
       dto.customer_name
     );
     return formatSuccess(data);
@@ -87,11 +107,10 @@ export class CheckoutController {
   ) {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const userId = user?.id ?? "";
+    const lines = checkoutLinesFromDto(dto);
     const data = await this.checkoutService.createCodSession(
       userId,
-      dto.product_id,
-      dto.quantity,
-      dto.store_id,
+      lines,
       dto.shipping_address ?? "",
       dto.customer_name
     );

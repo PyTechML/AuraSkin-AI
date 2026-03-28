@@ -1,12 +1,45 @@
-import { IsString, IsInt, Min, IsOptional } from "class-validator";
+import { Type } from "class-transformer";
+import {
+  IsString,
+  IsInt,
+  Min,
+  IsOptional,
+  IsArray,
+  ArrayMinSize,
+  ValidateNested,
+  ValidateIf,
+} from "class-validator";
 
-export class CreateCheckoutDto {
+export class CheckoutLineDto {
   @IsString()
   product_id!: string;
 
   @IsInt()
   @Min(1)
   quantity!: number;
+
+  @IsOptional()
+  @IsString()
+  store_id?: string;
+}
+
+export class CreateCheckoutDto {
+  /** Multi-line cart (preferred). When set, must be non-empty. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => CheckoutLineDto)
+  items?: CheckoutLineDto[];
+
+  @ValidateIf((o) => !o.items?.length)
+  @IsString()
+  product_id?: string;
+
+  @ValidateIf((o) => !o.items?.length)
+  @IsInt()
+  @Min(1)
+  quantity?: number;
 
   @IsOptional()
   @IsString()

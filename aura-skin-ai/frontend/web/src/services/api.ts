@@ -619,28 +619,28 @@ export async function submitContact(payload: {
   await apiPost("/contact", payload);
 }
 
-export async function createCheckoutSession(payload: {
+export type CheckoutLinePayload = {
   product_id: string;
   quantity: number;
   store_id?: string;
+};
+
+export async function createCheckoutSession(payload: {
+  items: CheckoutLinePayload[];
   customer_name?: string;
 }): Promise<{ checkout_url: string }> {
   return await apiPost("/payments/create-checkout", payload);
 }
 
 export async function createUpiPayment(payload: {
-  product_id: string;
-  quantity: number;
-  store_id?: string;
+  items: CheckoutLinePayload[];
   customer_name?: string;
 }): Promise<{ upi_url: string; payment_id: string; amount: number }> {
   return await apiPost("/payments/upi", payload);
 }
 
 export async function createCodPayment(payload: {
-  product_id: string;
-  quantity: number;
-  store_id?: string;
+  items: CheckoutLinePayload[];
   shipping_address?: string;
   customer_name?: string;
 }): Promise<{ order_id: string; status?: string }> {

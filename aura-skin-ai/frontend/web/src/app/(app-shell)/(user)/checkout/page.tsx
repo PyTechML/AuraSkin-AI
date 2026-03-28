@@ -101,20 +101,18 @@ function CheckoutContent() {
 
   const handleSubmit = async () => {
     if (!user) return;
+    if (checkoutItems.length === 0) return;
     setSubmitting(true);
     try {
-      if (checkoutItems.length > 1) {
-        addToast("Unable to start checkout", "error");
-        return;
-      }
-      const line = checkoutItems[0];
-      if (!line) return;
+      const itemsPayload = checkoutItems.map(({ product, quantity }) => ({
+        product_id: product.id,
+        quantity,
+        ...(product.storeId ? { store_id: product.storeId } : {}),
+      }));
 
       if (paymentMethod === "upi") {
         const result = await createUpiPayment({
-          product_id: line.product.id,
-          quantity: line.quantity,
-          store_id: line.product.storeId,
+          items: itemsPayload,
           customer_name: user.name?.trim() || undefined,
         });
         if (result?.upi_url && result?.payment_id) {
@@ -131,9 +129,7 @@ function CheckoutContent() {
           .filter(Boolean)
           .join(", ");
         const result = await createCodPayment({
-          product_id: line.product.id,
-          quantity: line.quantity,
-          store_id: line.product.storeId,
+          items: itemsPayload,
           shipping_address: shippingStr,
           customer_name: user.name?.trim() || undefined,
         });
@@ -151,18 +147,20 @@ function CheckoutContent() {
 
       // Card / Netbanking / Wallet → Stripe checkout
       const { checkout_url: checkoutUrl } = await createCheckoutSession({
-        product_id: line.product.id,
-        quantity: line.quantity,
-        store_id: line.product.storeId,
+        items: itemsPayload,
         customer_name: user.name?.trim() || undefined,
       });
       if (checkoutUrl) {
         window.location.href = checkoutUrl;
         return;
       }
-      addToast("Unable to start checkout", "error");
-    } catch {
-      addToast("Unable to start checkout", "error");
+      addToast("Checkout did not return a payment link. Check that Stripe is configured on the server.", "error");
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : "Unable to start checkout";
+      addToast(msg, "error");
     } finally {
       setSubmitting(false);
     }
