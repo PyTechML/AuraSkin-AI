@@ -1,20 +1,11 @@
-import {
-  Controller,
-  Post,
-  Body,
-  Get,
-  Headers,
-  Req,
-  UnauthorizedException,
-  BadRequestException,
-} from "@nestjs/common";
+import { Controller, Post, Body, Req, UnauthorizedException, BadRequestException } from "@nestjs/common";
 import { Request } from "express";
 import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
 import { formatSuccess } from "../../shared/utils/responseFormatter";
 
 @Controller("auth")
-export class AuthController {
+export class AuthPasswordController {
   constructor(private readonly authService: AuthService) {}
 
   @Throttle({ auth: { limit: 10, ttl: 60_000 } })
@@ -53,32 +44,6 @@ export class AuthController {
     if ("error" in result) {
       throw new BadRequestException(result.error);
     }
-    return formatSuccess({ success: true });
-  }
-
-  @Get("me")
-  async me(@Headers("authorization") authHeader?: string) {
-    const raw = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
-    const token = raw?.trim() || undefined;
-    if (!token) {
-      return formatSuccess(null);
-    }
-    const user = await this.authService.getUser(token);
-    if (!user) {
-      throw new UnauthorizedException("Invalid token");
-    }
-    return formatSuccess(user);
-  }
-
-  @Post("role-request/resubmit")
-  async resubmitRoleRequest(
-    @Headers("authorization") authHeader: string | undefined,
-    @Body() body: { requested_role?: string }
-  ) {
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-    if (!token) throw new UnauthorizedException("Invalid token");
-    const ok = await this.authService.resubmitRoleRequest(token, body?.requested_role ?? "");
-    if (!ok) throw new BadRequestException("Unable to resubmit role request");
     return formatSuccess({ success: true });
   }
 }

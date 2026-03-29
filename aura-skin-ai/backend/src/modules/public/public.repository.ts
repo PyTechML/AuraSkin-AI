@@ -15,6 +15,10 @@ function isLegacyStoreActive(status?: string | null): boolean {
   return String(status).trim().toLowerCase() === "active";
 }
 
+function envFlagTrue(key: string): boolean {
+  return process.env[key]?.trim().toLowerCase() === "true";
+}
+
 /** Approved store_profiles row with optional public catalog product count. */
 export type PublicStoreProfileRow = DbStoreProfile & { totalProducts: number };
 
@@ -64,6 +68,35 @@ export interface ProductFilters {
 }
 
 export class PublicRepository {
+  /**
+   * Optional merge of legacy `stores` rows into the public list (env-gated).
+   * @see PUBLIC_MERGE_LEGACY_STORES — always append active legacy rows (deduped by id).
+   * @see PUBLIC_LEGACY_STORES_WHEN_EMPTY — append only when the partner list is empty.
+   */
+  private async mergeLegacyStoresIntoPartnerList(
+    partnerRows: PublicStoreProfileRow[]
+  ): Promise<PublicStoreProfileRow[]> {
+    const mergeAll = envFlagTrue("PUBLIC_MERGE_LEGACY_STORES");
+    const whenEmpty = envFlagTrue("PUBLIC_LEGACY_STORES_WHEN_EMPTY");
+    if (!mergeAll && !(whenEmpty && partnerRows.length === 0)) {
+      return partnerRows;
+    }
+    const supabase = getSupabaseClient();
+    const { data: legacyRows, error } = await supabase.from("stores").select("*");
+    if (error || !legacyRows?.length) {
+      return partnerRows;
+    }
+    const seen = new Set(partnerRows.map((r) => r.id));
+    const out: PublicStoreProfileRow[] = [...partnerRows];
+    for (const row of legacyRows as DbStore[]) {
+      const mapped = mapLegacyStoreToPublicRow(row);
+      if (!mapped || seen.has(mapped.id)) continue;
+      seen.add(mapped.id);
+      out.push(mapped);
+    }
+    return out;
+  }
+
   private async getEligibleProfileIdsByRole(role: "store" | "dermatologist"): Promise<Set<string>> {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
@@ -274,42 +307,49 @@ export class PublicRepository {
       approvedProfileCount: profileRows.length,
       withProductsCount: profileRows.filter((r) => r.totalProducts > 0).length,
     });
-    return profileRows;
+    return this.mergeLegacyStoresIntoPartnerList(profileRows);
   }
 
   async getStoreById(id: string): Promise<PublicStoreProfileRow | null> {
     const supabase = getSupabaseClient();
     const eligibleProfiles = await this.getEligibleProfileIdsByRole("store");
-    if (!eligibleProfiles.has(id)) return null;
-    const { data: profile, error: profError } = await supabase
-      .from("store_profiles")
-      .select("*")
-      .eq("id", id)
-      .eq("approval_status", "approved")
-      .maybeSingle();
-    if (!profError && profile) {
-      const { data: invRows, error: invError } = await supabase
-        .from("inventory")
-        .select("product_id")
-        .eq("store_id", id)
-        .eq("status", "approved");
-      if (!invError && invRows?.length) {
-        const productIds = [...new Set(invRows.map((r: { product_id: string }) => r.product_id))];
-        const { data: liveProducts, error: liveError } = await supabase
-          .from("products")
-          .select("id")
-          .in("id", productIds)
-          .eq("approval_status", "LIVE");
-        if (!liveError && liveProducts?.length) {
-          const liveProductIds = new Set(liveProducts.map((p: { id: string }) => p.id));
-          let totalProducts = 0;
-          for (const row of invRows as { product_id: string }[]) {
-            if (liveProductIds.has(row.product_id)) totalProducts += 1;
+    if (eligibleProfiles.has(id)) {
+      const { data: profile, error: profError } = await supabase
+        .from("store_profiles")
+        .select("*")
+        .eq("id", id)
+        .eq("approval_status", "approved")
+        .maybeSingle();
+      if (!profError && profile) {
+        const { data: invRows, error: invError } = await supabase
+          .from("inventory")
+          .select("product_id")
+          .eq("store_id", id)
+          .eq("status", "approved");
+        if (!invError && invRows?.length) {
+          const productIds = [...new Set(invRows.map((r: { product_id: string }) => r.product_id))];
+          const { data: liveProducts, error: liveError } = await supabase
+            .from("products")
+            .select("id")
+            .in("id", productIds)
+            .eq("approval_status", "LIVE");
+          if (!liveError && liveProducts?.length) {
+            const liveProductIds = new Set(liveProducts.map((p: { id: string }) => p.id));
+            let totalProducts = 0;
+            for (const row of invRows as { product_id: string }[]) {
+              if (liveProductIds.has(row.product_id)) totalProducts += 1;
+            }
+            return { ...(profile as DbStoreProfile), totalProducts };
           }
-          return { ...(profile as DbStoreProfile), totalProducts };
         }
+        return { ...(profile as DbStoreProfile), totalProducts: 0 };
       }
-      return { ...(profile as DbStoreProfile), totalProducts: 0 };
+    }
+    if (envFlagTrue("PUBLIC_MERGE_LEGACY_STORES") || envFlagTrue("PUBLIC_LEGACY_STORES_WHEN_EMPTY")) {
+      const { data: legacy } = await supabase.from("stores").select("*").eq("id", id).maybeSingle();
+      if (legacy) {
+        return mapLegacyStoreToPublicRow(legacy as DbStore);
+      }
     }
     return null;
   }

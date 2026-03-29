@@ -1,5 +1,6 @@
+import { createHash } from "crypto";
 import { Injectable } from "@nestjs/common";
-import type { DbAssessment, DbReport } from "../../../database/models";
+import type { DbAssessment, DbProduct, DbReport } from "../../../database/models";
 import { ReportRepository } from "../repositories/report.repository";
 import { AssessmentRepository } from "../repositories/assessment.repository";
 import { RoutineRepository } from "../repositories/routine.repository";
@@ -12,9 +13,18 @@ import { generateRoutinePlan } from "../../ai/routine-engine";
 import { AnalyticsService } from "../../analytics/analytics.service";
 import { getSupabaseClient } from "../../../database/supabase.client";
 import { AiReportService } from "./ai-report.service";
+import { EligibleCatalogService } from "../../../catalog/eligible-catalog.service";
+import { OpenAiCatalogProductService } from "./openai-catalog-product.service";
 
 const PRODUCT_RECOMMENDATION_LIMIT = 5;
 const DERMATOLOGIST_RECOMMENDATION_LIMIT = 5;
+
+function stableMergeTie(id: string, seed: string): string {
+  return createHash("sha256")
+    .update(`${seed}|${id}`)
+    .digest("hex");
+}
+
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 const computeSkinScore = (acneScore: number, pigmentationScore: number, hydrationScore: number): number => {
   const weighted = (1 - clamp01(acneScore)) * 0.33 + (1 - clamp01(pigmentationScore)) * 0.33 + clamp01(hydrationScore) * 0.34;
@@ -64,18 +74,123 @@ export interface ReportForUser extends DbReport {
 
 @Injectable()
 export class ReportService {
+  private readonly recPoolLimit = 28;
+
   constructor(
     private readonly reportRepository: ReportRepository,
     private readonly assessmentRepository: AssessmentRepository,
     private readonly routineRepository: RoutineRepository,
     private readonly productRecommendation: ProductRecommendationService,
     private readonly aiProductRecommendation: AiProductRecommendationService,
+    private readonly eligibleCatalog: EligibleCatalogService,
+    private readonly openAiCatalogProducts: OpenAiCatalogProductService,
     private readonly eventsService: EventsService,
     private readonly reportGenerator: ReportGenerator,
     private readonly aiDermatologistRecommendation: AiDermatologistRecommendationService,
     private readonly analytics: AnalyticsService,
     private readonly aiReportService: AiReportService
   ) {}
+
+  /**
+   * Heuristic pool over LIVE+inventory catalog, optional OpenAI rerank to real UUIDs.
+   */
+  private async buildRecommendedProductEntries(
+    assessment: DbAssessment,
+    scores: { acne_score: number | null; pigmentation_score: number | null; hydration_score: number | null },
+    options: { city?: string; skinCondition?: string | null } = {}
+  ): Promise<{ id: string; score: number }[]> {
+    const { city, skinCondition } = options;
+    const concerns = [assessment.primary_concern, assessment.secondary_concern].filter(
+      (c): c is string => typeof c === "string" && c.length > 0
+    );
+    const skinProfile = {
+      skinType: assessment.skin_type ?? undefined,
+      concerns,
+      skinCondition: skinCondition ?? undefined,
+      tieSeed: assessment.id,
+    };
+
+    const [legacyProducts, aiRanked] = await Promise.all([
+      this.productRecommendation.recommend(skinProfile, this.recPoolLimit),
+      this.aiProductRecommendation.getTopProducts(
+        {
+          skin_type: assessment.skin_type,
+          concerns,
+          acne_score: scores.acne_score,
+          pigmentation_score: scores.pigmentation_score,
+          hydration_score: scores.hydration_score,
+          user_city: city,
+          skin_condition: skinCondition ?? undefined,
+          tie_seed: assessment.id,
+        },
+        this.recPoolLimit
+      ),
+    ]);
+
+    const tie = assessment.id;
+    const seen = new Set<string>();
+    const merged = [
+      ...aiRanked.map((p) => ({ id: p.id, score: p.score })),
+      ...legacyProducts.map((p) => ({ id: p.id, score: p.matchPercent ?? 0.75 })),
+    ]
+      .filter((p) => {
+        if (seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+      })
+      .sort((a, b) => {
+        const d = b.score - a.score;
+        if (d !== 0) return d;
+        return stableMergeTie(a.id, tie).localeCompare(stableMergeTie(b.id, tie));
+      })
+      .slice(0, this.recPoolLimit);
+
+    const eligibleProducts = await this.eligibleCatalog.getEligibleProductsByIds(merged.map((m) => m.id));
+    const eligibleSet = new Set(eligibleProducts.map((p) => p.id));
+    const mergedEligible = merged.filter((m) => eligibleSet.has(m.id));
+
+    const productById = new Map(eligibleProducts.map((p) => [p.id, p]));
+    const candidateProducts: DbProduct[] = mergedEligible
+      .map((m) => productById.get(m.id))
+      .filter((p): p is DbProduct => !!p);
+
+    const llmIds = await this.openAiCatalogProducts.rankProductIds({
+      candidateProducts,
+      skinType: assessment.skin_type,
+      concerns,
+      skinCondition: skinCondition ?? undefined,
+      scores: {
+        acne: scores.acne_score,
+        pigmentation: scores.pigmentation_score,
+        hydration: scores.hydration_score,
+      },
+    });
+
+    const limit = PRODUCT_RECOMMENDATION_LIMIT;
+    if (llmIds.length > 0) {
+      const out: { id: string; score: number }[] = llmIds.map((id, i) => ({
+        id,
+        score: 0.95 - i * 0.02,
+      }));
+      for (const m of mergedEligible) {
+        if (out.length >= limit) break;
+        if (out.some((x) => x.id === m.id)) continue;
+        out.push({ id: m.id, score: Math.min(0.89, m.score / 130) });
+      }
+      return out.slice(0, limit);
+    }
+
+    if (!mergedEligible.length) {
+      return [];
+    }
+
+    const fallbackSorted = [...mergedEligible].sort((a, b) => {
+      const d = b.score - a.score;
+      if (d !== 0) return d;
+      return stableMergeTie(a.id, tie).localeCompare(stableMergeTie(b.id, tie));
+    });
+    return fallbackSorted.slice(0, limit).map((m) => ({ id: m.id, score: m.score }));
+  }
 
   async list(userId: string): Promise<DbReport[]> {
     return this.reportRepository.findByUserId(userId);
@@ -207,8 +322,13 @@ export class ReportService {
   }
 
   async getLatestRecommendedProducts(
-    userId: string
+    userId: string,
+    reportId?: string
   ): Promise<Awaited<ReturnType<ReportRepository["getRecommendedProducts"]>>> {
+    if (reportId) {
+      const report = await this.reportRepository.findByIdAndUser(reportId, userId);
+      if (report) return this.reportRepository.getRecommendedProducts(report.id);
+    }
     const all = await this.reportRepository.findByUserId(userId);
     const latest = all[0] ?? null;
     if (!latest) return [];
@@ -289,47 +409,17 @@ export class ReportService {
     });
     if (!report) return null;
 
-    const skinProfile = {
-      skinType: assessment.skin_type ?? undefined,
-      concerns: [assessment.primary_concern, assessment.secondary_concern].filter(
-        (c): c is string => typeof c === "string" && c.length > 0
-      ),
-    };
+    const mergedProducts = await this.buildRecommendedProductEntries(
+      assessment,
+      {
+        acne_score: generated.acne_score,
+        pigmentation_score: generated.pigmentation_score,
+        hydration_score: generated.hydration_score,
+      },
+      { city, skinCondition: generated.skin_condition }
+    );
 
-    const [legacyProducts, aiRanked] = await Promise.all([
-      this.productRecommendation.recommend(skinProfile, PRODUCT_RECOMMENDATION_LIMIT),
-      this.aiProductRecommendation.getTopProducts(
-        {
-          skin_type: assessment.skin_type,
-          concerns: skinProfile.concerns,
-          acne_score: generated.acne_score,
-          pigmentation_score: generated.pigmentation_score,
-          hydration_score: generated.hydration_score,
-          user_city: city,
-        },
-        PRODUCT_RECOMMENDATION_LIMIT
-      ),
-    ]);
-
-    const seen = new Set<string>();
-    const merged = [
-      ...aiRanked.map((p) => ({ id: p.id, score: p.score })),
-      ...legacyProducts.map((p) => ({ id: p.id, score: p.matchPercent ?? 0.8 })),
-    ]
-      .filter((p) => {
-        if (seen.has(p.id)) return false;
-        seen.add(p.id);
-        return true;
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, PRODUCT_RECOMMENDATION_LIMIT);
-
-    const candidateIds = merged.map((p) => p.id).filter((id) => typeof id === "string" && id.length > 0);
-    const { data: existingProducts } = await supabase.from("products").select("id").in("id", candidateIds);
-    const existingProductIds = new Set((existingProducts ?? []).map((row: { id: string }) => row.id));
-
-    for (const p of merged) {
-      if (!existingProductIds.has(p.id)) continue;
+    for (const p of mergedProducts) {
       await this.reportRepository.insertRecommendedProduct({
         report_id: report.id,
         product_id: p.id,
@@ -482,45 +572,17 @@ export class ReportService {
     });
     if (!report) return null;
 
-    const skinProfile = {
-      skinType: assessment.skin_type ?? undefined,
-      concerns,
-    };
+    const mergedProducts = await this.buildRecommendedProductEntries(
+      assessment,
+      {
+        acne_score: generated.acne_score,
+        pigmentation_score: generated.pigmentation_score,
+        hydration_score: generated.hydration_score,
+      },
+      { city, skinCondition: generated.skin_condition }
+    );
 
-    const [legacyProducts, aiRanked] = await Promise.all([
-      this.productRecommendation.recommend(skinProfile, PRODUCT_RECOMMENDATION_LIMIT),
-      this.aiProductRecommendation.getTopProducts(
-        {
-          skin_type: assessment.skin_type,
-          concerns: skinProfile.concerns,
-          acne_score: generated.acne_score,
-          pigmentation_score: generated.pigmentation_score,
-          hydration_score: generated.hydration_score,
-          user_city: city,
-        },
-        PRODUCT_RECOMMENDATION_LIMIT
-      ),
-    ]);
-
-    const seen = new Set<string>();
-    const merged = [
-      ...aiRanked.map((p) => ({ id: p.id, score: p.score })),
-      ...legacyProducts.map((p) => ({ id: p.id, score: p.matchPercent ?? 0.8 })),
-    ]
-      .filter((p) => {
-        if (seen.has(p.id)) return false;
-        seen.add(p.id);
-        return true;
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, PRODUCT_RECOMMENDATION_LIMIT);
-
-    const candidateIds = merged.map((p) => p.id).filter((id) => typeof id === "string" && id.length > 0);
-    const { data: existingProducts } = await supabase.from("products").select("id").in("id", candidateIds);
-    const existingProductIds = new Set((existingProducts ?? []).map((row: { id: string }) => row.id));
-
-    for (const p of merged) {
-      if (!existingProductIds.has(p.id)) continue;
+    for (const p of mergedProducts) {
       await this.reportRepository.insertRecommendedProduct({
         report_id: report.id,
         product_id: p.id,
@@ -622,53 +684,17 @@ export class ReportService {
     options: { city?: string; userLat?: number; userLng?: number } = {}
   ): Promise<void> {
     const { city, userLat, userLng } = options;
-    const supabase = getSupabaseClient();
-    const concerns = [assessment.primary_concern, assessment.secondary_concern].filter(
-      (c): c is string => typeof c === "string" && c.length > 0
-    );
+    const reportRow = await this.reportRepository.findById(reportId);
 
     const existingProducts = await this.reportRepository.getRecommendedProducts(reportId);
     const existingProductIds = new Set(existingProducts.map((r) => r.product_id));
 
-    const skinProfile = {
-      skinType: assessment.skin_type ?? undefined,
-      concerns,
-    };
+    const mergedProducts = await this.buildRecommendedProductEntries(assessment, scores, {
+      city,
+      skinCondition: reportRow?.skin_condition ?? null,
+    });
 
-    const [legacyProducts, aiRanked] = await Promise.all([
-      this.productRecommendation.recommend(skinProfile, PRODUCT_RECOMMENDATION_LIMIT),
-      this.aiProductRecommendation.getTopProducts(
-        {
-          skin_type: assessment.skin_type,
-          concerns,
-          acne_score: scores.acne_score,
-          pigmentation_score: scores.pigmentation_score,
-          hydration_score: scores.hydration_score,
-          user_city: city,
-        },
-        PRODUCT_RECOMMENDATION_LIMIT
-      ),
-    ]);
-
-    const seen = new Set<string>();
-    const merged = [
-      ...aiRanked.map((p) => ({ id: p.id, score: p.score })),
-      ...legacyProducts.map((p) => ({ id: p.id, score: p.matchPercent ?? 0.8 })),
-    ]
-      .filter((p) => {
-        if (seen.has(p.id)) return false;
-        seen.add(p.id);
-        return true;
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, PRODUCT_RECOMMENDATION_LIMIT);
-
-    const candidateIds = merged.map((p) => p.id).filter((id) => typeof id === "string" && id.length > 0);
-    const { data: productsInDb } = await supabase.from("products").select("id").in("id", candidateIds);
-    const productsInDbSet = new Set((productsInDb ?? []).map((row: { id: string }) => row.id));
-
-    for (const p of merged) {
-      if (!productsInDbSet.has(p.id)) continue;
+    for (const p of mergedProducts) {
       if (existingProductIds.has(p.id)) continue;
       await this.reportRepository.insertRecommendedProduct({
         report_id: reportId,
@@ -692,6 +718,4 @@ export class ReportService {
       });
     }
   }
-
-  /** Dermatologist recommendations are delegated to AiDermatologistRecommendationService. */
 }

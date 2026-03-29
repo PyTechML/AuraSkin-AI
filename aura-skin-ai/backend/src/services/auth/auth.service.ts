@@ -1,11 +1,18 @@
 import { Injectable } from "@nestjs/common";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient, type Session, type User } from "@supabase/supabase-js";
 import { getSupabaseConfig } from "../../config/supabase.config";
+import { loadEnv } from "../../config/env";
 import { toBackendRole, type BackendRole } from "../../shared/constants/roles";
 import { getSupabaseClient } from "../../database/supabase.client";
 import { LoggerService } from "../../core/logger/logger.service";
 import { SessionService } from "../../modules/session/session.service";
 import type { CurrentUser } from "./auth.types";
+import {
+  GMAIL_ONLY_LOGIN_MESSAGE,
+  GMAIL_ONLY_SIGNUP_MESSAGE,
+  isGmailDomainEmail,
+  normalizeEmail,
+} from "./auth-gmail.util";
 
 export interface SignInContext {
   ipAddress?: string | null;
@@ -22,6 +29,11 @@ export type SignInResult =
       /** Set when user requested a different role; request created and pending admin approval. */
       role_request_pending?: boolean;
       requested_role?: string;
+      /** Present after OAuth + OTP when client should continue via /oauth/bridge */
+      oauthBridgeNext?: string;
+      oauthRequestedRole?: string;
+      /** True when login completed from an OAuth email-OTP challenge (not password OTP). */
+      oauthOtpCompleted?: boolean;
     }
   | { error: string };
 
@@ -45,43 +57,49 @@ export class AuthService {
   /** Backend roles that require admin approval when requested at login. */
   private static readonly REQUESTABLE_ROLES: BackendRole[] = ["store", "dermatologist", "admin"];
 
-  async signInWithPassword(
-    email: string,
-    password: string,
-    context?: SignInContext,
-    requestedRole?: string
-  ): Promise<SignInResult> {
-    const normalizedEmail = (email ?? "").trim().toLowerCase();
-    const { data, error } = await this.supabase.auth.signInWithPassword({
-      email: normalizedEmail,
-      password,
-    });
-    if (error) {
-      this.logger.logSecurity({
-        event: "failed_login",
-        extra: { email: normalizedEmail, reason: error.message },
-      });
-      return { error: AuthService.LOGIN_ERROR_MESSAGE };
-    }
-    const session = data.session;
-    const user = data.user;
-    if (!session || !user) {
-      this.logger.logSecurity({
-        event: "failed_login",
-        extra: { email: normalizedEmail, reason: "missing_session_or_user" },
-      });
-      return { error: AuthService.LOGIN_ERROR_MESSAGE };
-    }
+  private createEphemeralAnonClient(): SupabaseClient {
+    const { url, anonKey } = getSupabaseConfig();
+    return createClient(url, anonKey, { auth: { persistSession: false } });
+  }
 
+  /** @returns Error message if Gmail-only policy rejects; otherwise null. */
+  private enforceGmailForPasswordAuth(normalizedLowerEmail: string): string | null {
+    const env = loadEnv();
+    if (!env.authGmailOnly) return null;
+    if (!isGmailDomainEmail(normalizedLowerEmail)) {
+      return GMAIL_ONLY_LOGIN_MESSAGE;
+    }
+    return null;
+  }
+
+  private enforceGmailForSignup(normalizedLowerEmail: string): string | null {
+    const env = loadEnv();
+    if (!env.authGmailOnly) return null;
+    if (!isGmailDomainEmail(normalizedLowerEmail)) {
+      return GMAIL_ONLY_SIGNUP_MESSAGE;
+    }
+    return null;
+  }
+
+  /**
+   * Shared path after Supabase has issued a session (password, OTP verify, etc.).
+   * Keeps profile heal, app session row, and role-request behavior identical.
+   */
+  async finalizeLoginFromSession(
+    session: Session,
+    user: User,
+    context?: SignInContext,
+    requestedRole?: string,
+    oauthExtras?: { oauthBridgeNext?: string; oauthRequestedRole?: string }
+  ): Promise<SignInResult> {
     let profile = await this.getProfileByUserId(user.id);
 
     if (!profile) {
-      // Heal missing profile rows for existing auth users.
       const supabaseAdmin = getSupabaseClient();
       const { error: healError } = await supabaseAdmin.from("profiles").upsert(
         {
           id: user.id,
-          email: (user.email ?? "").trim().toLowerCase() || normalizedEmail,
+          email: (user.email ?? "").trim().toLowerCase(),
           role: "user",
           full_name:
             (user.user_metadata as { name?: string; full_name?: string } | null)?.name ??
@@ -137,7 +155,109 @@ export class AuthService {
       result.requested_role = requestedBackend;
     }
 
+    if (oauthExtras?.oauthBridgeNext !== undefined) {
+      result.oauthBridgeNext = oauthExtras.oauthBridgeNext;
+    }
+    if (oauthExtras?.oauthRequestedRole !== undefined) {
+      result.oauthRequestedRole = oauthExtras.oauthRequestedRole;
+    }
+    if (oauthExtras) {
+      result.oauthOtpCompleted = true;
+    }
+
     return result;
+  }
+
+  /**
+   * Validates password using an isolated Supabase client (no singleton session pollution).
+   * Used only when email OTP is required before returning tokens.
+   */
+  async signInWithPasswordForOtpStart(
+    email: string,
+    password: string
+  ): Promise<
+    | { ok: true; accessToken: string; refreshToken: string; userId: string; userEmail: string }
+    | { ok: false; error: string }
+  > {
+    const normalizedEmail = normalizeEmail(email);
+    const gmailErr = this.enforceGmailForPasswordAuth(normalizedEmail);
+    if (gmailErr) {
+      this.logger.logSecurity({
+        event: "gmail_rejected_login",
+        extra: { email: normalizedEmail },
+      });
+      return { ok: false, error: gmailErr };
+    }
+
+    const client = this.createEphemeralAnonClient();
+    const { data, error } = await client.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
+    });
+    if (error) {
+      this.logger.logSecurity({
+        event: "failed_login",
+        extra: { email: normalizedEmail, reason: error.message },
+      });
+      return { ok: false, error: AuthService.LOGIN_ERROR_MESSAGE };
+    }
+    const session = data.session;
+    const user = data.user;
+    if (!session || !user) {
+      this.logger.logSecurity({
+        event: "failed_login",
+        extra: { email: normalizedEmail, reason: "missing_session_or_user" },
+      });
+      return { ok: false, error: AuthService.LOGIN_ERROR_MESSAGE };
+    }
+    await client.auth.signOut();
+    return {
+      ok: true,
+      accessToken: session.access_token,
+      refreshToken: session.refresh_token ?? "",
+      userId: user.id,
+      userEmail: (user.email ?? normalizedEmail).trim().toLowerCase(),
+    };
+  }
+
+  async signInWithPassword(
+    email: string,
+    password: string,
+    context?: SignInContext,
+    requestedRole?: string
+  ): Promise<SignInResult> {
+    const normalizedEmail = normalizeEmail(email);
+    const gmailErr = this.enforceGmailForPasswordAuth(normalizedEmail);
+    if (gmailErr) {
+      this.logger.logSecurity({
+        event: "gmail_rejected_login",
+        extra: { email: normalizedEmail },
+      });
+      return { error: gmailErr };
+    }
+
+    const { data, error } = await this.supabase.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
+    });
+    if (error) {
+      this.logger.logSecurity({
+        event: "failed_login",
+        extra: { email: normalizedEmail, reason: error.message },
+      });
+      return { error: AuthService.LOGIN_ERROR_MESSAGE };
+    }
+    const session = data.session;
+    const user = data.user;
+    if (!session || !user) {
+      this.logger.logSecurity({
+        event: "failed_login",
+        extra: { email: normalizedEmail, reason: "missing_session_or_user" },
+      });
+      return { error: AuthService.LOGIN_ERROR_MESSAGE };
+    }
+
+    return this.finalizeLoginFromSession(session, user, context, requestedRole);
   }
 
   private async createRoleRequest(userId: string, requestedRole: BackendRole): Promise<void> {
@@ -155,7 +275,16 @@ export class AuthService {
     options?: { name?: string; requestedRole?: string }
   ): Promise<SignUpResult> {
     const supabaseAdmin = getSupabaseClient();
-    const normalizedEmail = (email ?? "").trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
+
+    const gmailErr = this.enforceGmailForSignup(normalizedEmail);
+    if (gmailErr) {
+      this.logger.logSecurity({
+        event: "gmail_rejected_signup",
+        extra: { email: normalizedEmail },
+      });
+      return { error: gmailErr };
+    }
 
     const { data, error } = await supabaseAdmin.auth.admin.createUser({
       email: normalizedEmail,
@@ -165,7 +294,6 @@ export class AuthService {
     });
 
     if (error) {
-      // Surface a safe, user-friendly message while logging the underlying reason.
       this.logger.logSecurity({
         event: "signup_failed",
         extra: { email: normalizedEmail, code: (error as { code?: string }).code ?? "unknown" },
@@ -180,7 +308,6 @@ export class AuthService {
 
     const userId = data.user?.id;
     if (userId) {
-      // Defensive upsert in case the trigger that seeds profiles is missing.
       const { error: upsertError } = await supabaseAdmin.from("profiles").upsert(
         {
           id: userId,
@@ -268,7 +395,6 @@ export class AuthService {
     if (error || !row) return null;
     const role = toBackendRole(row.role ?? "user");
     if (!role) return null;
-    // Enforce single master admin: only admin@auraskin.ai may have admin role.
     if (role === "admin") {
       const email = (row.email ?? "").trim().toLowerCase();
       if (email !== AuthService.MASTER_ADMIN_EMAIL.toLowerCase()) return null;

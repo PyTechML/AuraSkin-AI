@@ -132,6 +132,9 @@ def run_job(payload: dict, redis_client, supabase):
             limit=5,
             skin_type=product_skin_type,
             concerns=product_concerns,
+            pigmentation_score=pigmentation_score,
+            hydration_score=hydration_score,
+            assessment_id=assessment_id,
         )
         derm_rows = recommend_dermatologists(city=city, latitude=lat, longitude=lng, limit=5)
 

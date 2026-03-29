@@ -30,6 +30,7 @@ import { SessionModule } from "../modules/session/session.module";
     ThrottlerModule.forRoot([
       { name: "public", ttl: 60_000, limit: 100 },
       { name: "auth", ttl: 60_000, limit: 10 },
+      { name: "otp", ttl: 60_000, limit: 8 },
       { name: "consultation", ttl: 60_000, limit: 30 },
       { name: "admin", ttl: 60_000, limit: 200 },
       { name: "payment", ttl: 60_000, limit: 20 },

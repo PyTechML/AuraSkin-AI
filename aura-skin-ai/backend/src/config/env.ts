@@ -62,6 +62,25 @@ export interface EnvConfig {
   enableQuestionnaireOnlyAssessment: boolean;
   assessmentMode: "QUEUE" | "SYNC_AI" | "QUESTIONNAIRE_ONLY";
   workerHeartbeatMaxAgeMs: number;
+  /** Email OTP layer for signup/login/OAuth (default false). */
+  authEmailOtpRequired: boolean;
+  /** Restrict email+password and OAuth (except optional Apple flag) to @gmail.com (default false). */
+  authGmailOnly: boolean;
+  /** Allow Apple OAuth when AUTH_GMAIL_ONLY is true (default false). */
+  authAppleOAuthWhenGmailOnly: boolean;
+  /** 32-byte key as hex (64 chars) or base64; required when authEmailOtpRequired. */
+  authOtpEncryptionKey: string | undefined;
+  resendApiKey: string | undefined;
+  resendFromEmail: string | undefined;
+  /** Nodemailer SMTP (optional; used for OTP when SMTP_HOST is set — takes priority over Resend). */
+  smtpHost: string | undefined;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string | undefined;
+  smtpPass: string | undefined;
+  smtpFrom: string | undefined;
+  /** Server-to-server secret for OAuth OTP challenge creation from Next.js. */
+  internalOtpBridgeSecret: string | undefined;
 }
 
 let cached: EnvConfig | null = null;
@@ -72,6 +91,51 @@ function parseQuestionnaireOnlyFlag(nodeEnv: string): boolean {
   if (normalized === "false") return false;
   if (normalized === "true") return true;
   return nodeEnv !== "production";
+}
+
+function parseBoolEnvDefaultFalse(key: string): boolean {
+  const raw = process.env[key];
+  if (raw === undefined || raw === "") return false;
+  return raw.trim().toLowerCase() === "true";
+}
+
+function parseOptionalTrimmed(key: string): string | undefined {
+  const v = process.env[key];
+  if (v === undefined || v === "") return undefined;
+  const t = v.trim();
+  return t === "" ? undefined : t;
+}
+
+function assertAuthOtpEnvIfEnabled(config: {
+  authEmailOtpRequired: boolean;
+  authOtpEncryptionKey: string | undefined;
+  resendApiKey: string | undefined;
+  resendFromEmail: string | undefined;
+  smtpHost: string | undefined;
+  smtpFrom: string | undefined;
+  smtpUser: string | undefined;
+  smtpPass: string | undefined;
+  internalOtpBridgeSecret: string | undefined;
+}): void {
+  if (!config.authEmailOtpRequired) return;
+  if (!config.authOtpEncryptionKey) {
+    throw new Error("AUTH_EMAIL_OTP_REQUIRED=true requires AUTH_OTP_ENCRYPTION_KEY (32-byte hex or base64)");
+  }
+  const hasResend = Boolean(config.resendApiKey && config.resendFromEmail);
+  const hasSmtp = Boolean(config.smtpHost && config.smtpFrom && config.smtpUser && config.smtpPass);
+  if (!hasResend && !hasSmtp) {
+    throw new Error(
+      "AUTH_EMAIL_OTP_REQUIRED=true requires email transport: either RESEND_API_KEY + RESEND_FROM_EMAIL, or SMTP_HOST + SMTP_FROM + SMTP_USER + SMTP_PASS"
+    );
+  }
+  if (config.smtpHost && !(config.smtpFrom && config.smtpUser && config.smtpPass)) {
+    throw new Error(
+      "SMTP_HOST is set but OTP mail needs SMTP_FROM, SMTP_USER, and SMTP_PASS (or remove SMTP_* and use Resend)"
+    );
+  }
+  if (!config.internalOtpBridgeSecret || config.internalOtpBridgeSecret.length < 16) {
+    throw new Error("AUTH_EMAIL_OTP_REQUIRED=true requires INTERNAL_OTP_BRIDGE_SECRET (min 16 chars)");
+  }
 }
 
 function parseAssessmentMode(): "QUEUE" | "SYNC_AI" | "QUESTIONNAIRE_ONLY" {
@@ -136,7 +200,26 @@ export function loadEnv(): EnvConfig {
       min: 10_000,
       max: 3_600_000,
     }),
+    authEmailOtpRequired: parseBoolEnvDefaultFalse("AUTH_EMAIL_OTP_REQUIRED"),
+    authGmailOnly: parseBoolEnvDefaultFalse("AUTH_GMAIL_ONLY"),
+    authAppleOAuthWhenGmailOnly: parseBoolEnvDefaultFalse("AUTH_APPLE_OAUTH_WHEN_GMAIL_ONLY"),
+    authOtpEncryptionKey: parseOptionalTrimmed("AUTH_OTP_ENCRYPTION_KEY"),
+    resendApiKey: parseOptionalTrimmed("RESEND_API_KEY"),
+    resendFromEmail: parseOptionalTrimmed("RESEND_FROM_EMAIL"),
+    smtpHost: parseOptionalTrimmed("SMTP_HOST"),
+    smtpPort: getEnvIntOptional("SMTP_PORT", "587", { min: 1, max: 65535 }),
+    smtpSecure: parseBoolEnvDefaultFalse("SMTP_SECURE"),
+    smtpUser: parseOptionalTrimmed("SMTP_USER"),
+    smtpPass: parseOptionalTrimmed("SMTP_PASS"),
+    smtpFrom: parseOptionalTrimmed("SMTP_FROM"),
+    internalOtpBridgeSecret: parseOptionalTrimmed("INTERNAL_OTP_BRIDGE_SECRET"),
   };
   assertAssessmentEnvContract(cached);
+  assertAuthOtpEnvIfEnabled(cached);
   return cached;
+}
+
+/** For Nest module wiring before full `loadEnv` if needed — mirrors env parsing. */
+export function isAuthEmailOtpRequiredEnv(): boolean {
+  return parseBoolEnvDefaultFalse("AUTH_EMAIL_OTP_REQUIRED");
 }

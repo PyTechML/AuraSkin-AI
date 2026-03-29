@@ -204,7 +204,14 @@ export default function ReportDetailPage() {
 
       {recommendations.length > 0 && (
         <section className="space-y-4">
-          <h2 className="font-heading text-xl font-semibold">Recommended for You</h2>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <h2 className="font-heading text-xl font-semibold">Recommended for You</h2>
+            {typeof reportId === "string" && reportId ? (
+              <Button variant="outline" size="sm" asChild>
+                <Link href={`/shop?report=${encodeURIComponent(reportId)}`}>View on Products page</Link>
+              </Button>
+            ) : null}
+          </div>
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {recommendations.map((p) => (
               <UserProductCard key={p.id} product={p} />

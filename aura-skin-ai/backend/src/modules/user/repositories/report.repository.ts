@@ -127,11 +127,12 @@ export class ReportRepository {
     const { data: products } = await supabase
       .from("products")
       .select("*")
-      .in("id", Array.from(approvedIds));
+      .in("id", Array.from(approvedIds))
+      .eq("approval_status", "LIVE");
     const productMap = new Map((products ?? []).map((p) => [p.id, p as DbProduct]));
 
     return (links as DbRecommendedProduct[])
-      .filter((l) => approvedIds.has(l.product_id))
+      .filter((l) => approvedIds.has(l.product_id) && productMap.has(l.product_id))
       .map((l) => ({
         ...l,
         product: productMap.get(l.product_id),

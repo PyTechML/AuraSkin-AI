@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Req, UseGuards } from "@nestjs/common";
+import { Controller, Get, Param, Query, Req, UseGuards } from "@nestjs/common";
 import { Request } from "express";
 import { ForbiddenException } from "@nestjs/common";
 import { AuthGuard, AuthenticatedUser } from "../../../shared/guards/auth.guard";
@@ -26,10 +26,10 @@ export class ReportController {
   }
 
   @Get("shop/recommended-products")
-  async getShopRecommendedProducts(@Req() req: Request) {
+  async getShopRecommendedProducts(@Req() req: Request, @Query("reportId") reportId?: string) {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const userId = user?.id ?? "";
-    const data = await this.reportService.getLatestRecommendedProducts(userId);
+    const data = await this.reportService.getLatestRecommendedProducts(userId, reportId?.trim() || undefined);
     return formatSuccess(data);
   }
 

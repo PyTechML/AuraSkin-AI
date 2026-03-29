@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { getProducts, getAiRecommendedProducts } from "@/services/api";
+import { getProducts, getAiRecommendedProducts, getReports } from "@/services/api";
 import type { Product } from "@/types";
 import type { ProductFilters, ProductSort } from "@/services/api";
 import { UserProductCard } from "@/components/products/UserProductCard";
@@ -32,7 +32,9 @@ const SORT_OPTIONS: { value: ProductSort; label: string }[] = [
 export default function ShopPage() {
   const searchParams = useSearchParams();
   const storeFilter = searchParams.get("store")?.trim() ?? "";
+  const reportIdForRecs = searchParams.get("report")?.trim() ?? "";
 
+  const [latestReportId, setLatestReportId] = useState<string | null>(null);
   const [aiProducts, setAiProducts] = useState<Product[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,12 +45,35 @@ export default function ShopPage() {
   const perPage = 12;
 
   useEffect(() => {
+    if (reportIdForRecs) {
+      setLatestReportId(null);
+      return;
+    }
+    let alive = true;
+    getReports()
+      .then((list) => {
+        if (!alive) return;
+        const id = list[0]?.id;
+        setLatestReportId(typeof id === "string" && id.length > 0 ? id : null);
+      })
+      .catch(() => {
+        if (alive) setLatestReportId(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [reportIdForRecs]);
+
+  const effectiveReportIdForRecs = reportIdForRecs || latestReportId || "";
+
+  useEffect(() => {
     let alive = true;
     let interval: ReturnType<typeof setInterval> | undefined;
 
     const load = (isInitial = false) => {
       if (isInitial) setAiLoading(true);
-      getAiRecommendedProducts()
+      const q = effectiveReportIdForRecs.trim();
+      getAiRecommendedProducts(q.length > 0 ? q : undefined)
         .then((products) => {
           if (alive) setAiProducts(Array.isArray(products) ? products : []);
         })
@@ -75,7 +100,7 @@ export default function ShopPage() {
       if (interval) clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, []);
+  }, [effectiveReportIdForRecs]);
 
   const loadCatalog = useCallback(
     (silent = false) => {
@@ -154,13 +179,18 @@ export default function ShopPage() {
           </div>
         ) : (
           <Card className="border-border">
-            <CardContent className="py-8 text-center">
-              <p className="text-muted-foreground mb-4">
-                Complete assessment to unlock personalized product matches.
+            <CardContent className="py-8 text-center space-y-4">
+              <p className="text-muted-foreground">
+                Complete an assessment for personalized matches. If the marketplace does not yet list what you need, visit a partner store nearby.
               </p>
-              <Button asChild>
-                <Link href="/start-assessment">Start Assessment</Link>
-              </Button>
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button asChild>
+                  <Link href="/start-assessment">Start Assessment</Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link href="/stores">Find stores</Link>
+                </Button>
+              </div>
             </CardContent>
           </Card>
         )}

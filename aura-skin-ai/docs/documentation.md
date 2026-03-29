@@ -1079,6 +1079,26 @@ Source: `backend/src/config/env.ts`
   - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
   - `INTERNAL_EVENTS_SECRET`
   - `SENTRY_DSN`, `LOG_AGGREGATOR_URL`
+  - Auth add-on (optional; default off):
+    - `AUTH_EMAIL_OTP_REQUIRED` — when `true`, password signup/login and OAuth completion use email OTP; legacy `POST /api/auth/login` and `POST /api/auth/signup` are not registered (use `…/login/start`, `…/login/complete`, `…/signup/start`, `…/signup/complete`).
+    - `AUTH_GMAIL_ONLY` — when `true`, restrict email+password signup/login to `@gmail.com` (case-insensitive) and enforce the same for Google OAuth; Apple is blocked unless `AUTH_APPLE_OAUTH_WHEN_GMAIL_ONLY=true`.
+    - `AUTH_OTP_ENCRYPTION_KEY` — 32-byte key as 64-char hex or base64 (encrypts pending signup passwords and stored refresh tokens).
+    - OTP email: either `RESEND_API_KEY` + `RESEND_FROM_EMAIL`, or `SMTP_HOST` + `SMTP_FROM` + `SMTP_USER` + `SMTP_PASS` (optional `SMTP_PORT`, `SMTP_SECURE`). If `SMTP_HOST` is set, Nodemailer/SMTP is used; otherwise Resend.
+    - `INTERNAL_OTP_BRIDGE_SECRET` — shared with the Next.js app (server-only) for `POST /api/auth/oauth-otp/start`.
+
+On the **Next.js** app, set the same `AUTH_EMAIL_OTP_REQUIRED`, `AUTH_GMAIL_ONLY`, `AUTH_APPLE_OAUTH_WHEN_GMAIL_ONLY`, and `INTERNAL_OTP_BRIDGE_SECRET` in server environment (not `NEXT_PUBLIC_*`) so [`api/auth/callback/route.ts`](../frontend/web/src/app/api/auth/callback/route.ts) matches backend policy.
+
+- **`NEXT_PUBLIC_SUPABASE_URL`** and **`NEXT_PUBLIC_SUPABASE_ANON_KEY`** (frontend) — required for Google/Apple OAuth and client Realtime; without them, social buttons stay disabled and the callback redirects to login with a clear error (see `frontend/web/.env.example`).
+
+### Auth runbook (OTP + OAuth)
+
+1. **Supabase Auth redirect URLs** (Dashboard → Authentication → URL configuration): add `http://localhost:3000/api/auth/callback` for local dev and `https://<your-production-domain>/api/auth/callback` for production. **Site URL** should match your deployed web origin.
+2. **Google / Apple providers**: enable and configure in Supabase Dashboard (Apple requires Apple Developer setup); misconfiguration causes provider errors unrelated to this repo’s Nest API.
+3. **Email OTP (`AUTH_EMAIL_OTP_REQUIRED=true`)**:
+   - Apply backend migration that creates `pending_signups` and `auth_login_challenges` (see `backend/supabase/migrations/`).
+   - Set backend: `AUTH_OTP_ENCRYPTION_KEY`, mail transport (Resend or SMTP), `INTERNAL_OTP_BRIDGE_SECRET`.
+   - Set frontend: `NEXT_PUBLIC_AUTH_EMAIL_OTP_REQUIRED=true`, server `AUTH_EMAIL_OTP_REQUIRED=true`, and the same `INTERNAL_OTP_BRIDGE_SECRET` as the backend for OAuth+OTP.
+   - Ensure `NEXT_PUBLIC_API_URL` points at the live Nest API in production.
 
 ## AI engine runtime configuration
 Source: `backend/ai-engine/utils/config.py` and worker imports

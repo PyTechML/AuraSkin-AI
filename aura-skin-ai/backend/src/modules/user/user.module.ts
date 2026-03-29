@@ -21,6 +21,8 @@ import { AiDermatologistRecommendationService } from "../ai/dermatologist-recomm
 import { NotificationsModule } from "../notifications/notifications.module";
 import { AiEngineAnalysisService } from "../../ai/analysis/ai-engine-analysis.service";
 import { AiReportService } from "./services/ai-report.service";
+import { EligibleCatalogService } from "../../catalog/eligible-catalog.service";
+import { OpenAiCatalogProductService } from "./services/openai-catalog-product.service";
 
 @Module({
   imports: [NotificationsModule],
@@ -38,8 +40,10 @@ import { AiReportService } from "./services/ai-report.service";
     RoutineRepository,
     RoutineLogsRepository,
     ImageUploadService,
+    EligibleCatalogService,
     ProductRecommendationService,
     AiProductRecommendationService,
+    OpenAiCatalogProductService,
     AiDermatologistRecommendationService,
     AiEngineAnalysisService,
     AiReportService,

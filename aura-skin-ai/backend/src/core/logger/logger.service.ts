@@ -137,7 +137,14 @@ export class LoggerService {
       | "profile_heal_failed"
       | "profile_missing_after_heal"
       | "signup_failed"
-      | "signup_profile_upsert_failed";
+      | "signup_profile_upsert_failed"
+      | "otp_sent"
+      | "otp_failed"
+      | "otp_locked"
+      | "gmail_rejected_oauth"
+      | "gmail_rejected_signup"
+      | "gmail_rejected_login"
+      | "oauth_otp_bridge_rejected";
     user_id?: string;
     endpoint?: string;
     extra?: Record<string, unknown>;

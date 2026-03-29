@@ -77,8 +77,12 @@ export async function getProducts(
   }
 }
 
-export async function getAiRecommendedProducts(_userId?: string): Promise<Product[]> {
+export async function getAiRecommendedProducts(reportId?: string | null): Promise<Product[]> {
   try {
+    const q =
+      reportId && typeof reportId === "string" && reportId.trim().length > 0
+        ? `?reportId=${encodeURIComponent(reportId.trim())}`
+        : "";
     const payload = await apiGet<
       | Array<
           | {
@@ -122,7 +126,7 @@ export async function getAiRecommendedProducts(_userId?: string): Promise<Produc
           products?: unknown;
           recommended_products?: unknown;
         }
-    >("/user/shop/recommended-products");
+    >(`/user/shop/recommended-products${q}`);
 
     const root: unknown =
       Array.isArray(payload) ? payload : (payload as any)?.recommended_products ?? payload;

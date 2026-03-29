@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -10,10 +10,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { signup } from "@/services/apiAuth";
+import { signup, signupOtpStart, signupOtpComplete, signupOtpResend } from "@/services/apiAuth";
 import { usePanelToast } from "@/components/panel/PanelToast";
-import { supabase } from "@/lib/supabase";
+import {
+  supabase,
+  isSupabaseBrowserConfigured,
+  messageForOAuthInitError,
+  OAUTH_NOT_CONFIGURED_USER_MESSAGE,
+} from "@/lib/supabase";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  authAppleOAuthWhenGmailOnly,
+  authEmailOtpRequired,
+  authGmailOnly,
+} from "@/lib/auth-flags";
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -34,7 +44,7 @@ function AppleIcon({ className }: { className?: string }) {
   );
 }
 
-const schema = z
+const baseSignupSchema = z
   .object({
     name: z.string().min(1, "Name is required"),
     email: z.string().email("Enter a valid email"),
@@ -47,7 +57,16 @@ const schema = z
     path: ["confirmPassword"],
   });
 
-type FormData = z.infer<typeof schema>;
+const signupSchema = authGmailOnly
+  ? baseSignupSchema.refine((d) => d.email.trim().toLowerCase().endsWith("@gmail.com"), {
+      message: "Only Gmail addresses (@gmail.com) are allowed.",
+      path: ["email"],
+    })
+  : baseSignupSchema;
+
+type FormData = z.infer<typeof signupSchema>;
+
+const RESEND_COOLDOWN_SEC = 60;
 
 export default function SignupPage() {
   const router = useRouter();
@@ -55,47 +74,122 @@ export default function SignupPage() {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
-  } = useForm<FormData>({ resolver: zodResolver(schema) });
+  } = useForm<FormData>({ resolver: zodResolver(signupSchema) });
   const [pendingModalOpen, setPendingModalOpen] = useState(false);
   const [pendingRoleLabel, setPendingRoleLabel] = useState<"Store" | "Dermatologist">("Store");
+  const [step, setStep] = useState<"form" | "otp">("form");
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [otpCode, setOtpCode] = useState("");
+  const [otpSubmitting, setOtpSubmitting] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  const requestedRole = watch("requested_role") ?? "USER";
+  const showApple = !authGmailOnly || authAppleOAuthWhenGmailOnly;
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [resendCooldown]);
 
   const handleSocialLogin = async (provider: "google" | "apple") => {
+    if (!isSupabaseBrowserConfigured) {
+      addToast(OAUTH_NOT_CONFIGURED_USER_MESSAGE, "error");
+      return;
+    }
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
-          redirectTo: `${window.location.origin}/api/auth/callback?requested_role=USER`,
+          redirectTo: `${window.location.origin}/api/auth/callback?requested_role=${requestedRole}`,
         },
       });
       if (error) throw error;
     } catch (err) {
-      addToast(err instanceof Error ? err.message : "OAuth sign-in failed", "error");
+      const raw = err instanceof Error ? err.message : "OAuth sign-in failed";
+      addToast(messageForOAuthInitError(raw, provider), "error");
     }
+  };
+
+  const finishSignupSuccess = (role: "USER" | "STORE" | "DERMATOLOGIST") => {
+    if (role === "STORE" || role === "DERMATOLOGIST") {
+      setPendingRoleLabel(role === "STORE" ? "Store" : "Dermatologist");
+      setPendingModalOpen(true);
+    } else {
+      addToast("Registration successful. Welcome to AuraSkin AI.", "success");
+    }
+    router.push("/login");
   };
 
   const onSubmit = async (data: FormData) => {
     try {
+      if (authEmailOtpRequired) {
+        const { pendingId: id } = await signupOtpStart({
+          email: data.email,
+          password: data.password,
+          name: data.name,
+          requested_role: data.requested_role,
+        });
+        setPendingId(id);
+        setStep("otp");
+        setOtpCode("");
+        setResendCooldown(RESEND_COOLDOWN_SEC);
+        addToast("Check your email for a 6-digit verification code.", "success");
+        return;
+      }
+
       await signup({
         email: data.email,
         password: data.password,
         name: data.name,
         requested_role: data.requested_role,
       });
-      if (data.requested_role === "STORE" || data.requested_role === "DERMATOLOGIST") {
-        setPendingRoleLabel(data.requested_role === "STORE" ? "Store" : "Dermatologist");
-        setPendingModalOpen(true);
-      } else {
-        addToast("Registration successful. Welcome to AuraSkin AI.", "success");
-      }
-      router.push("/login");
+      finishSignupSuccess(data.requested_role);
     } catch (err) {
       const message =
-        err instanceof Error && err.message
-          ? err.message
-          : "Registration failed. Please try again.";
+        err instanceof Error && err.message ? err.message : "Registration failed. Please try again.";
       addToast(message, "error");
     }
+  };
+
+  const onVerifyOtp = async () => {
+    if (!pendingId || otpCode.trim().length < 6) {
+      addToast("Enter the 6-digit code from your email.", "error");
+      return;
+    }
+    setOtpSubmitting(true);
+    try {
+      await signupOtpComplete(pendingId, otpCode.trim());
+      const role = watch("requested_role") ?? "USER";
+      finishSignupSuccess(role);
+      setStep("form");
+      setPendingId(null);
+      setOtpCode("");
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Verification failed.", "error");
+    } finally {
+      setOtpSubmitting(false);
+    }
+  };
+
+  const onResendOtp = async () => {
+    if (!pendingId || resendCooldown > 0) return;
+    try {
+      await signupOtpResend(pendingId);
+      setResendCooldown(RESEND_COOLDOWN_SEC);
+      addToast("A new code was sent to your email.", "success");
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Could not resend code.", "error");
+    }
+  };
+
+  const onChangeEmail = () => {
+    setStep("form");
+    setPendingId(null);
+    setOtpCode("");
+    setResendCooldown(0);
   };
 
   return (
@@ -107,13 +201,63 @@ export default function SignupPage() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        {authEmailOtpRequired && step === "otp" && (
+          <Card className="mb-6 border border-border/60 bg-card/40">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base font-heading">Verify your email</CardTitle>
+              <CardDescription className="text-xs">
+                We sent a 6-digit code to your inbox. This confirms you can receive email at that address
+                (deliverability only — not a Google account endorsement).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="otp">Verification code</Label>
+                <Input
+                  id="otp"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="000000"
+                  maxLength={8}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" onClick={() => void onVerifyOtp()} disabled={otpSubmitting}>
+                  {otpSubmitting ? "Verifying..." : "Verify and create account"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={resendCooldown > 0}
+                  onClick={() => void onResendOtp()}
+                >
+                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend code"}
+                </Button>
+                <Button type="button" variant="ghost" onClick={onChangeEmail}>
+                  Change email
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (authEmailOtpRequired && step === "otp") return;
+            void handleSubmit(onSubmit)(e);
+          }}
+          className="space-y-4"
+        >
           <div className="space-y-2">
             <Label htmlFor="requested_role">Register as</Label>
             <select
               id="requested_role"
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               {...register("requested_role")}
+              disabled={authEmailOtpRequired && step === "otp"}
             >
               <option value="USER">User</option>
               <option value="STORE">Store Partner</option>
@@ -122,24 +266,35 @@ export default function SignupPage() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="name">Full name</Label>
-            <Input id="name" placeholder="Your name" {...register("name")} />
-            {errors.name && (
-              <p className="text-sm text-destructive">{errors.name.message}</p>
-            )}
+            <Input
+              id="name"
+              placeholder="Your name"
+              {...register("name")}
+              disabled={authEmailOtpRequired && step === "otp"}
+            />
+            {errors.name && <p className="text-sm text-destructive">{errors.name.message}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" placeholder="you@example.com" {...register("email")} />
-            {errors.email && (
-              <p className="text-sm text-destructive">{errors.email.message}</p>
-            )}
+            <Input
+              id="email"
+              type="email"
+              placeholder={authGmailOnly ? "you@gmail.com" : "you@example.com"}
+              {...register("email")}
+              disabled={authEmailOtpRequired && step === "otp"}
+            />
+            {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" placeholder="••••••••" {...register("password")} />
-            {errors.password && (
-              <p className="text-sm text-destructive">{errors.password.message}</p>
-            )}
+            <Input
+              id="password"
+              type="password"
+              placeholder="••••••••"
+              {...register("password")}
+              disabled={authEmailOtpRequired && step === "otp"}
+            />
+            {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="confirmPassword">Confirm password</Label>
@@ -148,14 +303,17 @@ export default function SignupPage() {
               type="password"
               placeholder="••••••••"
               {...register("confirmPassword")}
+              disabled={authEmailOtpRequired && step === "otp"}
             />
             {errors.confirmPassword && (
               <p className="text-sm text-destructive">{errors.confirmPassword.message}</p>
             )}
           </div>
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Creating account..." : "Create account"}
-          </Button>
+          {!(authEmailOtpRequired && step === "otp") && (
+            <Button type="submit" className="w-full" disabled={isSubmitting}>
+              {isSubmitting ? "Creating account..." : authEmailOtpRequired ? "Continue" : "Create account"}
+            </Button>
+          )}
         </form>
 
         <p className="mt-4 text-center text-sm text-muted-foreground">
@@ -171,25 +329,37 @@ export default function SignupPage() {
           <div className="flex-1 h-px bg-border/40" />
         </div>
 
-        <div className="mt-4 flex gap-3">
+        <div className="mt-4 flex w-full flex-col gap-3">
           <Button
             type="button"
             variant="glass"
-            className="flex-1 gap-2"
-            onClick={() => handleSocialLogin("google")}
+            className="w-full gap-2"
+            onClick={() => void handleSocialLogin("google")}
+            disabled={!isSupabaseBrowserConfigured}
+            title={
+              isSupabaseBrowserConfigured ? undefined : OAUTH_NOT_CONFIGURED_USER_MESSAGE
+            }
+            aria-label="Continue with Google"
           >
             <GoogleIcon className="h-4 w-4 shrink-0" />
             Google
           </Button>
-          <Button
-            type="button"
-            variant="glass"
-            className="flex-1 gap-2"
-            onClick={() => handleSocialLogin("apple")}
-          >
-            <AppleIcon className="h-4 w-4 shrink-0" />
-            Apple
-          </Button>
+          {showApple && (
+            <Button
+              type="button"
+              variant="glass"
+              className="w-full gap-2"
+              onClick={() => void handleSocialLogin("apple")}
+              disabled={!isSupabaseBrowserConfigured}
+              title={
+                isSupabaseBrowserConfigured ? undefined : OAUTH_NOT_CONFIGURED_USER_MESSAGE
+              }
+              aria-label="Continue with Apple"
+            >
+              <AppleIcon className="h-4 w-4 shrink-0" />
+              Apple
+            </Button>
+          )}
         </div>
       </CardContent>
       <Dialog open={pendingModalOpen} onOpenChange={setPendingModalOpen}>
@@ -197,12 +367,15 @@ export default function SignupPage() {
           <DialogHeader>
             <DialogTitle>{pendingRoleLabel} approval requested</DialogTitle>
             <DialogDescription>
-              Your account is created as a user for now. We have sent your {pendingRoleLabel.toLowerCase()} role request to admin for review.
-              You can login with the same email and password, and your account role will switch automatically after approval.
+              Your account is created as a user for now. We have sent your {pendingRoleLabel.toLowerCase()} role
+              request to admin for review. You can login with the same email and password, and your account role will
+              switch automatically after approval.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingModalOpen(false)}>Close</Button>
+            <Button variant="outline" onClick={() => setPendingModalOpen(false)}>
+              Close
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

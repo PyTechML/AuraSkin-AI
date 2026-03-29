@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
@@ -14,7 +14,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
-import { supabase } from "@/lib/supabase";
+import {
+  supabase,
+  isSupabaseBrowserConfigured,
+  messageForOAuthInitError,
+  OAUTH_NOT_CONFIGURED_USER_MESSAGE,
+} from "@/lib/supabase";
+import {
+  authAppleOAuthWhenGmailOnly,
+  authEmailOtpRequired,
+  authGmailOnly,
+} from "@/lib/auth-flags";
+import { loginOtpStart, loginOtpComplete, loginOtpResend } from "@/services/apiAuth";
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -50,13 +61,20 @@ const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: "ADMIN", label: "Admin" },
 ];
 
-const schema = z.object({
+const baseLoginSchema = z.object({
   email: z.string().email("Enter a valid email"),
   password: z.string().min(1, "Password is required"),
   requested_role: z.enum(["USER", "STORE", "DERMATOLOGIST", "ADMIN"]).optional(),
 });
 
-type FormData = z.infer<typeof schema>;
+const loginSchema = authGmailOnly
+  ? baseLoginSchema.refine((d) => d.email.trim().toLowerCase().endsWith("@gmail.com"), {
+      message: "Only Gmail addresses (@gmail.com) are allowed.",
+      path: ["email"],
+    })
+  : baseLoginSchema;
+
+type FormData = z.infer<typeof loginSchema>;
 
 const BACKEND_TO_FRONTEND_ROLE: Record<string, UserRole> = {
   user: "USER",
@@ -64,6 +82,20 @@ const BACKEND_TO_FRONTEND_ROLE: Record<string, UserRole> = {
   super_admin: "ADMIN",
   store: "STORE",
   dermatologist: "DERMATOLOGIST",
+};
+
+const RESEND_COOLDOWN_SEC = 60;
+
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  oauth_missing_code: "Sign-in was cancelled or incomplete. Please try again.",
+  oauth_exchange_failed: "Could not complete sign-in with the provider. Please try again.",
+  oauth_backend_me_failed: "Your account could not be verified with the server. Please try again.",
+  oauth_backend_unreachable: "The server could not be reached. Try again in a moment.",
+  oauth_missing_token: "Session token missing. Please sign in again.",
+  oauth_gmail_required: "Only Gmail (@gmail.com) accounts are allowed. Google Workspace addresses on a custom domain are not accepted.",
+  oauth_apple_blocked: "Apple sign-in is not available with the current account policy. Use Google (Gmail) or email and password.",
+  oauth_otp_start_failed: "Could not start email verification. Please try again.",
+  oauth_not_configured: OAUTH_NOT_CONFIGURED_USER_MESSAGE,
 };
 
 function LoginForm() {
@@ -74,8 +106,12 @@ function LoginForm() {
   const redirect = searchParams.get("redirect");
   const [apiError, setApiError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
   const [roleRequestPending, setRoleRequestPending] = useState(false);
+  const [step, setStep] = useState<"form" | "otp">("form");
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [otpCode, setOtpCode] = useState("");
+  const [otpSubmitting, setOtpSubmitting] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   const {
     register,
@@ -83,14 +119,85 @@ function LoginForm() {
     formState: { errors },
     watch,
   } = useForm<FormData>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(loginSchema),
     defaultValues: { requested_role: "USER" },
   });
 
   const requestedRole = watch("requested_role") ?? "USER";
+  const showApple = !authGmailOnly || authAppleOAuthWhenGmailOnly;
+
+  useEffect(() => {
+    const err = searchParams.get("error");
+    if (err && OAUTH_ERROR_MESSAGES[err]) {
+      setApiError(OAUTH_ERROR_MESSAGES[err]);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [resendCooldown]);
+
+  const finalizeSession = async (payload: {
+    accessToken: string;
+    sessionToken?: string;
+    role_request_pending?: boolean;
+    requested_role?: string;
+  }) => {
+    useAuthStore.setState({
+      accessToken: payload.accessToken,
+      sessionToken: payload.sessionToken ?? null,
+      user: null,
+      role: null,
+      isAuthenticated: false,
+    });
+
+    const meRes = await fetch(`${API_BASE}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${payload.accessToken}` },
+      cache: "no-store",
+    });
+    const meJson = await meRes.json().catch(() => ({}));
+    const me = (meJson as {
+      data?: { id?: string; email?: string; fullName?: string | null; role?: string };
+    })?.data;
+    const frontendRole: UserRole =
+      me?.role ? BACKEND_TO_FRONTEND_ROLE[me.role.toLowerCase()] ?? "USER" : "USER";
+    if (!meRes.ok || !me?.id || !me?.email) {
+      logout();
+      setApiError("Unable to restore your session. Please try signing in again.");
+      return;
+    }
+    setSession(
+      payload.accessToken,
+      {
+        id: me.id,
+        email: me.email,
+        name: me.fullName ?? me.email,
+        role: frontendRole,
+      },
+      frontendRole,
+      payload.sessionToken ?? null
+    );
+    if (payload.role_request_pending) {
+      setRoleRequestPending(true);
+    }
+    let target =
+      redirect && isSafeRedirect(redirect) && isRedirectAllowedForRole(redirect, frontendRole)
+        ? redirect
+        : getRedirectPathForRole(frontendRole);
+    if (payload.role_request_pending) {
+      target += target.includes("?") ? "&role_request_pending=1" : "?role_request_pending=1";
+    }
+    router.push(target);
+  };
 
   const handleSocialLogin = async (provider: "google" | "apple") => {
     setApiError(null);
+    if (!isSupabaseBrowserConfigured) {
+      setApiError(OAUTH_NOT_CONFIGURED_USER_MESSAGE);
+      return;
+    }
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider,
@@ -104,7 +211,8 @@ function LoginForm() {
       });
       if (error) throw error;
     } catch (err) {
-      setApiError(err instanceof Error ? err.message : "OAuth sign-in failed");
+      const raw = err instanceof Error ? err.message : "OAuth sign-in failed";
+      setApiError(messageForOAuthInitError(raw, provider));
     }
   };
 
@@ -114,6 +222,19 @@ function LoginForm() {
     setRoleRequestPending(false);
     setIsSubmitting(true);
     try {
+      if (authEmailOtpRequired) {
+        const { challengeId: cid } = await loginOtpStart({
+          email: data.email,
+          password: data.password,
+          requested_role: data.requested_role ?? "USER",
+        });
+        setChallengeId(cid);
+        setStep("otp");
+        setOtpCode("");
+        setResendCooldown(RESEND_COOLDOWN_SEC);
+        return;
+      }
+
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -125,17 +246,16 @@ function LoginForm() {
       });
       const json = await res.json().catch(() => ({}));
       const backendMessage =
-        (json as { message?: string })?.message ??
-        ((json as { error?: string })?.error ?? "");
+        (json as { message?: string })?.message ?? ((json as { error?: string })?.error ?? "");
       const payload = (json as {
-          data?: {
-            accessToken?: string;
-            user?: { id: string; email: string; role: string; fullName?: string | null };
-            sessionToken?: string;
-            role_request_pending?: boolean;
-            requested_role?: string;
-          };
-        })?.data;
+        data?: {
+          accessToken?: string;
+          user?: { id: string; email: string; role: string; fullName?: string | null };
+          sessionToken?: string;
+          role_request_pending?: boolean;
+          requested_role?: string;
+        };
+      })?.data;
 
       if (!res.ok) {
         if (res.status === 401) {
@@ -153,53 +273,12 @@ function LoginForm() {
       }
 
       if (payload?.accessToken) {
-        useAuthStore.setState({
+        await finalizeSession({
           accessToken: payload.accessToken,
-          sessionToken: payload.sessionToken ?? null,
-          user: null,
-          role: null,
-          isAuthenticated: false,
+          sessionToken: payload.sessionToken,
+          role_request_pending: payload.role_request_pending,
+          requested_role: payload.requested_role,
         });
-
-        const meRes = await fetch(`${API_BASE}/api/auth/me`, {
-          headers: { Authorization: `Bearer ${payload.accessToken}` },
-          cache: "no-store",
-        });
-        const meJson = await meRes.json().catch(() => ({}));
-        const me = (meJson as {
-          data?: { id?: string; email?: string; fullName?: string | null; role?: string };
-        })?.data;
-        const frontendRole: UserRole =
-          me?.role ? BACKEND_TO_FRONTEND_ROLE[me.role.toLowerCase()] ?? "USER" : "USER";
-        if (!meRes.ok || !me?.id || !me?.email) {
-          logout();
-          setApiError("Unable to restore your session. Please try signing in again.");
-          return;
-        }
-        setSession(
-          payload.accessToken,
-          {
-            id: me.id,
-            email: me.email,
-            name: me.fullName ?? me.email,
-            role: frontendRole,
-          },
-          frontendRole,
-          payload.sessionToken ?? null
-        );
-        if (payload.role_request_pending) {
-          setRoleRequestPending(true);
-        }
-        let target =
-          redirect &&
-          isSafeRedirect(redirect) &&
-          isRedirectAllowedForRole(redirect, frontendRole)
-            ? redirect
-            : getRedirectPathForRole(frontendRole);
-        if (payload.role_request_pending) {
-          target += target.includes("?") ? "&role_request_pending=1" : "?role_request_pending=1";
-        }
-        router.push(target);
         return;
       }
 
@@ -209,12 +288,64 @@ function LoginForm() {
         process.env.NODE_ENV === "development"
           ? ` The app tried to reach ${API_BASE} — start the Nest API (default port 3001) or set NEXT_PUBLIC_API_URL in .env.local.`
           : "";
-      setApiError(
-        `Network error. Check your internet/server connection and try again.${devHint}`
-      );
+      setApiError(`Network error. Check your internet/server connection and try again.${devHint}`);
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const onVerifyOtp = async () => {
+    if (!challengeId || otpCode.trim().length < 6) {
+      setApiError("Enter the 6-digit code from your email.");
+      return;
+    }
+    setOtpSubmitting(true);
+    setApiError(null);
+    try {
+      const payload = await loginOtpComplete(challengeId, otpCode.trim());
+      if (payload.oauthOtpCompleted && payload.accessToken) {
+        const bridge = new URL("/oauth/bridge", window.location.origin);
+        bridge.searchParams.set("token", payload.accessToken);
+        bridge.searchParams.set(
+          "requested_role",
+          payload.oauthRequestedRole ?? payload.requested_role ?? "USER"
+        );
+        bridge.searchParams.set("next", payload.oauthBridgeNext || "/dashboard");
+        router.replace(bridge.toString());
+        return;
+      }
+      setStep("form");
+      setChallengeId(null);
+      setOtpCode("");
+      await finalizeSession({
+        accessToken: payload.accessToken,
+        sessionToken: payload.sessionToken,
+        role_request_pending: payload.role_request_pending,
+        requested_role: payload.requested_role,
+      });
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : "Verification failed.");
+    } finally {
+      setOtpSubmitting(false);
+    }
+  };
+
+  const onResendOtp = async () => {
+    if (!challengeId || resendCooldown > 0) return;
+    try {
+      await loginOtpResend(challengeId);
+      setResendCooldown(RESEND_COOLDOWN_SEC);
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : "Could not resend code.");
+    }
+  };
+
+  const onChangeEmail = () => {
+    setStep("form");
+    setChallengeId(null);
+    setOtpCode("");
+    setResendCooldown(0);
+    setApiError(null);
   };
 
   return (
@@ -226,20 +357,67 @@ function LoginForm() {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        {authEmailOtpRequired && step === "otp" && (
+          <Card className="mb-6 border border-border/60 bg-card/40">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base font-heading">Verify your email</CardTitle>
+              <CardDescription className="text-xs">
+                We sent a 6-digit code to your inbox. This confirms you can receive email (deliverability only — not
+                a Google account endorsement).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="otp">Verification code</Label>
+                <Input
+                  id="otp"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="000000"
+                  maxLength={8}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" onClick={() => void onVerifyOtp()} disabled={otpSubmitting}>
+                  {otpSubmitting ? "Verifying..." : "Verify and sign in"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={resendCooldown > 0}
+                  onClick={() => void onResendOtp()}
+                >
+                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend code"}
+                </Button>
+                <Button type="button" variant="ghost" onClick={onChangeEmail}>
+                  Use different account
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <form
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
+            if (authEmailOtpRequired && step === "otp") return;
             void handleSubmit(onSubmit)(event);
           }}
           className="space-y-4"
         >
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" placeholder="you@example.com" {...register("email")} />
-            {errors.email && (
-              <p className="text-sm text-destructive">{errors.email.message}</p>
-            )}
+            <Input
+              id="email"
+              type="email"
+              placeholder={authGmailOnly ? "you@gmail.com" : "you@example.com"}
+              {...register("email")}
+              disabled={authEmailOtpRequired && step === "otp"}
+            />
+            {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="requested_role">Access as</Label>
@@ -247,6 +425,7 @@ function LoginForm() {
               id="requested_role"
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               {...register("requested_role")}
+              disabled={authEmailOtpRequired && step === "otp"}
             >
               {ROLE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -265,22 +444,26 @@ function LoginForm() {
                 Forgot password?
               </Link>
             </div>
-            <Input id="password" type="password" placeholder="••••••••" {...register("password")} />
-            {errors.password && (
-              <p className="text-sm text-destructive">{errors.password.message}</p>
-            )}
+            <Input
+              id="password"
+              type="password"
+              placeholder="••••••••"
+              {...register("password")}
+              disabled={authEmailOtpRequired && step === "otp"}
+            />
+            {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
           </div>
-          {apiError && (
-            <p className="text-sm text-destructive">{apiError}</p>
-          )}
+          {apiError && <p className="text-sm text-destructive">{apiError}</p>}
           {roleRequestPending && (
             <p className="text-sm text-muted-foreground">
               Role change requested. Pending admin approval. You have been signed in with your current role.
             </p>
           )}
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Signing in..." : "Sign in"}
-          </Button>
+          {!(authEmailOtpRequired && step === "otp") && (
+            <Button type="submit" className="w-full" disabled={isSubmitting}>
+              {isSubmitting ? "Signing in..." : authEmailOtpRequired ? "Continue" : "Sign in"}
+            </Button>
+          )}
         </form>
         <p className="mt-4 text-center text-sm text-muted-foreground">
           Don&apos;t have an account?{" "}
@@ -289,35 +472,43 @@ function LoginForm() {
           </Link>
         </p>
 
-        {/* OR divider */}
         <div className="mt-6 flex items-center gap-3">
           <div className="flex-1 h-px bg-border/40" />
           <span className="text-xs text-muted-foreground">OR</span>
           <div className="flex-1 h-px bg-border/40" />
         </div>
 
-        {/* Social login */}
-        <div className="mt-4 flex gap-3">
+        <div className="mt-4 flex w-full flex-col gap-3">
           <Button
             type="button"
             variant="glass"
-            className="flex-1 gap-2"
-            onClick={() => handleSocialLogin("google")}
+            className="w-full gap-2"
+            onClick={() => void handleSocialLogin("google")}
+            disabled={!isSupabaseBrowserConfigured}
+            title={
+              isSupabaseBrowserConfigured ? undefined : OAUTH_NOT_CONFIGURED_USER_MESSAGE
+            }
             aria-label="Continue with Google"
           >
             <GoogleIcon className="h-4 w-4 shrink-0" />
             Continue with Google
           </Button>
-          <Button
-            type="button"
-            variant="glass"
-            className="flex-1 gap-2"
-            onClick={() => handleSocialLogin("apple")}
-            aria-label="Continue with Apple"
-          >
-            <AppleIcon className="h-4 w-4 shrink-0" />
-            Continue with Apple
-          </Button>
+          {showApple && (
+            <Button
+              type="button"
+              variant="glass"
+              className="w-full gap-2"
+              onClick={() => void handleSocialLogin("apple")}
+              disabled={!isSupabaseBrowserConfigured}
+              title={
+                isSupabaseBrowserConfigured ? undefined : OAUTH_NOT_CONFIGURED_USER_MESSAGE
+              }
+              aria-label="Continue with Apple"
+            >
+              <AppleIcon className="h-4 w-4 shrink-0" />
+              Continue with Apple
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

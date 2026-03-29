@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { supabase } from "@/lib/supabase";
+import { supabase, isSupabaseBrowserConfigured } from "@/lib/supabase";
 import { useAuthStore } from "@/store/authStore";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -97,6 +97,12 @@ export function RecommendedApproachWithInlineBooking(props: {
     };
 
     loadSlots();
+
+    if (!isSupabaseBrowserConfigured) {
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const channel = supabase
       .channel(`availability_slots:${props.dermatologistId}`)
