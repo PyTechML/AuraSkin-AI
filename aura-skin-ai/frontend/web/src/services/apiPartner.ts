@@ -1541,7 +1541,11 @@ export async function uploadPartnerProductImage(file: File): Promise<string> {
   const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-  const path = `store-products/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const id =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const path = `store-products/${id}.${ext}`;
   const { error } = await supabase.storage
     .from("assessment-images")
     .upload(path, file, { cacheControl: "3600", upsert: false, contentType: file.type });

@@ -18,19 +18,22 @@ const CORE_SERVICES = [
     title: "AI Skin Assessment",
     description:
       "Understand your skin type, concerns, and lifestyle influences through structured AI analysis.",
-    placeholderLabel: "Abstract face scan graphic",
+    imageSrc: "/services/ai-skin-assessment.jpg",
+    alt: "Person receiving a gentle facial skincare treatment",
   },
   {
     title: "Personalized Routine Builder",
     description:
       "Receive tailored morning and night routines aligned with your goals.",
-    placeholderLabel: "Routine steps illustration",
+    imageSrc: "/services/routine-builder.jpg",
+    alt: "Skincare products arranged for a daily routine",
   },
   {
     title: "Progress Tracking",
     description:
       "Monitor skin changes and refine routines over time.",
-    placeholderLabel: "Graph / tracking illustration",
+    imageSrc: "/services/progress-tracking.jpg",
+    alt: "Analytics charts representing progress over time",
   },
 ] as const;
 
@@ -57,19 +60,22 @@ const EXTENDED_SUPPORT = [
     title: "Dermatologist Referral",
     description:
       "When needed, the system can guide you toward professional consultation for persistent or complex concerns.",
-    placeholderLabel: "Clinic / consultation visual",
+    imageSrc: "/services/dermatologist-referral.jpg",
+    alt: "Healthcare professional in a clinical setting",
   },
   {
     title: "Ingredient Safety Mapping",
     description:
       "Ingredients are checked against safety and compatibility data so your routine stays informed and low-risk.",
-    placeholderLabel: "Molecule / ingredient visual",
+    imageSrc: "/services/ingredient-safety.jpg",
+    alt: "Cosmetic jars and skincare ingredients",
   },
   {
     title: "Lifestyle Adjustment Logic",
     description:
       "Recommendations adapt to sleep, stress, environment, and habits so your routine fits your real life.",
-    placeholderLabel: "Lifestyle icons visual",
+    imageSrc: "/services/lifestyle-adjustment.jpg",
+    alt: "Wellness and balanced lifestyle",
   },
 ] as const;
 
@@ -131,7 +137,8 @@ export default function ServicesPage() {
                 <ServiceCard
                   title={item.title}
                   description={item.description}
-                  placeholderLabel={item.placeholderLabel}
+                  imageSrc={item.imageSrc}
+                  alt={item.alt}
                 />
               </StaggerItem>
             ))}
@@ -190,7 +197,8 @@ export default function ServicesPage() {
                   key={item.title}
                   title={item.title}
                   description={item.description}
-                  placeholderLabel={item.placeholderLabel}
+                  imageSrc={item.imageSrc}
+                  alt={item.alt}
                 />
               ))}
             </div>

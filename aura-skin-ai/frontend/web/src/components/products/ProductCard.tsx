@@ -9,18 +9,28 @@ interface ProductCardProps {
 }
 
 export function ProductCard({ product }: ProductCardProps) {
+  const imageUrl = product.imageUrl?.trim();
+
   return (
     <Card className="overflow-hidden border-border flex flex-col h-full">
       <div
         className="relative w-full aspect-[4/3] flex-shrink-0 bg-muted/80 overflow-hidden"
-        aria-hidden
+        aria-hidden={imageUrl ? undefined : true}
       >
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
-          <ImageIcon className="h-10 w-10 text-muted-foreground/60" aria-hidden />
-          <span className="text-xs font-label text-muted-foreground/80 max-w-[90%]">
-            Image placeholder
-          </span>
-        </div>
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            alt={product.name}
+            className="absolute inset-0 w-full h-full object-cover object-center"
+          />
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
+            <ImageIcon className="h-10 w-10 text-muted-foreground/60" aria-hidden />
+            <span className="text-xs font-label text-muted-foreground/80 max-w-[90%]">
+              Image placeholder
+            </span>
+          </div>
+        )}
       </div>
       <CardHeader className="font-heading">
         <h3 className="text-xl font-semibold text-foreground">{product.name}</h3>

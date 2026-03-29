@@ -511,14 +511,13 @@ export class PublicRepository {
         ? hybridData.map((row: any) => ({
             id: row.id,
             dermatologist_id: dermatologistId,
-            slot_date: row.date,
+            slot_date:
+              typeof row.date === "string" ? row.date.slice(0, 10) : String(row.date ?? "").slice(0, 10),
             start_time: row.start_time,
             end_time: row.end_time,
             status: row.status,
           }))
         : [];
-
-    if (hybridList.length > 0) return hybridList;
 
     const { data: legacyData, error: legacyError } = await supabase
       .from("consultation_slots")
@@ -527,7 +526,27 @@ export class PublicRepository {
       .eq("status", "available")
       .order("slot_date")
       .order("start_time");
-    if (legacyError) return [];
-    return legacyData ?? [];
+    const legacyList =
+      !legacyError && Array.isArray(legacyData)
+        ? legacyData.map((row: any) => ({
+            ...row,
+            slot_date:
+              typeof row.slot_date === "string"
+                ? row.slot_date.slice(0, 10)
+                : String(row.slot_date ?? "").slice(0, 10),
+          }))
+        : [];
+
+    const hybridIds = new Set(hybridList.map((s: { id: string }) => s.id));
+    const merged = [
+      ...hybridList,
+      ...legacyList.filter((s: { id: string }) => !hybridIds.has(s.id)),
+    ];
+    merged.sort((a, b) => {
+      const da = String(a.slot_date).localeCompare(String(b.slot_date));
+      if (da !== 0) return da;
+      return String(a.start_time).localeCompare(String(b.start_time));
+    });
+    return merged;
   }
 }

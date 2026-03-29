@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, InternalServerErrorException } from "@nestjs/common";
+import { Injectable, InternalServerErrorException } from "@nestjs/common";
 import type { DbConsultationSlot } from "../../../../database/models";
 import { SlotsRepository, type CreateSlotRow } from "../repositories/slots.repository";
 import type { CreateSlotDto, UpdateSlotDto } from "../dto/slot.dto";
@@ -70,10 +70,9 @@ export class SlotsService {
     );
     const currentByKey = new Map(current.map((s) => [slotKeyFromDb(s), s]));
 
-    const toDelete = current.filter((s) => !desiredKeySet.has(slotKeyFromDb(s)));
-    if (toDelete.some((s) => s.status === "booked")) {
-      throw new BadRequestException("Booked slots cannot be edited or deleted.");
-    }
+    const toDelete = current.filter(
+      (s) => !desiredKeySet.has(slotKeyFromDb(s)) && s.status !== "booked"
+    );
 
     const toCreate: CreateSlotRow[] = [];
     for (const d of desiredRows) {

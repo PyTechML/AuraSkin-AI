@@ -26,7 +26,12 @@ type AvailableDate = {
 };
 
 function formatDateLabel(dateStr: string): string {
-  const d = new Date(`${dateStr}T00:00:00`);
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr.trim());
+  if (!m) return dateStr;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10) - 1;
+  const day = parseInt(m[3], 10);
+  const d = new Date(y, mo, day);
   if (Number.isNaN(d.getTime())) return dateStr;
   return d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
 }
@@ -43,7 +48,10 @@ function formatTimeLabel(time: string): string {
 function groupSlotsByDate(slots: PublicSlot[]): AvailableDate[] {
   const map = new Map<string, AvailableDate>();
   for (const slot of slots) {
-    const key = slot.slot_date;
+    const key =
+      typeof slot.slot_date === "string"
+        ? slot.slot_date.slice(0, 10)
+        : String(slot.slot_date ?? "").slice(0, 10);
     const group = map.get(key) ?? {
       dateKey: key,
       dateLabel: formatDateLabel(key),
@@ -80,6 +88,29 @@ export function RecommendedApproachWithInlineBooking(props: {
   const [slotsLoading, setSlotsLoading] = useState(false);
 
   const availability = useMemo(() => groupSlotsByDate(rawSlots), [rawSlots]);
+
+  /** Keep labels in sync with latest slot list (realtime refresh / race with other bookings). */
+  const selectedLive = useMemo(() => {
+    if (!selected) return null;
+    const slot = rawSlots.find((s) => s.id === selected.id && s.status === "available");
+    if (!slot) return null;
+    return {
+      id: slot.id,
+      dateLabel: formatDateLabel(slot.slot_date),
+      timeLabel: formatTimeLabel(slot.start_time),
+    };
+  }, [selected, rawSlots]);
+
+  useEffect(() => {
+    if (!selected || slotsLoading) return;
+    const stillAvailable = rawSlots.some((s) => s.id === selected.id && s.status === "available");
+    if (!stillAvailable) {
+      setSelected(null);
+      setError(
+        "This time slot is no longer available. Please choose another."
+      );
+    }
+  }, [rawSlots, selected, slotsLoading]);
 
   useEffect(() => {
     if (!isOpen || !props.dermatologistId) return;
@@ -145,7 +176,11 @@ export function RecommendedApproachWithInlineBooking(props: {
       }
       setError("Could not start payment. Please try again.");
     } catch (e: any) {
-      setError(e?.message ?? "Booking failed. Please try again.");
+      const raw = e?.message ?? "Booking failed. Please try again.";
+      const friendly = /slot not available/i.test(raw)
+        ? "This time slot is no longer available. Please pick another time."
+        : raw;
+      setError(friendly);
     } finally {
       setSubmitting(false);
     }
@@ -219,14 +254,15 @@ export function RecommendedApproachWithInlineBooking(props: {
                           <button
                             key={s.id}
                             type="button"
-                            onClick={() =>
+                            onClick={() => {
+                              setError(null);
                               setSelected({
                                 id: s.id,
                                 dateKey: d.dateKey,
                                 dateLabel: d.dateLabel,
                                 timeLabel: s.timeLabel,
-                              })
-                            }
+                              });
+                            }}
                             className={cn(
                               "inline-flex items-center rounded-full border px-3 py-1.5 text-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                               isSelected
@@ -244,8 +280,14 @@ export function RecommendedApproachWithInlineBooking(props: {
                 ))}
               </div>
 
+              {error && !selected ? (
+                <p className="mt-3 text-sm text-destructive" role="alert">
+                  {error}
+                </p>
+              ) : null}
+
               <AnimatePresence initial={false}>
-                {selected ? (
+                {selected && selectedLive ? (
                   <motion.div
                     key="summary"
                     initial={{ opacity: 0, y: 8 }}
@@ -262,7 +304,7 @@ export function RecommendedApproachWithInlineBooking(props: {
                       <div>
                         <p className="text-xs font-label text-muted-foreground/80">Selected Time:</p>
                         <p className="text-sm font-medium text-foreground">
-                          {selected.dateLabel} – {selected.timeLabel}
+                          {selectedLive.dateLabel} – {selectedLive.timeLabel}
                         </p>
                       </div>
                       {error && <p className="text-xs text-destructive">{error}</p>}

@@ -19,6 +19,7 @@ export function UserProductCard({ product, variant = "default" }: UserProductCar
   const addItem = useCartStore((s) => s.addItem);
   const addToast = useToastStore((s) => s.addToast);
   const router = useRouter();
+  const imageUrl = product.imageUrl?.trim();
 
   const handleAddToCart = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -36,9 +37,17 @@ export function UserProductCard({ product, variant = "default" }: UserProductCar
       <Card className="overflow-hidden border-border flex flex-col h-full min-w-[220px] shrink-0 hover:shadow-[0_0_20px_rgba(229,190,181,0.2)] transition-shadow">
         <Link href={`/shop/${product.id}`}>
           <div className="relative w-full aspect-[4/3] flex-shrink-0 bg-muted/80 overflow-hidden">
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
-              <ImageIcon className="h-10 w-10 text-muted-foreground/60" aria-hidden />
-            </div>
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt={product.name}
+                className="absolute inset-0 w-full h-full object-cover object-center"
+              />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
+                <ImageIcon className="h-10 w-10 text-muted-foreground/60" aria-hidden />
+              </div>
+            )}
             {product.matchPercent != null && (
               <Badge className="absolute top-2 right-2 bg-accent/90 text-white">
                 {product.matchPercent}% match
@@ -76,9 +85,17 @@ export function UserProductCard({ product, variant = "default" }: UserProductCar
     <Card className="overflow-hidden border-border flex flex-col h-full hover:shadow-[0_0_20px_rgba(229,190,181,0.2)] transition-shadow">
       <Link href={`/shop/${product.id}`}>
         <div className="relative w-full aspect-[4/3] flex-shrink-0 bg-muted/80 overflow-hidden">
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
-            <ImageIcon className="h-10 w-10 text-muted-foreground/60" aria-hidden />
-          </div>
+          {imageUrl ? (
+            <img
+              src={imageUrl}
+              alt={product.name}
+              className="absolute inset-0 w-full h-full object-cover object-center"
+            />
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
+              <ImageIcon className="h-10 w-10 text-muted-foreground/60" aria-hidden />
+            </div>
+          )}
           {product.matchPercent != null && (
             <Badge className="absolute top-2 right-2 bg-accent/90 text-white">
               {product.matchPercent}% match

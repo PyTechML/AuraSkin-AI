@@ -33,7 +33,10 @@ export function upcomingDatesForWeekdayLabel(dayLabel: string, numDays: number):
     const dt = new Date(start);
     dt.setDate(start.getDate() + i);
     if (dt.getDay() === targetIndex) {
-      out.push(dt.toISOString().slice(0, 10));
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, "0");
+      const d = String(dt.getDate()).padStart(2, "0");
+      out.push(`${y}-${m}-${d}`);
     }
   }
   return out;

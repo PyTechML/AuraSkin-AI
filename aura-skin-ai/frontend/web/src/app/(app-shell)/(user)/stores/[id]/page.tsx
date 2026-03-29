@@ -75,14 +75,24 @@ export default async function StoreDetailPage({
             <div>
               <h2 className="font-heading text-lg font-semibold mb-4">Available products</h2>
               <div className="grid sm:grid-cols-2 gap-4">
-                {storeProducts.map((p) => (
+                {storeProducts.map((p) => {
+                  const thumb = p.imageUrl?.trim();
+                  return (
                   <Link
                     key={p.id}
                     href={`/shop/${p.id}`}
                     className="flex gap-3 p-3 rounded-xl border border-border hover:bg-muted/40 transition-colors"
                   >
-                    <div className="w-12 h-12 shrink-0 rounded-lg bg-muted/80 flex items-center justify-center">
-                      <ImageIcon className="h-5 w-5 text-muted-foreground/60" />
+                    <div className="w-12 h-12 shrink-0 rounded-lg bg-muted/80 overflow-hidden flex items-center justify-center relative">
+                      {thumb ? (
+                        <img
+                          src={thumb}
+                          alt={p.name}
+                          className="absolute inset-0 w-full h-full object-cover object-center"
+                        />
+                      ) : (
+                        <ImageIcon className="h-5 w-5 text-muted-foreground/60" />
+                      )}
                     </div>
                     <div className="min-w-0">
                       <p className="font-medium truncate">{p.name}</p>
@@ -91,7 +101,8 @@ export default async function StoreDetailPage({
                       </p>
                     </div>
                   </Link>
-                ))}
+                  );
+                })}
               </div>
               <Link
                 href={`/shop?store=${encodeURIComponent(params.id)}`}

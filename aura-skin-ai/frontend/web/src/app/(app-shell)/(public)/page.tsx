@@ -166,17 +166,17 @@ export default function LandingPage() {
               {
                 title: "Detects Skin Type",
                 text: "AuraSkin AI evaluates your skin type, tone, and sensitivity to establish a precise starting point.",
-                image: "/capabilities/skin-type.svg",
+                image: "/capabilities/skin-type.jpg",
               },
               {
                 title: "Identifies Skin Concerns",
                 text: "The system maps visible and underlying concerns to guide targeted care.",
-                image: "/capabilities/skin-concerns.svg",
+                image: "/capabilities/skin-concerns.jpg",
               },
               {
                 title: "Builds Personalized Routine",
                 text: "You receive a customized routine aligned with your lifestyle and skin needs.",
-                image: "/capabilities/personalized-routine.svg",
+                image: "/capabilities/personalized-routine.jpg",
               },
             ].map((card) => (
               <StaggerItem key={card.title}>

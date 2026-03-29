@@ -108,6 +108,8 @@ export default function StoreAddProductPage() {
   const [images, setImages] = useState<{ id: string; url: string }[]>([]);
   const [uploadingImages, setUploadingImages] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
 
   useEffect(() => {
     setMounted(true);
@@ -209,16 +211,35 @@ export default function StoreAddProductPage() {
 
   const handleImageSelection = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
+    const remainingSlots = Math.max(0, 6 - imagesRef.current.length);
+    if (remainingSlots === 0) {
+      addToast("You already have the maximum of 6 images for this product.", "error");
+      return;
+    }
     setUploadingImages(true);
     try {
-      const selected = Array.from(files).slice(0, 6);
+      const selected = Array.from(files).slice(0, remainingSlots);
       const uploaded = await Promise.all(
         selected.map(async (file) => {
           const url = await uploadPartnerProductImage(file);
-          return { id: `${Date.now()}-${file.name}`, url };
+          const id =
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          return { id, url };
         })
       );
-      setImages(uploaded);
+      setImages((prev) => {
+        const seen = new Set(prev.map((i) => i.url));
+        const merged = [...prev];
+        for (const item of uploaded) {
+          if (!seen.has(item.url)) {
+            seen.add(item.url);
+            merged.push(item);
+          }
+        }
+        return merged.slice(0, 6);
+      });
       addToast("Image upload completed.");
     } catch (err) {
       const message =
@@ -573,8 +594,9 @@ export default function StoreAddProductPage() {
                 className="mt-4 data-[state=inactive]:pointer-events-none data-[state=inactive]:opacity-0 transition-opacity duration-200"
               >
                 <p className="text-muted-foreground text-sm mb-3">
-                  Upload product images. First image will be used as the main
-                  thumbnail.
+                  Upload product images. You can browse again to add more (up to 6
+                  total). Only the first image is saved as the storefront listing
+                  thumbnail today.
                 </p>
                 <Card className="border-border/60">
                   <CardHeader className="pb-3">

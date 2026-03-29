@@ -30,10 +30,13 @@ function getErrorMessage(res: Response, json: Record<string, unknown>): string {
   if (res.status === 401) {
     return "Session expired. Please login again.";
   }
-  const code = typeof json?.code === "string" ? json.code : "UNKNOWN_BACKEND_ERROR";
   const message =
     formatNestMessage(json?.message) || `Request failed: ${res.status}`;
-  return `[${code}] ${message} (status=${res.status})`;
+  const code = typeof json?.code === "string" ? json.code : null;
+  if (code) {
+    return `[${code}] ${message} (status=${res.status})`;
+  }
+  return `${message} (status=${res.status})`;
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
