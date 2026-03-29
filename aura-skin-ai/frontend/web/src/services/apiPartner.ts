@@ -716,6 +716,17 @@ function mapSlotTime(slot?: BackendSlotRow): string {
   return value || "TBD";
 }
 
+function displayLabelFromEmail(email: string): string {
+  const em = email.trim();
+  if (!em) return "";
+  const at = em.indexOf("@");
+  if (at > 0) {
+    const local = em.slice(0, at).trim();
+    return local || em;
+  }
+  return em;
+}
+
 function dermatologistConsultationFromRow(
   item: BackendConsultationRow,
   slot?: BackendSlotRow,
@@ -727,13 +738,20 @@ function dermatologistConsultationFromRow(
   const fallbackPatientId = (item.patient_id ?? item.user_id ?? "").trim();
   const backendPatientName = String(item.patient_name ?? item.patientName ?? "").trim();
   const backendPatientEmail = String(item.patient_email ?? item.patientEmail ?? "").trim();
+  const nameFromEmail =
+    backendPatientName || !backendPatientEmail
+      ? ""
+      : displayLabelFromEmail(backendPatientEmail);
   return {
     id: item.id,
     status: mapConsultationStatus(item.consultation_status ?? ""),
     date: slotDate || created,
     timeSlot: mapSlotTime(slot),
     patientId: identity?.patientId ?? fallbackPatientId,
-    patientName: backendPatientName || identity?.patientName,
+    patientName:
+      backendPatientName ||
+      nameFromEmail ||
+      identity?.patientName,
     patientEmail: backendPatientEmail || identity?.patientEmail,
     patientPhone: identity?.patientPhone,
     patientSummary,

@@ -345,4 +345,31 @@ export class DermatologistRepository {
     if (error) return [];
     return (data as any[]) ?? [];
   }
+
+  /** Chart names keyed by auth user id (first matching row per user_id). */
+  async getPatientDisplayNamesByUserIds(
+    doctorId: string,
+    userIds: string[]
+  ): Promise<Map<string, string>> {
+    const ids = Array.from(
+      new Set(
+        userIds.map((id) => String(id ?? "").trim()).filter(Boolean)
+      )
+    );
+    if (ids.length === 0) return new Map();
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("patients")
+      .select("user_id, name")
+      .eq("doctor_id", doctorId)
+      .in("user_id", ids);
+    if (error || !data) return new Map();
+    const map = new Map<string, string>();
+    for (const row of data as { user_id: string | null; name: string | null }[]) {
+      const uid = String(row.user_id ?? "").trim();
+      const n = String(row.name ?? "").trim();
+      if (uid && n && !map.has(uid)) map.set(uid, n);
+    }
+    return map;
+  }
 }

@@ -23,7 +23,7 @@ export class ConsultationsService {
   ): Promise<DermatologistConsultationDto[]> {
     const consultations =
       await this.consultationsRepository.findByDermatologistId(dermatologistId);
-    return this.enrichManyWithPatientProfile(consultations);
+    return this.enrichManyWithPatientProfile(consultations, dermatologistId);
   }
 
   async getById(
@@ -34,7 +34,7 @@ export class ConsultationsService {
       consultationId,
       dermatologistId
     );
-    return this.enrichOneWithPatientProfile(consultation);
+    return this.enrichOneWithPatientProfile(consultation, dermatologistId);
   }
 
   async updateClinical(
@@ -61,14 +61,16 @@ export class ConsultationsService {
     if (dto.followUpRequired !== undefined)
       patch.follow_up_required = dto.followUpRequired;
 
-    if (Object.keys(patch).length === 0) return existing;
+    if (Object.keys(patch).length === 0) {
+      return this.enrichOneWithPatientProfile(existing, dermatologistId);
+    }
 
     const updated = await this.consultationsRepository.updateClinicalById(
       consultationId,
       dermatologistId,
       patch
     );
-    return this.enrichOneWithPatientProfile(updated);
+    return this.enrichOneWithPatientProfile(updated, dermatologistId);
   }
 
   async approve(
@@ -100,7 +102,7 @@ export class ConsultationsService {
         dermatologist_id: dermatologistId,
       });
     }
-    return this.enrichOneWithPatientProfile(updated);
+    return this.enrichOneWithPatientProfile(updated, dermatologistId);
   }
 
   async reject(
@@ -126,7 +128,7 @@ export class ConsultationsService {
         "available"
       );
     }
-    return this.enrichOneWithPatientProfile(updated);
+    return this.enrichOneWithPatientProfile(updated, dermatologistId);
   }
 
   /** Create a notification for the dermatologist (e.g. when user books). */
@@ -141,8 +143,29 @@ export class ConsultationsService {
     );
   }
 
+  private resolvePatientDisplayName(
+    fullName: string | null | undefined,
+    email: string | null | undefined,
+    chartName: string | null | undefined
+  ): string | null {
+    const trimmedName = String(fullName ?? "").trim();
+    if (trimmedName) return trimmedName;
+    const em = String(email ?? "").trim();
+    if (em) {
+      const at = em.indexOf("@");
+      if (at > 0) {
+        const local = em.slice(0, at).trim();
+        if (local) return local;
+      }
+      return em;
+    }
+    const chart = String(chartName ?? "").trim();
+    return chart || null;
+  }
+
   private async enrichManyWithPatientProfile(
-    consultations: DbConsultation[]
+    consultations: DbConsultation[],
+    dermatologistId: string
   ): Promise<DermatologistConsultationDto[]> {
     const safeConsultations = Array.isArray(consultations) ? consultations : [];
     if (safeConsultations.length === 0) return [];
@@ -152,27 +175,54 @@ export class ConsultationsService {
     const profileById = new Map(
       profiles.map((profile) => [String(profile.id).trim(), profile])
     );
+    const chartNames =
+      await this.dermatologistRepository.getPatientDisplayNamesByUserIds(
+        dermatologistId,
+        safeConsultations.map((c) => c.user_id)
+      );
     return safeConsultations.map((consultation) => {
-      const profile = profileById.get(String(consultation.user_id ?? "").trim());
+      const uid = String(consultation.user_id ?? "").trim();
+      const profile = profileById.get(uid);
+      const patientEmail = profile?.email ?? null;
+      const chartName = uid ? chartNames.get(uid) : undefined;
+      const patientName = this.resolvePatientDisplayName(
+        profile?.full_name,
+        patientEmail,
+        chartName
+      );
       return {
         ...consultation,
-        patient_name: profile?.full_name ?? null,
-        patient_email: profile?.email ?? null,
+        patient_name: patientName,
+        patient_email: patientEmail,
       };
     });
   }
 
   private async enrichOneWithPatientProfile(
-    consultation: DbConsultation | null
+    consultation: DbConsultation | null,
+    dermatologistId: string
   ): Promise<DermatologistConsultationDto | null> {
     if (!consultation) return null;
     const [profile] = await this.consultationsRepository.getProfilesByIds([
       consultation.user_id,
     ]);
+    const uid = String(consultation.user_id ?? "").trim();
+    const chartMap =
+      await this.dermatologistRepository.getPatientDisplayNamesByUserIds(
+        dermatologistId,
+        uid ? [uid] : []
+      );
+    const patientEmail = profile?.email ?? null;
+    const chartName = uid ? chartMap.get(uid) : undefined;
+    const patientName = this.resolvePatientDisplayName(
+      profile?.full_name,
+      patientEmail,
+      chartName
+    );
     return {
       ...consultation,
-      patient_name: profile?.full_name ?? null,
-      patient_email: profile?.email ?? null,
+      patient_name: patientName,
+      patient_email: patientEmail,
     };
   }
 }
