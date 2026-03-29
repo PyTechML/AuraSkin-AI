@@ -9,7 +9,7 @@ import type {
 } from "@/types";
 import type { PublicStore } from "@/types/store";
 import { API_BASE } from "./apiBase";
-import { apiPost, apiPostMultipart, getAuthHeaders } from "./apiInternal";
+import { apiPost, apiPostMultipart, apiPut, getAuthHeaders } from "./apiInternal";
 import type { NormalizedSlot } from "@/types/availability";
 import { buildAssessmentResultFromReportPayload } from "@/types/assessment";
 import { normalizeOrderRow } from "@/lib/normalizeOrder";
@@ -655,7 +655,7 @@ export async function updateUserProfile(payload: {
   full_name?: string;
   email?: string;
 }): Promise<{ id: string; email: string | null; full_name: string | null }> {
-  return await apiPost("/user/profile", payload);
+  return await apiPut("/user/profile", payload);
 }
 
 export async function getOrders(_userId: string): Promise<Order[]> {

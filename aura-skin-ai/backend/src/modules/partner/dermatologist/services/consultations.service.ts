@@ -5,6 +5,11 @@ import { ConsultationsRepository } from "../repositories/consultations.repositor
 import { DermatologistRepository } from "../repositories/dermatologist.repository";
 import type { UpdateConsultationClinicalDto } from "../dto/update-consultation-clinical.dto";
 
+export type DermatologistConsultationDto = DbConsultation & {
+  patient_name: string | null;
+  patient_email: string | null;
+};
+
 @Injectable()
 export class ConsultationsService {
   constructor(
@@ -15,25 +20,28 @@ export class ConsultationsService {
 
   async listByDermatologist(
     dermatologistId: string
-  ): Promise<DbConsultation[]> {
-    return this.consultationsRepository.findByDermatologistId(dermatologistId);
+  ): Promise<DermatologistConsultationDto[]> {
+    const consultations =
+      await this.consultationsRepository.findByDermatologistId(dermatologistId);
+    return this.enrichManyWithPatientProfile(consultations);
   }
 
   async getById(
     consultationId: string,
     dermatologistId: string
-  ): Promise<DbConsultation | null> {
-    return this.consultationsRepository.findByIdAndDermatologist(
+  ): Promise<DermatologistConsultationDto | null> {
+    const consultation = await this.consultationsRepository.findByIdAndDermatologist(
       consultationId,
       dermatologistId
     );
+    return this.enrichOneWithPatientProfile(consultation);
   }
 
   async updateClinical(
     consultationId: string,
     dermatologistId: string,
     dto: UpdateConsultationClinicalDto
-  ): Promise<DbConsultation | null> {
+  ): Promise<DermatologistConsultationDto | null> {
     const existing =
       await this.consultationsRepository.findByIdAndDermatologist(
         consultationId,
@@ -55,17 +63,18 @@ export class ConsultationsService {
 
     if (Object.keys(patch).length === 0) return existing;
 
-    return this.consultationsRepository.updateClinicalById(
+    const updated = await this.consultationsRepository.updateClinicalById(
       consultationId,
       dermatologistId,
       patch
     );
+    return this.enrichOneWithPatientProfile(updated);
   }
 
   async approve(
     consultationId: string,
     dermatologistId: string
-  ): Promise<DbConsultation | null> {
+  ): Promise<DermatologistConsultationDto | null> {
     const consultation =
       await this.consultationsRepository.findByIdAndDermatologist(
         consultationId,
@@ -91,13 +100,13 @@ export class ConsultationsService {
         dermatologist_id: dermatologistId,
       });
     }
-    return updated;
+    return this.enrichOneWithPatientProfile(updated);
   }
 
   async reject(
     consultationId: string,
     dermatologistId: string
-  ): Promise<DbConsultation | null> {
+  ): Promise<DermatologistConsultationDto | null> {
     const consultation =
       await this.consultationsRepository.findByIdAndDermatologist(
         consultationId,
@@ -117,7 +126,7 @@ export class ConsultationsService {
         "available"
       );
     }
-    return updated;
+    return this.enrichOneWithPatientProfile(updated);
   }
 
   /** Create a notification for the dermatologist (e.g. when user books). */
@@ -130,5 +139,40 @@ export class ConsultationsService {
       "consultation_request",
       message
     );
+  }
+
+  private async enrichManyWithPatientProfile(
+    consultations: DbConsultation[]
+  ): Promise<DermatologistConsultationDto[]> {
+    const safeConsultations = Array.isArray(consultations) ? consultations : [];
+    if (safeConsultations.length === 0) return [];
+    const profiles = await this.consultationsRepository.getProfilesByIds(
+      safeConsultations.map((c) => c.user_id)
+    );
+    const profileById = new Map(
+      profiles.map((profile) => [String(profile.id).trim(), profile])
+    );
+    return safeConsultations.map((consultation) => {
+      const profile = profileById.get(String(consultation.user_id ?? "").trim());
+      return {
+        ...consultation,
+        patient_name: profile?.full_name ?? null,
+        patient_email: profile?.email ?? null,
+      };
+    });
+  }
+
+  private async enrichOneWithPatientProfile(
+    consultation: DbConsultation | null
+  ): Promise<DermatologistConsultationDto | null> {
+    if (!consultation) return null;
+    const [profile] = await this.consultationsRepository.getProfilesByIds([
+      consultation.user_id,
+    ]);
+    return {
+      ...consultation,
+      patient_name: profile?.full_name ?? null,
+      patient_email: profile?.email ?? null,
+    };
   }
 }

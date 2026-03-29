@@ -6,8 +6,9 @@ import { useParams } from "next/navigation";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   approveDermatologistConsultation,
+  createDermatologistPrescription,
   getDermatologistConsultationById,
-  getDermatologistPatientDisplayName,
+  getDermatologistPrescriptionByConsultation,
   rejectDermatologistConsultation,
   updateDermatologistConsultation,
 } from "@/services/apiPartner";
@@ -22,6 +23,14 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { usePanelToast } from "@/components/panel/PanelToast";
 import { ArrowLeft, User, Calendar, Clock } from "lucide-react";
 
@@ -35,10 +44,21 @@ export default function DermatologistConsultationDetailPage() {
     null
   );
   const [patientLabel, setPatientLabel] = useState("");
+  const [patientEmail, setPatientEmail] = useState("");
+  const [patientPhone, setPatientPhone] = useState("");
+  const [patientReportCount, setPatientReportCount] = useState(0);
+  const [patientRecommendationCount, setPatientRecommendationCount] = useState(0);
   const [diagnosis, setDiagnosis] = useState("");
   const [notes, setNotes] = useState("");
   const [treatmentPlan, setTreatmentPlan] = useState("");
   const [followUpRequired, setFollowUpRequired] = useState(false);
+  const [prescriptionOpen, setPrescriptionOpen] = useState(false);
+  const [prescriptionText, setPrescriptionText] = useState("");
+  const [recommendedProductsInput, setRecommendedProductsInput] = useState("");
+  const [prescriptionFollowUp, setPrescriptionFollowUp] = useState(false);
+  const [prescriptionSaving, setPrescriptionSaving] = useState(false);
+  const [prescriptionLoading, setPrescriptionLoading] = useState(false);
+  const [hasExistingPrescription, setHasExistingPrescription] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionBusy, setActionBusy] = useState<"approve" | "reject" | null>(null);
@@ -61,14 +81,12 @@ export default function DermatologistConsultationDetailPage() {
         setNotes(c.notes ?? "");
         setTreatmentPlan(c.treatmentPlan ?? "");
         setFollowUpRequired(Boolean(c.followUpRequired));
-        const pid = (c.patientId ?? "").trim();
-        return getDermatologistPatientDisplayName(pid).then((name) => {
-          if (cancelled) return;
-          const label =
-            (name ?? "").trim() ||
-            (pid ? `Patient ${pid}` : "Unknown patient");
-          setPatientLabel(label);
-        });
+        const label = (c.patientName ?? "").trim() || "Unknown patient";
+        setPatientLabel(label);
+        setPatientEmail((c.patientEmail ?? "").trim());
+        setPatientPhone((c.patientPhone ?? "").trim());
+        setPatientReportCount(c.patientSummary?.recentReportCount ?? 0);
+        setPatientRecommendationCount(c.patientSummary?.recentRecommendationCount ?? 0);
       })
       .catch(() => {
         if (!cancelled) setError("Failed to load consultation.");
@@ -80,6 +98,30 @@ export default function DermatologistConsultationDetailPage() {
       cancelled = true;
     };
   }, [partnerId, consultationId]);
+
+  useEffect(() => {
+    if (!consultationId) return;
+    let cancelled = false;
+    setPrescriptionLoading(true);
+    getDermatologistPrescriptionByConsultation(consultationId)
+      .then((prescription) => {
+        if (cancelled) return;
+        if (!prescription) {
+          setHasExistingPrescription(false);
+          return;
+        }
+        setHasExistingPrescription(true);
+        setPrescriptionText(prescription.prescriptionText ?? "");
+        setRecommendedProductsInput((prescription.recommendedProducts ?? []).join(", "));
+        setPrescriptionFollowUp(Boolean(prescription.followUpRequired));
+      })
+      .finally(() => {
+        if (!cancelled) setPrescriptionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [consultationId]);
 
   async function handleSave() {
     if (!consultationId) return;
@@ -148,6 +190,47 @@ export default function DermatologistConsultationDetailPage() {
       addToast("Could not decline this consultation.", "error");
     } finally {
       setActionBusy(null);
+    }
+  }
+
+  async function handlePrescriptionSave() {
+    if (!consultationId) return;
+    if (consultation?.status !== "confirmed" && consultation?.status !== "completed") {
+      addToast("Prescription is available only for confirmed or completed consultations.", "error");
+      return;
+    }
+    const recommendedProducts = recommendedProductsInput
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const uuidV4Regex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const hasInvalidProductId = recommendedProducts.some((item) => !uuidV4Regex.test(item));
+    if (hasInvalidProductId) {
+      addToast("Recommended products must be valid UUIDs separated by commas.", "error");
+      return;
+    }
+    setPrescriptionSaving(true);
+    try {
+      const saved = await createDermatologistPrescription({
+        consultationId,
+        prescriptionText: prescriptionText.trim(),
+        recommendedProducts,
+        followUpRequired: prescriptionFollowUp,
+      });
+      if (!saved) {
+        addToast("Could not save prescription.", "error");
+        return;
+      }
+      setHasExistingPrescription(true);
+      setPrescriptionOpen(false);
+      addToast("Prescription saved successfully.", "success");
+      const refreshed = await getDermatologistConsultationById(consultationId);
+      if (refreshed) setConsultation(refreshed);
+    } catch {
+      addToast("Could not save prescription.", "error");
+    } finally {
+      setPrescriptionSaving(false);
     }
   }
 
@@ -241,6 +324,15 @@ export default function DermatologistConsultationDetailPage() {
               <Clock className="h-4 w-4 text-muted-foreground" />
               <span>Status: {statusLabel}</span>
             </div>
+            {patientEmail ? (
+              <p className="text-muted-foreground">Email: {patientEmail}</p>
+            ) : null}
+            {patientPhone ? (
+              <p className="text-muted-foreground">Phone: {patientPhone}</p>
+            ) : null}
+            <p className="text-muted-foreground">
+              Reports: {patientReportCount} · Recommendations: {patientRecommendationCount}
+            </p>
           </CardContent>
         </Card>
 
@@ -303,13 +395,83 @@ export default function DermatologistConsultationDetailPage() {
               >
                 {saving ? "Saving…" : "Save notes"}
               </Button>
-              <Button size="sm" variant="outline" disabled type="button">
-                Upload prescription
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                disabled={
+                  prescriptionLoading ||
+                  prescriptionSaving ||
+                  (consultation.status !== "confirmed" && consultation.status !== "completed")
+                }
+                onClick={() => setPrescriptionOpen(true)}
+              >
+                {prescriptionLoading
+                  ? "Loading prescription…"
+                  : hasExistingPrescription
+                  ? "View prescription"
+                  : "Upload prescription"}
               </Button>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={prescriptionOpen} onOpenChange={setPrescriptionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{hasExistingPrescription ? "Prescription" : "Create prescription"}</DialogTitle>
+            <DialogDescription>
+              Add treatment instructions and optional recommended product IDs.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="prescription-text">Prescription text</Label>
+              <Textarea
+                id="prescription-text"
+                value={prescriptionText}
+                onChange={(e) => setPrescriptionText(e.target.value)}
+                placeholder="Medication and instructions"
+                rows={5}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="recommended-products">Recommended product IDs (UUID, comma separated)</Label>
+              <Textarea
+                id="recommended-products"
+                value={recommendedProductsInput}
+                onChange={(e) => setRecommendedProductsInput(e.target.value)}
+                placeholder="uuid-1, uuid-2"
+                rows={2}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="prescription-followup"
+                checked={prescriptionFollowUp}
+                onCheckedChange={(v) => setPrescriptionFollowUp(v === true)}
+              />
+              <Label htmlFor="prescription-followup" className="text-sm font-normal cursor-pointer">
+                Follow-up required
+              </Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              type="button"
+              onClick={() => setPrescriptionOpen(false)}
+              disabled={prescriptionSaving}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void handlePrescriptionSave()} disabled={prescriptionSaving}>
+              {prescriptionSaving ? "Saving…" : "Save prescription"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -20,6 +20,13 @@ export type NormalizedConsultation = {
   date: string;
   timeSlot: string;
   patientId: string;
+  patientName?: string;
+  patientEmail?: string;
+  patientPhone?: string;
+  patientSummary?: {
+    recentReportCount: number;
+    recentRecommendationCount: number;
+  };
   slotId: string;
   diagnosis?: string;
   notes?: string;

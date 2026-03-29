@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Put, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Put, Req, UseGuards } from "@nestjs/common";
 import { Request } from "express";
 import { AuthGuard, AuthenticatedUser } from "../../shared/guards/auth.guard";
 import { RoleGuard } from "../../shared/guards/role.guard";
@@ -63,6 +63,15 @@ export class UserController {
 
   @Put("profile")
   async updateProfile(@Req() req: Request, @Body() dto: UpdateUserProfileDto) {
+    const user = (req as Request & { user?: AuthenticatedUser }).user;
+    const userId = user?.id ?? "";
+    const data = await this.userService.updateProfile(userId, dto);
+    return formatSuccess(data);
+  }
+
+  // Backward-compatible alias: some clients still submit POST for profile save.
+  @Post("profile")
+  async updateProfilePost(@Req() req: Request, @Body() dto: UpdateUserProfileDto) {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const userId = user?.id ?? "";
     const data = await this.userService.updateProfile(userId, dto);

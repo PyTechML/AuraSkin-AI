@@ -245,7 +245,7 @@ export default function DermatologistConsultationsPage() {
                           <div>
                             <p className="font-medium flex items-center gap-2">
                               <User className="h-4 w-4" />
-                              {`Patient ${(b.patientId ?? "").trim() || "Unknown"}`}
+                              {String(b.patientName ?? "").trim() || "Unknown patient"}
                             </p>
                             <p className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
                               <Calendar className="h-3 w-3" /> {(b.date ?? "").trim() || "-"} ·{" "}

@@ -52,6 +52,19 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return ((json?.data ?? json) as T);
 }
 
+export async function apiPut<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}/api${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({})) as Record<string, unknown>;
+  if (!res.ok) {
+    throw new Error(getErrorMessage(res, json));
+  }
+  return ((json?.data ?? json) as T);
+}
+
 /** POST multipart/form-data (e.g. file upload). Do not set Content-Type; browser sets it with boundary. */
 export async function apiPostMultipart<T>(path: string, formData: FormData): Promise<T> {
   const res = await fetch(`${API_BASE}/api${path}`, {

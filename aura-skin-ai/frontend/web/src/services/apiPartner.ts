@@ -547,6 +547,10 @@ export async function createSupportTicket(
 type BackendConsultationRow = {
   id: string;
   user_id?: string | null;
+  patient_name?: string | null;
+  patient_email?: string | null;
+  patientName?: string | null;
+  patientEmail?: string | null;
   dermatologist_id?: string | null;
   consultation_status?: string | null;
   slot_id?: string | null;
@@ -560,12 +564,16 @@ type BackendConsultationRow = {
   created_at?: string | null;
 };
 
-type BackendProfileRow = {
-  id?: string | null;
-  full_name?: string | null;
-  name?: string | null;
-  email?: string | null;
-  phone?: string | null;
+type ConsultationPatientIdentity = {
+  patientId: string;
+  patientName?: string;
+  patientEmail?: string;
+  patientPhone?: string;
+};
+
+type ConsultationPatientSummary = {
+  recentReportCount: number;
+  recentRecommendationCount: number;
 };
 
 type BackendDermatologistProfileRow = {
@@ -710,16 +718,25 @@ function mapSlotTime(slot?: BackendSlotRow): string {
 
 function dermatologistConsultationFromRow(
   item: BackendConsultationRow,
-  slot?: BackendSlotRow
+  slot?: BackendSlotRow,
+  identity?: ConsultationPatientIdentity,
+  patientSummary?: ConsultationPatientSummary
 ): NormalizedConsultation {
   const slotDate = slot?.slot_date ?? "";
   const created = item.created_at ?? "";
+  const fallbackPatientId = (item.patient_id ?? item.user_id ?? "").trim();
+  const backendPatientName = String(item.patient_name ?? item.patientName ?? "").trim();
+  const backendPatientEmail = String(item.patient_email ?? item.patientEmail ?? "").trim();
   return {
     id: item.id,
     status: mapConsultationStatus(item.consultation_status ?? ""),
     date: slotDate || created,
     timeSlot: mapSlotTime(slot),
-    patientId: (item.patient_id ?? item.user_id ?? "").trim(),
+    patientId: identity?.patientId ?? fallbackPatientId,
+    patientName: backendPatientName || identity?.patientName,
+    patientEmail: backendPatientEmail || identity?.patientEmail,
+    patientPhone: identity?.patientPhone,
+    patientSummary,
     slotId: item.slot_id ?? "",
     diagnosis: item.diagnosis ?? "",
     notes: item.consultation_notes ?? "",
@@ -772,10 +789,27 @@ export async function getDermatologistConsultations(): Promise<NormalizedConsult
   const consultations = Array.isArray(consultationsResponse) ? consultationsResponse : [];
   const slots = Array.isArray(slotsResponse) ? slotsResponse : [];
   const slotById = new Map(slots.map((slot) => [slot.id, slot]));
+  const patients = await getDermatologistPatients().catch(() => []);
+
+  const patientIdentityByKey = new Map<string, ConsultationPatientIdentity>();
+  for (const patient of patients) {
+    const identity: ConsultationPatientIdentity = {
+      patientId: (patient.userId ?? patient.id ?? "").trim(),
+      patientName: patient.name?.trim() || undefined,
+      patientEmail: patient.email?.trim() || undefined,
+      patientPhone: patient.phone?.trim() || undefined,
+    };
+    const keys = [patient.userId, patient.id]
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean);
+    for (const key of keys) patientIdentityByKey.set(key, identity);
+  }
 
   return consultations.map((item) => {
     const slot = item.slot_id ? slotById.get(item.slot_id) : undefined;
-    return dermatologistConsultationFromRow(item, slot);
+    const key = String(item.patient_id ?? item.user_id ?? "").trim();
+    const identity = key ? patientIdentityByKey.get(key) : undefined;
+    return dermatologistConsultationFromRow(item, slot, identity);
   });
 }
 
@@ -795,7 +829,37 @@ export async function getDermatologistConsultationById(
     const slot = consultation.slot_id
       ? slots.find((s) => s.id === consultation.slot_id)
       : undefined;
-    return dermatologistConsultationFromRow(consultation, slot);
+    const rawPatientId = String(
+      consultation.patient_id ?? consultation.user_id ?? ""
+    ).trim();
+    const patients = await getDermatologistPatients().catch(() => []);
+    const matchedPatient =
+      patients.find((patient) => String(patient.userId ?? "").trim() === rawPatientId) ??
+      patients.find((patient) => String(patient.id ?? "").trim() === rawPatientId);
+
+    let identity: ConsultationPatientIdentity | undefined;
+    let summary: ConsultationPatientSummary | undefined;
+    if (matchedPatient) {
+      identity = {
+        patientId: (matchedPatient.userId ?? matchedPatient.id ?? rawPatientId).trim(),
+        patientName: matchedPatient.name?.trim() || undefined,
+        patientEmail: matchedPatient.email?.trim() || undefined,
+        patientPhone: matchedPatient.phone?.trim() || undefined,
+      };
+      const details = await getDermatologistPatientById(matchedPatient.id).catch(() => null);
+      if (details) {
+        const reports = Array.isArray(details.reports) ? details.reports : [];
+        const recommendationCount = reports.reduce((count, report) => {
+          const links = (report as { recommended_products?: unknown }).recommended_products;
+          return count + (Array.isArray(links) ? links.length : 0);
+        }, 0);
+        summary = {
+          recentReportCount: reports.length,
+          recentRecommendationCount: recommendationCount,
+        };
+      }
+    }
+    return dermatologistConsultationFromRow(consultation, slot, identity, summary);
   } catch {
     return null;
   }
@@ -809,7 +873,20 @@ async function consultationRowWithSlot(
   ).catch(() => []);
   const slots = Array.isArray(slotsResponse) ? slotsResponse : [];
   const slot = row.slot_id ? slots.find((s) => s.id === row.slot_id) : undefined;
-  return dermatologistConsultationFromRow(row, slot);
+  const rawPatientId = String(row.patient_id ?? row.user_id ?? "").trim();
+  const patients = await getDermatologistPatients().catch(() => []);
+  const matchedPatient =
+    patients.find((patient) => String(patient.userId ?? "").trim() === rawPatientId) ??
+    patients.find((patient) => String(patient.id ?? "").trim() === rawPatientId);
+  const identity = matchedPatient
+    ? {
+        patientId: (matchedPatient.userId ?? matchedPatient.id ?? rawPatientId).trim(),
+        patientName: matchedPatient.name?.trim() || undefined,
+        patientEmail: matchedPatient.email?.trim() || undefined,
+        patientPhone: matchedPatient.phone?.trim() || undefined,
+      }
+    : undefined;
+  return dermatologistConsultationFromRow(row, slot, identity);
 }
 
 export async function updateDermatologistConsultation(
@@ -877,13 +954,11 @@ export async function getDermatologistPatientDisplayName(
   const id = userId.trim();
   if (!id) return undefined;
   try {
-    const profilesResponse = await apiGet<BackendProfileRow[]>(
-      `/profiles?id=eq.${encodeURIComponent(id)}`
-    );
-    const profiles = Array.isArray(profilesResponse) ? profilesResponse : [];
-    const p = profiles[0];
-    if (!p) return undefined;
-    const name = (p.full_name ?? p.name ?? "").trim();
+    const patients = await getDermatologistPatients();
+    const matchedPatient =
+      patients.find((patient) => String(patient.userId ?? "").trim() === id) ??
+      patients.find((patient) => String(patient.id ?? "").trim() === id);
+    const name = String(matchedPatient?.name ?? "").trim();
     return name || undefined;
   } catch {
     return undefined;
@@ -898,6 +973,7 @@ export async function getDermatologistPatients(): Promise<NormalizedPatient[]> {
     const ninetyDaysInMs = 90 * 24 * 60 * 60 * 1000;
     return rows.map((row) => {
       const id = String(row.id ?? "").trim();
+      const userId = String(row.user_id ?? "").trim();
       const name =
         String(row.name ?? row.full_name ?? "").trim() ||
         String(row.full_name ?? "").trim() ||
@@ -911,6 +987,7 @@ export async function getDermatologistPatients(): Promise<NormalizedPatient[]> {
         Number.isFinite(lastConsultationTime) && now - lastConsultationTime <= ninetyDaysInMs;
       return {
         id,
+        userId: userId || undefined,
         name,
         email: row.email != null ? String(row.email) : undefined,
         phone: undefined,
@@ -921,6 +998,89 @@ export async function getDermatologistPatients(): Promise<NormalizedPatient[]> {
     });
   } catch {
     return [];
+  }
+}
+
+type BackendPrescriptionRow = {
+  id?: string | null;
+  consultation_id?: string | null;
+  user_id?: string | null;
+  dermatologist_id?: string | null;
+  prescription_text?: string | null;
+  recommended_products?: string[] | null;
+  follow_up_required?: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type DermatologistPrescription = {
+  id: string;
+  consultationId: string;
+  userId: string;
+  dermatologistId: string;
+  prescriptionText: string;
+  recommendedProducts: string[];
+  followUpRequired: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function normalizePrescriptionRow(
+  row: BackendPrescriptionRow | null | undefined
+): DermatologistPrescription | null {
+  if (!row?.id) return null;
+  return {
+    id: String(row.id),
+    consultationId: String(row.consultation_id ?? ""),
+    userId: String(row.user_id ?? ""),
+    dermatologistId: String(row.dermatologist_id ?? ""),
+    prescriptionText: String(row.prescription_text ?? ""),
+    recommendedProducts: Array.isArray(row.recommended_products)
+      ? row.recommended_products.filter((item): item is string => typeof item === "string")
+      : [],
+    followUpRequired: Boolean(row.follow_up_required),
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? ""),
+  };
+}
+
+export async function getDermatologistPrescriptionByConsultation(
+  consultationId: string
+): Promise<DermatologistPrescription | null> {
+  try {
+    const row = await apiGet<BackendPrescriptionRow | unknown>(
+      `/partner/dermatologist/prescriptions/${encodeURIComponent(consultationId)}`
+    );
+    return normalizePrescriptionRow(row as BackendPrescriptionRow);
+  } catch {
+    return null;
+  }
+}
+
+export async function createDermatologistPrescription(payload: {
+  consultationId: string;
+  prescriptionText: string;
+  recommendedProducts?: string[];
+  followUpRequired?: boolean;
+}): Promise<DermatologistPrescription | null> {
+  try {
+    const row = await apiSend<BackendPrescriptionRow | unknown>(
+      "/partner/dermatologist/prescriptions/create",
+      {
+        method: "POST",
+        body: {
+          consultationId: payload.consultationId,
+          prescriptionText: payload.prescriptionText,
+          recommendedProducts: Array.isArray(payload.recommendedProducts)
+            ? payload.recommendedProducts
+            : [],
+          followUpRequired: payload.followUpRequired ?? false,
+        },
+      }
+    );
+    return normalizePrescriptionRow(row as BackendPrescriptionRow);
+  } catch {
+    return null;
   }
 }
 

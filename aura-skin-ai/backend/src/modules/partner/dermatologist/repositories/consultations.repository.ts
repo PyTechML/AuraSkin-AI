@@ -10,6 +10,12 @@ export interface CreateConsultationRow {
   consultation_notes?: string | null;
 }
 
+export interface ConsultationProfileRow {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+}
+
 @Injectable()
 export class ConsultationsRepository {
   async findByDermatologistId(
@@ -155,5 +161,23 @@ export class ConsultationsRepository {
       .eq("id", slotId)
       .eq("dermatologist_id", dermatologistId);
     return !lErr;
+  }
+
+  async getProfilesByIds(userIds: string[]): Promise<ConsultationProfileRow[]> {
+    const ids = Array.from(
+      new Set(
+        userIds
+          .map((id) => String(id ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+    if (ids.length === 0) return [];
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, full_name, email")
+      .in("id", ids);
+    if (error) return [];
+    return (data as ConsultationProfileRow[]) ?? [];
   }
 }

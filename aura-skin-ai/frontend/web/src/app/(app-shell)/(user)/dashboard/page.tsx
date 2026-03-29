@@ -17,6 +17,22 @@ const STROKE = 8;
 const R = (CIRCLE_SIZE - STROKE) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * R;
 
+function looksLikeEmail(value: string): boolean {
+  return value.includes("@");
+}
+
+function pickDisplayName(name?: string | null, email?: string | null): string {
+  const trimmedName = typeof name === "string" ? name.trim() : "";
+  if (trimmedName && !looksLikeEmail(trimmedName)) {
+    return trimmedName;
+  }
+  const trimmedEmail = typeof email === "string" ? email.trim() : "";
+  if (trimmedEmail) {
+    return trimmedEmail;
+  }
+  return "there";
+}
+
 export default function DashboardPage() {
   const user = useAuthStore((s) => s.user);
   const [reports, setReports] = useState<Report[]>([]);
@@ -61,6 +77,7 @@ export default function DashboardPage() {
   const journey = useDashboardJourney(reports, user ?? null, undefined, metrics ?? undefined);
   const latestReport = reports[0] ?? null;
   const hasReport = reports.length > 0;
+  const displayName = pickDisplayName(user?.name, user?.email);
 
   const ringOffset = CIRCUMFERENCE * (1 - journey.healthScore / 100);
 
@@ -73,7 +90,7 @@ export default function DashboardPage() {
         transition={{ duration: 0.6, ease: "easeOut" }}
       >
         <h1 className="font-heading text-2xl font-semibold">
-          {journey.greetingPrefix}, {user?.email ?? user?.name ?? "there"}
+          {journey.greetingPrefix}, {displayName}
         </h1>
         <p className="text-muted-foreground mt-1">{journey.greetingSubtext}</p>
       </motion.div>
