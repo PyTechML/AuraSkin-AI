@@ -104,6 +104,36 @@
     background-size: 200% 100%;
     animation: shimmer 1.2s ease-in-out infinite;
   }
+
+  /* Live face scan preview: vertical sweep inside circular clip */
+  .face-scan-sweep-host {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    overflow: hidden;
+  }
+
+  .face-scan-sweep-host::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 34%;
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      hsl(var(--primary) / 0.28) 45%,
+      transparent 100%
+    );
+    animation: face-scan-sweep 2.75s ease-in-out infinite;
+  }
+
+  /* Slow dashed ring (Step 6 camera active) */
+  .face-scan-ring-active {
+    animation: face-scan-ring-spin 11s linear infinite;
+  }
 }
 
 @keyframes shimmer {
@@ -137,8 +167,35 @@
 .assistant-float-idle {
   animation: assistant-float 3.2s ease-in-out infinite;
 }
+
+@keyframes face-scan-sweep {
+  0% {
+    transform: translateY(-120%);
+  }
+  100% {
+    transform: translateY(320%);
+  }
+}
+
+@keyframes face-scan-ring-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .assistant-float-idle {
+    animation: none;
+  }
+
+  .face-scan-sweep-host::after {
+    animation: none;
+  }
+
+  .face-scan-ring-active {
     animation: none;
   }
 }

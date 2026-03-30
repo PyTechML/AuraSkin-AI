@@ -160,13 +160,13 @@ function StepForm({
   const [cameraState, setCameraState] = useState<CameraState>("idle");
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [captureIndex, setCaptureIndex] = useState(0);
-  const [detecting, setDetecting] = useState(false);
   const [statusMsg, setStatusMsg] = useState("Initializing detector...");
   const [isCapturing, setIsCapturing] = useState(false);
   const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const detectorRef = useRef<any>(null);
+  const detectionLoopActiveRef = useRef(false);
   const requestRef = useRef<number | null>(null);
   const pendingCaptureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const invalidTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -243,7 +243,7 @@ function StepForm({
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
         setCameraState("active");
-        setDetecting(true);
+        detectionLoopActiveRef.current = true;
         armInvalidTimeout();
         startDetectionLoop();
       }
@@ -254,11 +254,16 @@ function StepForm({
   };
 
   const startDetectionLoop = () => {
-    if (!detectorRef.current || !videoRef.current || !detecting) return;
+    if (!detectorRef.current || !videoRef.current || !detectionLoopActiveRef.current) return;
     const run = async () => {
-      if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) return;
+      if (!detectionLoopActiveRef.current || !videoRef.current || videoRef.current.paused || videoRef.current.ended) {
+        return;
+      }
       const faces = await detectorRef.current.estimateFaces(videoRef.current);
-      
+      if (!detectionLoopActiveRef.current || !videoRef.current || videoRef.current.paused || videoRef.current.ended) {
+        return;
+      }
+
       if (faces.length === 0) {
         setStatusMsg("No face detected");
       } else if (faces.length > 1) {
@@ -314,13 +319,15 @@ function StepForm({
           }
         }
       }
-      requestRef.current = requestAnimationFrame(run);
+      if (detectionLoopActiveRef.current && videoRef.current && !videoRef.current.paused && !videoRef.current.ended) {
+        requestRef.current = requestAnimationFrame(run);
+      }
     };
     requestRef.current = requestAnimationFrame(run);
   };
 
   const stopCamera = () => {
-    setDetecting(false);
+    detectionLoopActiveRef.current = false;
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
     clearPendingAutoCapture();
     clearInvalidTimeout();
@@ -546,13 +553,39 @@ function StepForm({
               {(cameraError || cameraState === "unsupported") && (
                 <p className="text-sm text-destructive">{cameraError ?? "Camera unavailable."}</p>
               )}
-              <div className="overflow-hidden rounded-md border bg-black/5 relative">
-                <video ref={videoRef} className="aspect-video w-full object-cover" muted playsInline />
-                {cameraState === "active" && (
-                  <div className="absolute bottom-4 left-4 right-4 bg-black/60 text-white p-2 rounded text-center text-sm backdrop-blur-sm">
-                    {statusMsg}
+              <div className="space-y-3">
+                <div className="relative mx-auto aspect-square w-full max-w-[min(100%,420px)]">
+                  {cameraState === "active" && (
+                    <div
+                      className="pointer-events-none absolute inset-2 z-0 rounded-full border-2 border-dashed border-primary/40 face-scan-ring-active"
+                      aria-hidden
+                    />
+                  )}
+                  <div className="absolute inset-[14px] z-10 overflow-hidden rounded-full border border-border bg-muted/30 ring-2 ring-border/25">
+                    <video
+                      ref={videoRef}
+                      className={
+                        cameraState === "active"
+                          ? "h-full w-full object-cover"
+                          : "h-full w-full object-cover opacity-0"
+                      }
+                      muted
+                      playsInline
+                    />
+                    {cameraState === "active" && (
+                      <div className="face-scan-sweep-host z-[1]" aria-hidden />
+                    )}
                   </div>
-                )}
+                </div>
+                <p
+                  className={
+                    cameraState === "active"
+                      ? "mx-auto max-w-[min(100%,420px)] rounded-full bg-muted/80 px-3 py-2 text-center text-sm text-muted-foreground backdrop-blur-sm"
+                      : "text-center text-sm text-muted-foreground"
+                  }
+                >
+                  {statusMsg}
+                </p>
               </div>
               <canvas ref={canvasRef} className="hidden" />
               <div className="grid gap-3">
