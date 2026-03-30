@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
+import { AlertCircle, Check, ChevronLeft, ChevronRight } from "lucide-react";
 
 const CONCERN_OPTIONS = ["Acne", "Dryness", "Oiliness", "Hyperpigmentation", "Fine lines", "Sensitivity", "Redness", "Dullness"];
 const SKIN_TYPES = ["Dry", "Oily", "Combination", "Normal", "Sensitive"];
@@ -30,6 +31,12 @@ const IMAGE_VIEWS: { key: string; label: string }[] = [
   { key: "left_profile", label: "Left profile" },
   { key: "right_profile", label: "Right profile" },
 ];
+
+const POSE_SAVED_LABELS: Record<string, string> = {
+  front_face: "Front angle saved",
+  left_profile: "Left profile saved",
+  right_profile: "Right profile saved",
+};
 
 const stepConfig = [
   {
@@ -108,9 +115,9 @@ interface StepFormProps {
   step: StepConfigItem;
   data: AssessmentStepData;
   fileNames: string[];
-  setFileNames: (f: string[]) => void;
+  setFileNames: Dispatch<SetStateAction<string[]>>;
   files: File[];
-  setFiles: (f: File[]) => void;
+  setFiles: Dispatch<SetStateAction<File[]>>;
   onSuccess: (values: unknown) => void;
   onBack?: () => void;
   /** Step 6: skip live capture (questionnaire-only path). */
@@ -161,15 +168,22 @@ function StepForm({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [captureIndex, setCaptureIndex] = useState(0);
   const [statusMsg, setStatusMsg] = useState("Initializing detector...");
-  const [isCapturing, setIsCapturing] = useState(false);
+  /** In-circle error hint while camera active (RAF loop updates; avoids stale closure). */
+  const [circleError, setCircleError] = useState<"none" | "no_face" | "multi">("none");
+  /** Brief per-pose success overlay index, or null. */
+  const [poseSuccessFlashIndex, setPoseSuccessFlashIndex] = useState<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const detectorRef = useRef<any>(null);
   const detectionLoopActiveRef = useRef(false);
+  /** RAF loop reads these on every frame — state alone stays stale inside `run` (single closure). */
+  const captureIndexRef = useRef(0);
+  const isCapturingRef = useRef(false);
   const requestRef = useRef<number | null>(null);
   const pendingCaptureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const invalidTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const poseFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -203,6 +217,7 @@ function StepForm({
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
       if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
       if (invalidTimeoutRef.current) clearTimeout(invalidTimeoutRef.current);
+      if (poseFlashTimeoutRef.current) clearTimeout(poseFlashTimeoutRef.current);
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
@@ -214,24 +229,35 @@ function StepForm({
     invalidTimeoutRef.current = null;
   };
 
+  /** ~60s from last progress (valid pose / capture); re-armed so users can reposition for side angles. */
   const armInvalidTimeout = () => {
     clearInvalidTimeout();
     invalidTimeoutRef.current = setTimeout(() => {
       setStatusMsg("Timed out — please ensure your face is visible and try again.");
-      setCameraError("Timed out after 20 seconds. Please try again.");
+      setCameraError("Timed out after 60 seconds. Please try again.");
       stopCamera();
-    }, 20_000);
+    }, 60_000);
   };
 
   const clearPendingAutoCapture = () => {
     if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
     pendingCaptureTimeoutRef.current = null;
-    setIsCapturing(false);
+    isCapturingRef.current = false;
+  };
+
+  const triggerPoseSuccessFlash = (idx: number) => {
+    setPoseSuccessFlashIndex(idx);
+    if (poseFlashTimeoutRef.current) clearTimeout(poseFlashTimeoutRef.current);
+    poseFlashTimeoutRef.current = setTimeout(() => {
+      setPoseSuccessFlashIndex(null);
+      poseFlashTimeoutRef.current = null;
+    }, 1350);
   };
 
   const startCamera = async () => {
     if (step.key !== "imageUpload") return;
     setCameraError(null);
+    setCircleError("none");
     setCameraState("starting");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -265,10 +291,13 @@ function StepForm({
       }
 
       if (faces.length === 0) {
+        setCircleError("no_face");
         setStatusMsg("No face detected");
       } else if (faces.length > 1) {
+        setCircleError("multi");
         setStatusMsg("Multiple faces detected. Please ensure only you are in frame.");
       } else {
+        setCircleError("none");
         const face = faces[0];
         const keypoints = face.keypoints;
         // Simple orientation logic based on keypoints
@@ -281,7 +310,7 @@ function StepForm({
           const noseFromLeft = nose.x - leftEye.x;
           const ratio = noseFromLeft / eyeDist; // ~0.5 is front
 
-          const target = IMAGE_VIEWS[captureIndex];
+          const target = IMAGE_VIEWS[captureIndexRef.current];
           let detected = false;
 
           if (target.key === "front_face") {
@@ -307,11 +336,11 @@ function StepForm({
             }
           }
 
-          if (detected && !isCapturing) {
-            // We have a valid face orientation — reset the invalid timer and auto-capture after a short hold.
+          if (detected && !isCapturingRef.current) {
             armInvalidTimeout();
-            setIsCapturing(true);
-            clearPendingAutoCapture();
+            if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
+            pendingCaptureTimeoutRef.current = null;
+            isCapturingRef.current = true;
             pendingCaptureTimeoutRef.current = setTimeout(() => {
               captureCurrentFrame();
               clearPendingAutoCapture();
@@ -334,12 +363,14 @@ function StepForm({
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
     }
+    setCircleError("none");
     setCameraState("idle");
   };
 
   const captureCurrentFrame = () => {
     const video = videoRef.current;
-    if (!video || captureIndex >= IMAGE_VIEWS.length) return;
+    const idx = captureIndexRef.current;
+    if (!video || idx >= IMAGE_VIEWS.length) return;
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -347,17 +378,23 @@ function StepForm({
     if (!ctx) return;
     ctx.drawImage(video, 0, 0);
     const dataUrl = canvas.toDataURL("image/jpeg");
-    const file = dataUrlToFile(dataUrl, `${IMAGE_VIEWS[captureIndex].key}.jpg`);
+    const file = dataUrlToFile(dataUrl, `${IMAGE_VIEWS[idx].key}.jpg`);
     if (file) {
-      const nextFiles = [...files];
-      nextFiles[captureIndex] = file;
-      setFiles(nextFiles);
-      const nextNames = [...fileNames];
-      nextNames[captureIndex] = file.name;
-      setFileNames(nextNames);
-      form.setValue("fileNames", nextNames, { shouldValidate: true });
-      if (captureIndex < IMAGE_VIEWS.length - 1) {
-        setCaptureIndex(captureIndex + 1);
+      setFiles((prev) => {
+        const next = [...prev];
+        next[idx] = file;
+        return next;
+      });
+      setFileNames((prev) => {
+        const next = [...prev];
+        next[idx] = file.name;
+        form.setValue("fileNames", next, { shouldValidate: true });
+        return next;
+      });
+      triggerPoseSuccessFlash(idx);
+      if (idx < IMAGE_VIEWS.length - 1) {
+        captureIndexRef.current = idx + 1;
+        setCaptureIndex(idx + 1);
         armInvalidTimeout();
       } else {
         stopCamera();
@@ -562,19 +599,84 @@ function StepForm({
                     />
                   )}
                   <div className="absolute inset-[14px] z-10 overflow-hidden rounded-full border border-border bg-muted/30 ring-2 ring-border/25">
-                    <video
-                      ref={videoRef}
-                      className={
-                        cameraState === "active"
-                          ? "h-full w-full object-cover"
-                          : "h-full w-full object-cover opacity-0"
-                      }
-                      muted
-                      playsInline
-                    />
-                    {cameraState === "active" && (
-                      <div className="face-scan-sweep-host z-[1]" aria-hidden />
-                    )}
+                    <div className="relative h-full w-full">
+                      <video
+                        ref={videoRef}
+                        className={
+                          cameraState === "active"
+                            ? "absolute inset-0 h-full w-full object-cover"
+                            : "absolute inset-0 h-full w-full object-cover opacity-0"
+                        }
+                        muted
+                        playsInline
+                      />
+                      {cameraState === "active" && (
+                        <div className="face-scan-sweep-host z-[1]" aria-hidden />
+                      )}
+                      {poseSuccessFlashIndex !== null && (
+                        <div
+                          className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-1 bg-background/55 px-3 text-center backdrop-blur-sm face-scan-flash-enter pointer-events-none"
+                          aria-live="polite"
+                        >
+                          <Check className="h-10 w-10 text-primary" strokeWidth={2} aria-hidden />
+                          <p className="text-sm font-medium text-foreground">
+                            {POSE_SAVED_LABELS[IMAGE_VIEWS[poseSuccessFlashIndex]?.key] ?? "Angle saved"}
+                          </p>
+                        </div>
+                      )}
+                      {files.filter(Boolean).length === 3 &&
+                        cameraState === "idle" &&
+                        poseSuccessFlashIndex === null && (
+                          <div
+                            className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-background/65 px-3 text-center backdrop-blur-md pointer-events-none"
+                            aria-live="polite"
+                          >
+                            <Check className="h-11 w-11 text-primary" strokeWidth={2} aria-hidden />
+                            <p className="text-sm font-semibold text-foreground">Assessment capture complete</p>
+                          </div>
+                        )}
+                      {cameraState === "active" && poseSuccessFlashIndex === null && circleError === "no_face" && (
+                        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background/45 px-3 text-center backdrop-blur-sm">
+                          <AlertCircle className="h-9 w-9 text-destructive" aria-hidden />
+                          <p className="text-xs font-medium text-foreground">No face detected</p>
+                          <p className="text-[11px] text-muted-foreground">Move into frame</p>
+                        </div>
+                      )}
+                      {cameraState === "active" && poseSuccessFlashIndex === null && circleError === "multi" && (
+                        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background/45 px-3 text-center backdrop-blur-sm">
+                          <AlertCircle className="h-9 w-9 text-destructive" aria-hidden />
+                          <p className="text-xs font-medium text-foreground">Multiple faces</p>
+                          <p className="text-[11px] text-muted-foreground">Only you should be visible</p>
+                        </div>
+                      )}
+                      {cameraState === "active" && poseSuccessFlashIndex === null && circleError === "none" && (
+                        <>
+                          {IMAGE_VIEWS[captureIndex]?.key === "left_profile" && (
+                            <div className="pointer-events-none absolute bottom-3 left-2 right-2 z-[15] flex flex-col items-center gap-0.5">
+                              <ChevronRight className="h-9 w-9 text-primary drop-shadow-sm" strokeWidth={2.5} aria-hidden />
+                              <p className="rounded-full bg-background/50 px-2.5 py-1 text-center text-xs font-medium text-foreground shadow-sm backdrop-blur-sm">
+                                Look right — left profile
+                              </p>
+                            </div>
+                          )}
+                          {IMAGE_VIEWS[captureIndex]?.key === "right_profile" && (
+                            <div className="pointer-events-none absolute bottom-3 left-2 right-2 z-[15] flex flex-col items-center gap-0.5">
+                              <ChevronLeft className="h-9 w-9 text-primary drop-shadow-sm" strokeWidth={2.5} aria-hidden />
+                              <p className="rounded-full bg-background/50 px-2.5 py-1 text-center text-xs font-medium text-foreground shadow-sm backdrop-blur-sm">
+                                Look left — right profile
+                              </p>
+                            </div>
+                          )}
+                          {IMAGE_VIEWS[captureIndex]?.key === "front_face" && (
+                            <div className="pointer-events-none absolute bottom-3 left-2 right-2 z-[15] flex justify-center">
+                              <p className="rounded-full bg-background/50 px-2.5 py-1 text-center text-xs font-medium text-foreground shadow-sm backdrop-blur-sm">
+                                Center your face — hold still when aligned
+                              </p>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <p
@@ -593,7 +695,8 @@ function StepForm({
                   <div key={view.key} className="space-y-1">
                     <Label className="text-xs">{view.label}</Label>
                     <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
-                      {files[i] ? "Captured" : "Pending"} {i === captureIndex && cameraState === "active" ? "· Next" : ""}
+                      {files[i] ? "Complete" : "Pending"}
+                      {i === captureIndex && cameraState === "active" && !files[i] ? " · Next target" : ""}
                     </div>
                     {files[i] && <p className="text-xs text-muted-foreground">{files[i].name}</p>}
                   </div>

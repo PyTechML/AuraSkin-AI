@@ -134,6 +134,11 @@
   .face-scan-ring-active {
     animation: face-scan-ring-spin 11s linear infinite;
   }
+
+  /* Brief pose-saved overlay fade-in */
+  .face-scan-flash-enter {
+    animation: face-scan-flash-enter 0.22s ease-out forwards;
+  }
 }
 
 @keyframes shimmer {
@@ -186,6 +191,15 @@
   }
 }
 
+@keyframes face-scan-flash-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .assistant-float-idle {
     animation: none;
@@ -197,5 +211,10 @@
 
   .face-scan-ring-active {
     animation: none;
+  }
+
+  .face-scan-flash-enter {
+    animation: none;
+    opacity: 1;
   }
 }
