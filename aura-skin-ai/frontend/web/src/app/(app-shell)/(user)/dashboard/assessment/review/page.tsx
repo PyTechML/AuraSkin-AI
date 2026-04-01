@@ -15,6 +15,7 @@ import {
   getAssessmentStatus,
   getReportByAssessmentId,
   getAssessmentSubmitHealth,
+  type AssessmentSubmitHealth,
   type CreateAssessmentPayload,
 } from "@/services/api";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,9 @@ function mapSubmitErrorMessage(rawMessage: string): string {
   }
   if (code === "ASSESSMENT_INVALID_IMAGES") {
     return "This assessment already has uploaded images. Use scan-based submit, or start a new questionnaire-only assessment.";
+  }
+  if (code === "ASSESSMENT_MODE_UNHEALTHY") {
+    return "Scan-based submission is currently unavailable in this environment. Use \"Continue without face scan\" or contact support to enable scan mode.";
   }
 
   if (
@@ -123,6 +127,7 @@ export default function AssessmentReviewPage() {
   const [stage, setStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitDisabledReason, setSubmitDisabledReason] = useState<string | null>(null);
+  const [submitHealth, setSubmitHealth] = useState<AssessmentSubmitHealth | null>(null);
   const [currentAssessmentId, setCurrentAssessmentId] = useState<string | null>(null);
   const attemptsRef = useRef(0);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -143,6 +148,13 @@ export default function AssessmentReviewPage() {
   useEffect(() => {
     getAssessmentSubmitHealth()
       .then((health) => {
+        setSubmitHealth(health);
+        if (health.mode === "QUESTIONNAIRE_ONLY") {
+          setSubmitDisabledReason(
+            "Scan-based submission is disabled in the current backend mode. Questionnaire-only submit is available."
+          );
+          return;
+        }
         if (health.healthy) {
           setSubmitDisabledReason(null);
           return;
@@ -171,11 +183,19 @@ export default function AssessmentReviewPage() {
 
   const handleSubmit = async () => {
     const files = Array.isArray(data.imageUpload?.files) ? data.imageUpload!.files! : [];
-    const isQuestionnaire =
-      submissionMode === "questionnaire" || Boolean(data.imageUpload?.skipped);
+    const hasScanFiles = files.length >= 3;
+    const explicitlyQuestionnaire = submissionMode === "questionnaire" || Boolean(data.imageUpload?.skipped);
+    const isScanModeBlocked = submitHealth?.mode === "QUESTIONNAIRE_ONLY";
+    const isQuestionnaire = explicitlyQuestionnaire && !hasScanFiles;
 
     if (!isQuestionnaire && files.length < 3) {
       setError("Please go back and complete the live face capture (front, left, right).");
+      return;
+    }
+    if (!isQuestionnaire && isScanModeBlocked) {
+      setError(
+        "This environment is configured for questionnaire-only submit right now. Use \"Continue without face scan\" or contact support to enable scan mode."
+      );
       return;
     }
 
@@ -416,7 +436,17 @@ export default function AssessmentReviewPage() {
         <Button variant="outline" asChild disabled={submitting}>
           <Link href="/start-assessment">Edit assessment</Link>
         </Button>
-        <Button onClick={handleSubmit} disabled={submitting || (!!submitDisabledReason && !(submissionMode === "questionnaire" || data.imageUpload?.skipped))}>
+        <Button
+          onClick={handleSubmit}
+          disabled={
+            submitting ||
+            (!!submitDisabledReason &&
+              !(
+                (submissionMode === "questionnaire" || data.imageUpload?.skipped) &&
+                !(Array.isArray(data.imageUpload?.files) && data.imageUpload.files.length >= 3)
+              ))
+          }
+        >
           {submitting ? "Submitting…" : "Submit assessment"}
         </Button>
       </div>

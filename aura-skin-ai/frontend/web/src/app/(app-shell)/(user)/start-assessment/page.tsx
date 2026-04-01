@@ -37,7 +37,7 @@ const MESH_NOSE_TIP = 1;
 const MESH_EYE_SUBJECT_RIGHT = 33;
 const MESH_EYE_SUBJECT_LEFT = 263;
 
-const MIN_EYE_SPAN_PX = 8;
+const MIN_EYE_SPAN_PX = 5;
 /** Consecutive matching frames before arming the 900ms shutter. */
 const STABLE_FRAMES_FOR_CAPTURE = 8;
 /** Status switches to “hold still” partway through stabilization. */
@@ -45,6 +45,7 @@ const STABLE_FRAMES_HOLD_STILL_HINT = 4;
 const AUTO_CAPTURE_DELAY_MS = 550;
 const MANUAL_FALLBACK_DELAY_MS = 12_000;
 const DETECTOR_READY_WAIT_MS = 8_000;
+const MIN_ESTIMATE_INTERVAL_MS = 90;
 
 /**
  * Relaxed bands so real head poses still count; nose x projected onto [eyeMinX, eyeMaxX] → ~0.5 front.
@@ -251,6 +252,7 @@ function StepForm({
   const wasPoseMatchingRef = useRef(false);
   const stablePoseFramesRef = useRef(0);
   const lastEstimateErrorLogAtRef = useRef(0);
+  const lastEstimateAtRef = useRef(0);
   const detectorReadyRef = useRef(false);
   const manualFallbackReadyRef = useRef(false);
 
@@ -360,13 +362,27 @@ function StepForm({
         }
       }
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: 640, height: 480 },
+        video: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 24, max: 30 },
+        },
         audio: false,
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+        if (videoRef.current.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+          await new Promise<void>((resolve) => {
+            const onLoaded = () => {
+              videoRef.current?.removeEventListener("loadeddata", onLoaded);
+              resolve();
+            };
+            videoRef.current?.addEventListener("loadeddata", onLoaded);
+          });
+        }
         setCameraState("active");
         detectionLoopActiveRef.current = true;
         resetStageTracking();
@@ -395,6 +411,15 @@ function StepForm({
           setStatusMsg("Initializing detector...");
           return;
         }
+        if (videoRef.current.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+          setStatusMsg("Warming up camera...");
+          return;
+        }
+        const now = Date.now();
+        if (now - lastEstimateAtRef.current < MIN_ESTIMATE_INTERVAL_MS) {
+          return;
+        }
+        lastEstimateAtRef.current = now;
 
         let faces: { keypoints: LandmarkLike[] }[] = [];
         let estimateFailed = false;
