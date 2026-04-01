@@ -32,10 +32,67 @@ const IMAGE_VIEWS: { key: string; label: string }[] = [
   { key: "right_profile", label: "Right profile" },
 ];
 
+/** MediaPipe Face Mesh indices (tfjs): 33 = subject's right-eye contour, 263 = subject's left-eye contour (image x: min ≈ subject right, max ≈ subject left). */
+const MESH_NOSE_TIP = 1;
+const MESH_EYE_SUBJECT_RIGHT = 33;
+const MESH_EYE_SUBJECT_LEFT = 263;
+
+const MIN_EYE_SPAN_PX = 8;
+/** Consecutive matching frames before arming the 900ms shutter. */
+const STABLE_FRAMES_FOR_CAPTURE = 12;
+/** Status switches to “hold still” partway through stabilization. */
+const STABLE_FRAMES_HOLD_STILL_HINT = 6;
+
+/**
+ * Relaxed bands so real head poses still count; nose x projected onto [eyeMinX, eyeMaxX] → ~0.5 front.
+ * Left profile: user turns their head right (left cheek toward camera) → yawT decreases.
+ */
+const POSE_FRONT_MIN = 0.38;
+const POSE_FRONT_MAX = 0.62;
+const POSE_LEFT_MAX = 0.36;
+const POSE_RIGHT_MIN = 0.64;
+
+type LandmarkLike = { x: number; y: number; z?: number };
+
+function computeHorizontalYawT(
+  nose: LandmarkLike,
+  eyeSubjectRight: LandmarkLike,
+  eyeSubjectLeft: LandmarkLike
+): number | null {
+  const eyeMinX = Math.min(eyeSubjectRight.x, eyeSubjectLeft.x);
+  const eyeMaxX = Math.max(eyeSubjectRight.x, eyeSubjectLeft.x);
+  const span = eyeMaxX - eyeMinX;
+  if (span < MIN_EYE_SPAN_PX) return null;
+  return (nose.x - eyeMinX) / span;
+}
+
+function poseMatchesTarget(viewKey: string, yawT: number): boolean {
+  if (viewKey === "front_face") return yawT > POSE_FRONT_MIN && yawT < POSE_FRONT_MAX;
+  if (viewKey === "left_profile") return yawT < POSE_LEFT_MAX;
+  if (viewKey === "right_profile") return yawT > POSE_RIGHT_MIN;
+  return false;
+}
+
 const POSE_SAVED_LABELS: Record<string, string> = {
   front_face: "Front angle saved",
   left_profile: "Left profile saved",
   right_profile: "Right profile saved",
+};
+
+/** In-circle titles match nose/eye ratio logic: left profile = turn head right; right profile = turn head left. */
+const PHASE_GUIDE: Record<string, { title: string; subtitle: string }> = {
+  front_face: {
+    title: "Look straight",
+    subtitle: "Center your face — hold still when aligned",
+  },
+  left_profile: {
+    title: "Turn right",
+    subtitle: "Show your left profile to the camera",
+  },
+  right_profile: {
+    title: "Turn left",
+    subtitle: "Show your right profile to the camera",
+  },
 };
 
 const stepConfig = [
@@ -184,6 +241,8 @@ function StepForm({
   const pendingCaptureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const invalidTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const poseFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stablePoseFramesRef = useRef(0);
+  const lastEstimateErrorLogAtRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -229,7 +288,10 @@ function StepForm({
     invalidTimeoutRef.current = null;
   };
 
-  /** ~60s from last progress (valid pose / capture); re-armed so users can reposition for side angles. */
+  /**
+   * ~60s from last progress (valid pose / capture); re-armed so users can reposition.
+   * After each successful capture, `captureCurrentFrame` calls this again — fresh ~60s for the next angle.
+   */
   const armInvalidTimeout = () => {
     clearInvalidTimeout();
     invalidTimeoutRef.current = setTimeout(() => {
@@ -270,6 +332,7 @@ function StepForm({
         await videoRef.current.play();
         setCameraState("active");
         detectionLoopActiveRef.current = true;
+        stablePoseFramesRef.current = 0;
         armInvalidTimeout();
         startDetectionLoop();
       }
@@ -282,74 +345,115 @@ function StepForm({
   const startDetectionLoop = () => {
     if (!detectorRef.current || !videoRef.current || !detectionLoopActiveRef.current) return;
     const run = async () => {
-      if (!detectionLoopActiveRef.current || !videoRef.current || videoRef.current.paused || videoRef.current.ended) {
-        return;
-      }
-      const faces = await detectorRef.current.estimateFaces(videoRef.current);
-      if (!detectionLoopActiveRef.current || !videoRef.current || videoRef.current.paused || videoRef.current.ended) {
-        return;
-      }
+      try {
+        if (!detectionLoopActiveRef.current || !videoRef.current || videoRef.current.paused || videoRef.current.ended) {
+          return;
+        }
 
-      if (faces.length === 0) {
-        setCircleError("no_face");
-        setStatusMsg("No face detected");
-      } else if (faces.length > 1) {
-        setCircleError("multi");
-        setStatusMsg("Multiple faces detected. Please ensure only you are in frame.");
-      } else {
-        setCircleError("none");
-        const face = faces[0];
-        const keypoints = face.keypoints;
-        // Simple orientation logic based on keypoints
-        const leftEye = keypoints[33];
-        const rightEye = keypoints[263];
-        const nose = keypoints[1];
-        
-        if (leftEye && rightEye && nose) {
-          const eyeDist = rightEye.x - leftEye.x;
-          const noseFromLeft = nose.x - leftEye.x;
-          const ratio = noseFromLeft / eyeDist; // ~0.5 is front
-
-          const target = IMAGE_VIEWS[captureIndexRef.current];
-          let detected = false;
-
-          if (target.key === "front_face") {
-            if (ratio > 0.4 && ratio < 0.6) {
-              setStatusMsg("Front face detected - Hold still...");
-              detected = true;
-            } else {
-              setStatusMsg("Position your face to the center");
-            }
-          } else if (target.key === "left_profile") {
-            if (ratio < 0.25) {
-              setStatusMsg("Left profile detected - Hold still...");
-              detected = true;
-            } else {
-              setStatusMsg("Turn your head to the right (left profile)");
-            }
-          } else if (target.key === "right_profile") {
-            if (ratio > 0.75) {
-              setStatusMsg("Right profile detected - Hold still...");
-              detected = true;
-            } else {
-              setStatusMsg("Turn your head to the left (right profile)");
-            }
+        let faces: { keypoints: LandmarkLike[] }[] = [];
+        let estimateFailed = false;
+        try {
+          faces = await detectorRef.current.estimateFaces(videoRef.current, {
+            flipHorizontal: false,
+            staticImageMode: false,
+          });
+        } catch (err) {
+          estimateFailed = true;
+          const now = Date.now();
+          if (now - lastEstimateErrorLogAtRef.current > 5000) {
+            lastEstimateErrorLogAtRef.current = now;
+            console.error("estimateFaces failed", err);
           }
+          stablePoseFramesRef.current = 0;
+          setStatusMsg("Brief detection hiccup — stay in frame");
+        }
 
-          if (detected && !isCapturingRef.current) {
-            armInvalidTimeout();
-            if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
-            pendingCaptureTimeoutRef.current = null;
-            isCapturingRef.current = true;
-            pendingCaptureTimeoutRef.current = setTimeout(() => {
-              captureCurrentFrame();
-              clearPendingAutoCapture();
-            }, 900);
+        if (!detectionLoopActiveRef.current || !videoRef.current || videoRef.current.paused || videoRef.current.ended) {
+          return;
+        }
+
+        if (estimateFailed) {
+          return;
+        }
+
+        if (faces.length === 0) {
+          stablePoseFramesRef.current = 0;
+          setCircleError("no_face");
+          setStatusMsg("No face detected");
+        } else if (faces.length > 1) {
+          stablePoseFramesRef.current = 0;
+          setCircleError("multi");
+          setStatusMsg("Multiple faces detected. Please ensure only you are in frame.");
+        } else {
+          setCircleError("none");
+          const face = faces[0];
+          const keypoints = face.keypoints;
+          const eyeR = keypoints[MESH_EYE_SUBJECT_RIGHT];
+          const eyeL = keypoints[MESH_EYE_SUBJECT_LEFT];
+          const nose = keypoints[MESH_NOSE_TIP];
+
+          if (eyeR && eyeL && nose) {
+            const yawT = computeHorizontalYawT(nose, eyeR, eyeL);
+            const target = IMAGE_VIEWS[captureIndexRef.current];
+
+            if (yawT == null) {
+              stablePoseFramesRef.current = 0;
+              setStatusMsg("Move a little closer — face too small in frame");
+            } else {
+              const matches = poseMatchesTarget(target.key, yawT);
+
+              if (!isCapturingRef.current) {
+                if (matches) {
+                  stablePoseFramesRef.current += 1;
+                  armInvalidTimeout();
+                } else {
+                  stablePoseFramesRef.current = 0;
+                }
+              }
+
+              const stable = stablePoseFramesRef.current;
+              const holdHint = stable >= STABLE_FRAMES_HOLD_STILL_HINT;
+
+              if (!isCapturingRef.current) {
+                if (target.key === "front_face") {
+                  if (matches && holdHint) setStatusMsg("Front face detected - Hold still...");
+                  else if (matches) setStatusMsg("Hold steady — lining up…");
+                  else setStatusMsg("Position your face to the center");
+                } else if (target.key === "left_profile") {
+                  if (matches && holdHint) setStatusMsg("Left profile detected - Hold still...");
+                  else if (matches) setStatusMsg("Hold steady — lining up…");
+                  else setStatusMsg("Turn your head to the right (left profile)");
+                } else if (target.key === "right_profile") {
+                  if (matches && holdHint) setStatusMsg("Right profile detected - Hold still...");
+                  else if (matches) setStatusMsg("Hold steady — lining up…");
+                  else setStatusMsg("Turn your head to the left (right profile)");
+                }
+              }
+
+              if (
+                matches &&
+                !isCapturingRef.current &&
+                stable >= STABLE_FRAMES_FOR_CAPTURE
+              ) {
+                armInvalidTimeout();
+                if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
+                pendingCaptureTimeoutRef.current = null;
+                isCapturingRef.current = true;
+                stablePoseFramesRef.current = 0;
+                pendingCaptureTimeoutRef.current = setTimeout(() => {
+                  captureCurrentFrame();
+                  clearPendingAutoCapture();
+                }, 900);
+              }
+            }
+          } else {
+            stablePoseFramesRef.current = 0;
           }
         }
-      }
-      if (detectionLoopActiveRef.current && videoRef.current && !videoRef.current.paused && !videoRef.current.ended) {
-        requestRef.current = requestAnimationFrame(run);
+      } finally {
+        if (detectionLoopActiveRef.current && videoRef.current && !videoRef.current.paused && !videoRef.current.ended) {
+          requestRef.current = requestAnimationFrame(run);
+        }
       }
     };
     requestRef.current = requestAnimationFrame(run);
@@ -357,9 +461,13 @@ function StepForm({
 
   const stopCamera = () => {
     detectionLoopActiveRef.current = false;
+    stablePoseFramesRef.current = 0;
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
     clearPendingAutoCapture();
     clearInvalidTimeout();
+    if (poseFlashTimeoutRef.current) clearTimeout(poseFlashTimeoutRef.current);
+    poseFlashTimeoutRef.current = null;
+    setPoseSuccessFlashIndex(null);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
     }
@@ -371,6 +479,10 @@ function StepForm({
     const video = videoRef.current;
     const idx = captureIndexRef.current;
     if (!video || idx >= IMAGE_VIEWS.length) return;
+    if (video.videoWidth < 32 || video.videoHeight < 32) {
+      setStatusMsg("Camera not ready — wait a moment and hold the pose");
+      return;
+    }
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -395,6 +507,7 @@ function StepForm({
       if (idx < IMAGE_VIEWS.length - 1) {
         captureIndexRef.current = idx + 1;
         setCaptureIndex(idx + 1);
+        stablePoseFramesRef.current = 0;
         armInvalidTimeout();
       } else {
         stopCamera();
@@ -402,6 +515,39 @@ function StepForm({
       }
     }
   };
+
+  const activePhaseGuide =
+    step.key === "imageUpload" &&
+    cameraState === "active" &&
+    poseSuccessFlashIndex === null &&
+    circleError === "none"
+      ? PHASE_GUIDE[IMAGE_VIEWS[captureIndex]?.key ?? ""] ?? null
+      : null;
+
+  /**
+   * Line below the circle: shorten when the live preview already shows pose/errors.
+   * Keep full statusMsg for: detector load failure, permission error, timeout, imminent capture ("hold still").
+   */
+  const outerStatusBelowPreview =
+    step.key !== "imageUpload"
+      ? statusMsg
+      : cameraState === "error"
+        ? statusMsg
+        : /Detector load failed/i.test(statusMsg)
+          ? statusMsg
+          : cameraState === "active"
+            ? poseSuccessFlashIndex !== null
+              ? "Saving angle…"
+              : circleError !== "none"
+                ? "Adjust using the guide in the preview above."
+                : /hold still/i.test(statusMsg)
+                  ? statusMsg
+                  : activePhaseGuide
+                    ? "Follow the on-screen guide in the preview above."
+                    : statusMsg
+            : cameraState === "idle" && cameraError && files.filter(Boolean).length < 3
+              ? statusMsg
+              : statusMsg;
 
   return (
     <Card className="border-border">
@@ -613,6 +759,14 @@ function StepForm({
                       {cameraState === "active" && (
                         <div className="face-scan-sweep-host z-[1]" aria-hidden />
                       )}
+                      {activePhaseGuide && (
+                        <div className="pointer-events-none absolute left-3 right-3 top-3 z-[16] flex flex-col items-center gap-0.5 text-center">
+                          <p className="text-sm font-semibold text-foreground drop-shadow-sm">{activePhaseGuide.title}</p>
+                          <p className="text-[11px] leading-snug text-muted-foreground drop-shadow-sm">
+                            {activePhaseGuide.subtitle}
+                          </p>
+                        </div>
+                      )}
                       {poseSuccessFlashIndex !== null && (
                         <div
                           className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-1 bg-background/55 px-3 text-center backdrop-blur-sm face-scan-flash-enter pointer-events-none"
@@ -622,6 +776,7 @@ function StepForm({
                           <p className="text-sm font-medium text-foreground">
                             {POSE_SAVED_LABELS[IMAGE_VIEWS[poseSuccessFlashIndex]?.key] ?? "Angle saved"}
                           </p>
+                          <p className="text-xs text-muted-foreground">Got it</p>
                         </div>
                       )}
                       {files.filter(Boolean).length === 3 &&
@@ -632,7 +787,15 @@ function StepForm({
                             aria-live="polite"
                           >
                             <Check className="h-11 w-11 text-primary" strokeWidth={2} aria-hidden />
-                            <p className="text-sm font-semibold text-foreground">Assessment capture complete</p>
+                            <p className="text-sm font-semibold text-foreground">Assessment complete</p>
+                          </div>
+                        )}
+                      {cameraError &&
+                        (cameraState === "error" ||
+                          (cameraState === "idle" && files.filter(Boolean).length < 3)) && (
+                          <div className="pointer-events-none absolute inset-0 z-[28] flex flex-col items-center justify-center gap-2 bg-background/55 px-3 text-center backdrop-blur-sm">
+                            <AlertCircle className="h-8 w-8 text-destructive" aria-hidden />
+                            <p className="text-xs font-medium text-foreground">{cameraError}</p>
                           </div>
                         )}
                       {cameraState === "active" && poseSuccessFlashIndex === null && circleError === "no_face" && (
@@ -652,26 +815,13 @@ function StepForm({
                       {cameraState === "active" && poseSuccessFlashIndex === null && circleError === "none" && (
                         <>
                           {IMAGE_VIEWS[captureIndex]?.key === "left_profile" && (
-                            <div className="pointer-events-none absolute bottom-3 left-2 right-2 z-[15] flex flex-col items-center gap-0.5">
-                              <ChevronRight className="h-9 w-9 text-primary drop-shadow-sm" strokeWidth={2.5} aria-hidden />
-                              <p className="rounded-full bg-background/50 px-2.5 py-1 text-center text-xs font-medium text-foreground shadow-sm backdrop-blur-sm">
-                                Look right — left profile
-                              </p>
+                            <div className="pointer-events-none absolute bottom-4 left-2 right-2 z-[15] flex justify-center">
+                              <ChevronRight className="h-10 w-10 text-primary drop-shadow-md" strokeWidth={2.5} aria-hidden />
                             </div>
                           )}
                           {IMAGE_VIEWS[captureIndex]?.key === "right_profile" && (
-                            <div className="pointer-events-none absolute bottom-3 left-2 right-2 z-[15] flex flex-col items-center gap-0.5">
-                              <ChevronLeft className="h-9 w-9 text-primary drop-shadow-sm" strokeWidth={2.5} aria-hidden />
-                              <p className="rounded-full bg-background/50 px-2.5 py-1 text-center text-xs font-medium text-foreground shadow-sm backdrop-blur-sm">
-                                Look left — right profile
-                              </p>
-                            </div>
-                          )}
-                          {IMAGE_VIEWS[captureIndex]?.key === "front_face" && (
-                            <div className="pointer-events-none absolute bottom-3 left-2 right-2 z-[15] flex justify-center">
-                              <p className="rounded-full bg-background/50 px-2.5 py-1 text-center text-xs font-medium text-foreground shadow-sm backdrop-blur-sm">
-                                Center your face — hold still when aligned
-                              </p>
+                            <div className="pointer-events-none absolute bottom-4 left-2 right-2 z-[15] flex justify-center">
+                              <ChevronLeft className="h-10 w-10 text-primary drop-shadow-md" strokeWidth={2.5} aria-hidden />
                             </div>
                           )}
                         </>
@@ -686,7 +836,7 @@ function StepForm({
                       : "text-center text-sm text-muted-foreground"
                   }
                 >
-                  {statusMsg}
+                  {outerStatusBelowPreview}
                 </p>
               </div>
               <canvas ref={canvasRef} className="hidden" />

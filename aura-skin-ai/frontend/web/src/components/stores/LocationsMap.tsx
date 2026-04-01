@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { MapContainer, TileLayer, Marker, useMap } from "react-leaflet";
 import L from "leaflet";
@@ -27,6 +27,9 @@ interface LocationsMapProps {
   className?: string;
 }
 
+const DEFAULT_MAP_CENTER: [number, number] = [21.17, 72.83];
+const DEFAULT_MAP_ZOOM = 5;
+
 function MapBoundsSync({
   points,
   userLat,
@@ -45,11 +48,15 @@ function MapBoundsSync({
     if (userLat != null && userLng != null && Number.isFinite(userLat) && Number.isFinite(userLng)) {
       bounds.extend([userLat, userLng]);
     }
+    const noAnim = { animate: false as const };
     if (bounds.isValid()) {
-      map.fitBounds(bounds, { padding: [28, 28], maxZoom: 14 });
+      map.fitBounds(bounds, { padding: [28, 28], maxZoom: 14, ...noAnim });
     } else {
-      map.setView([21.17, 72.83], 5);
+      map.setView(DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM, noAnim);
     }
+    return () => {
+      map.stop();
+    };
   }, [map, points, userLat, userLng]);
   return null;
 }
@@ -73,17 +80,11 @@ export function LocationsMap({ points, userLat, userLng, className }: LocationsM
     ensureDefaultLeafletIcon();
   }, []);
 
-  const center = useMemo(() => {
-    if (points.length === 0) return [21.17, 72.83] as [number, number];
-    const sum = points.reduce((acc, p) => [acc[0] + p.lat, acc[1] + p.lng] as [number, number], [0, 0]);
-    return [sum[0] / points.length, sum[1] / points.length] as [number, number];
-  }, [points]);
-
   return (
     <div className={`relative w-full min-h-[280px] h-64 md:h-80 rounded-xl overflow-hidden border border-border/60 ${className ?? ""}`}>
       <MapContainer
-        center={center}
-        zoom={12}
+        center={DEFAULT_MAP_CENTER}
+        zoom={DEFAULT_MAP_ZOOM}
         className="z-0 h-full w-full"
         scrollWheelZoom
       >
