@@ -5,6 +5,7 @@ import {
   Space_Grotesk,
   Kaushan_Script,
 } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { RuntimeRecovery } from "@/components/RuntimeRecovery";
 import "@/styles/globals.css";
@@ -64,6 +65,7 @@ export default function RootLayout({
       >
         <RuntimeRecovery />
         <ErrorBoundary>{children}</ErrorBoundary>
+        <Analytics />
       </body>
     </html>
   );

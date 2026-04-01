@@ -39,18 +39,22 @@ const MESH_EYE_SUBJECT_LEFT = 263;
 
 const MIN_EYE_SPAN_PX = 8;
 /** Consecutive matching frames before arming the 900ms shutter. */
-const STABLE_FRAMES_FOR_CAPTURE = 12;
+const STABLE_FRAMES_FOR_CAPTURE = 8;
 /** Status switches to “hold still” partway through stabilization. */
-const STABLE_FRAMES_HOLD_STILL_HINT = 6;
+const STABLE_FRAMES_HOLD_STILL_HINT = 4;
+const AUTO_CAPTURE_DELAY_MS = 550;
+const MANUAL_FALLBACK_DELAY_MS = 12_000;
+const DETECTOR_READY_WAIT_MS = 8_000;
 
 /**
  * Relaxed bands so real head poses still count; nose x projected onto [eyeMinX, eyeMaxX] → ~0.5 front.
  * Left profile: user turns their head right (left cheek toward camera) → yawT decreases.
  */
-const POSE_FRONT_MIN = 0.38;
-const POSE_FRONT_MAX = 0.62;
-const POSE_LEFT_MAX = 0.36;
-const POSE_RIGHT_MIN = 0.64;
+const POSE_FRONT_MIN = 0.36;
+const POSE_FRONT_MAX = 0.64;
+const POSE_LEFT_MAX = 0.39;
+const POSE_RIGHT_MIN = 0.61;
+const POSE_HYSTERESIS = 0.02;
 
 type LandmarkLike = { x: number; y: number; z?: number };
 
@@ -66,10 +70,11 @@ function computeHorizontalYawT(
   return (nose.x - eyeMinX) / span;
 }
 
-function poseMatchesTarget(viewKey: string, yawT: number): boolean {
-  if (viewKey === "front_face") return yawT > POSE_FRONT_MIN && yawT < POSE_FRONT_MAX;
-  if (viewKey === "left_profile") return yawT < POSE_LEFT_MAX;
-  if (viewKey === "right_profile") return yawT > POSE_RIGHT_MIN;
+function poseMatchesTarget(viewKey: string, yawT: number, wasMatching: boolean): boolean {
+  const margin = wasMatching ? POSE_HYSTERESIS : 0;
+  if (viewKey === "front_face") return yawT > POSE_FRONT_MIN - margin && yawT < POSE_FRONT_MAX + margin;
+  if (viewKey === "left_profile") return yawT < POSE_LEFT_MAX + margin;
+  if (viewKey === "right_profile") return yawT > POSE_RIGHT_MIN - margin;
   return false;
 }
 
@@ -225,6 +230,7 @@ function StepForm({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [captureIndex, setCaptureIndex] = useState(0);
   const [statusMsg, setStatusMsg] = useState("Initializing detector...");
+  const [manualFallbackReady, setManualFallbackReady] = useState(false);
   /** In-circle error hint while camera active (RAF loop updates; avoids stale closure). */
   const [circleError, setCircleError] = useState<"none" | "no_face" | "multi">("none");
   /** Brief per-pose success overlay index, or null. */
@@ -241,8 +247,12 @@ function StepForm({
   const pendingCaptureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const invalidTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const poseFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stageStartedAtRef = useRef<number>(Date.now());
+  const wasPoseMatchingRef = useRef(false);
   const stablePoseFramesRef = useRef(0);
   const lastEstimateErrorLogAtRef = useRef(0);
+  const detectorReadyRef = useRef(false);
+  const manualFallbackReadyRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -261,6 +271,7 @@ function StepForm({
         );
         if (active) {
           detectorRef.current = detector;
+          detectorReadyRef.current = true;
           setStatusMsg("Ready to scan");
         }
       } catch (e) {
@@ -280,6 +291,7 @@ function StepForm({
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
+      detectorReadyRef.current = false;
     };
   }, [step.key]);
 
@@ -307,6 +319,24 @@ function StepForm({
     isCapturingRef.current = false;
   };
 
+  const resetStageTracking = () => {
+    stageStartedAtRef.current = Date.now();
+    stablePoseFramesRef.current = 0;
+    wasPoseMatchingRef.current = false;
+    manualFallbackReadyRef.current = false;
+    setManualFallbackReady(false);
+  };
+
+  const waitForDetectorReady = async (timeoutMs = DETECTOR_READY_WAIT_MS) => {
+    if (detectorReadyRef.current && detectorRef.current) return true;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (detectorReadyRef.current && detectorRef.current) return true;
+    }
+    return false;
+  };
+
   const triggerPoseSuccessFlash = (idx: number) => {
     setPoseSuccessFlashIndex(idx);
     if (poseFlashTimeoutRef.current) clearTimeout(poseFlashTimeoutRef.current);
@@ -322,6 +352,13 @@ function StepForm({
     setCircleError("none");
     setCameraState("starting");
     try {
+      if (!detectorRef.current) {
+        setStatusMsg("Initializing detector...");
+        const ready = await waitForDetectorReady();
+        if (!ready) {
+          throw new Error("Detector not ready");
+        }
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: 640, height: 480 },
         audio: false,
@@ -332,21 +369,30 @@ function StepForm({
         await videoRef.current.play();
         setCameraState("active");
         detectionLoopActiveRef.current = true;
-        stablePoseFramesRef.current = 0;
+        resetStageTracking();
         armInvalidTimeout();
         startDetectionLoop();
       }
     } catch (error) {
       setCameraState("error");
-      setCameraError("Unable to start camera. Please ensure permissions are granted.");
+      if (error instanceof Error && error.message === "Detector not ready") {
+        setCameraError("Face detector is still initializing. Please try again in a moment.");
+      } else {
+        setCameraError("Unable to start camera. Please ensure permissions are granted.");
+      }
     }
   };
 
   const startDetectionLoop = () => {
-    if (!detectorRef.current || !videoRef.current || !detectionLoopActiveRef.current) return;
+    if (!videoRef.current || !detectionLoopActiveRef.current) return;
     const run = async () => {
       try {
         if (!detectionLoopActiveRef.current || !videoRef.current || videoRef.current.paused || videoRef.current.ended) {
+          return;
+        }
+
+        if (!detectorRef.current) {
+          setStatusMsg("Initializing detector...");
           return;
         }
 
@@ -377,11 +423,13 @@ function StepForm({
         }
 
         if (faces.length === 0) {
-          stablePoseFramesRef.current = 0;
+          stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
+          wasPoseMatchingRef.current = false;
           setCircleError("no_face");
           setStatusMsg("No face detected");
         } else if (faces.length > 1) {
-          stablePoseFramesRef.current = 0;
+          stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
+          wasPoseMatchingRef.current = false;
           setCircleError("multi");
           setStatusMsg("Multiple faces detected. Please ensure only you are in frame.");
         } else {
@@ -397,17 +445,19 @@ function StepForm({
             const target = IMAGE_VIEWS[captureIndexRef.current];
 
             if (yawT == null) {
-              stablePoseFramesRef.current = 0;
+              stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
+              wasPoseMatchingRef.current = false;
               setStatusMsg("Move a little closer — face too small in frame");
             } else {
-              const matches = poseMatchesTarget(target.key, yawT);
+              const matches = poseMatchesTarget(target.key, yawT, wasPoseMatchingRef.current);
+              wasPoseMatchingRef.current = matches;
 
               if (!isCapturingRef.current) {
                 if (matches) {
                   stablePoseFramesRef.current += 1;
                   armInvalidTimeout();
                 } else {
-                  stablePoseFramesRef.current = 0;
+                  stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 1);
                 }
               }
 
@@ -443,12 +493,23 @@ function StepForm({
                 pendingCaptureTimeoutRef.current = setTimeout(() => {
                   captureCurrentFrame();
                   clearPendingAutoCapture();
-                }, 900);
+                }, AUTO_CAPTURE_DELAY_MS);
               }
             }
           } else {
-            stablePoseFramesRef.current = 0;
+            stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
+            wasPoseMatchingRef.current = false;
           }
+        }
+
+        if (
+          detectionLoopActiveRef.current &&
+          !manualFallbackReadyRef.current &&
+          captureIndexRef.current < IMAGE_VIEWS.length &&
+          Date.now() - stageStartedAtRef.current >= MANUAL_FALLBACK_DELAY_MS
+        ) {
+          manualFallbackReadyRef.current = true;
+          setManualFallbackReady(true);
         }
       } finally {
         if (detectionLoopActiveRef.current && videoRef.current && !videoRef.current.paused && !videoRef.current.ended) {
@@ -472,6 +533,8 @@ function StepForm({
       streamRef.current.getTracks().forEach((track) => track.stop());
     }
     setCircleError("none");
+    manualFallbackReadyRef.current = false;
+    setManualFallbackReady(false);
     setCameraState("idle");
   };
 
@@ -507,7 +570,7 @@ function StepForm({
       if (idx < IMAGE_VIEWS.length - 1) {
         captureIndexRef.current = idx + 1;
         setCaptureIndex(idx + 1);
-        stablePoseFramesRef.current = 0;
+        resetStageTracking();
         armInvalidTimeout();
       } else {
         stopCamera();
@@ -727,6 +790,14 @@ function StepForm({
                 </Button>
                 {cameraState === "active" && (
                   <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={captureCurrentFrame}
+                      disabled={!manualFallbackReady || !!files[captureIndex]}
+                    >
+                      Capture current angle manually
+                    </Button>
                     <Button type="button" variant="ghost" onClick={stopCamera}>
                       Stop Camera
                     </Button>
@@ -852,6 +923,11 @@ function StepForm({
                   </div>
                 ))}
               </div>
+              {cameraState === "active" && manualFallbackReady && files.filter(Boolean).length < 3 && (
+                <p className="text-sm text-muted-foreground">
+                  Auto-detect is taking longer than usual. You can use manual capture for this angle.
+                </p>
+              )}
               {files.filter(Boolean).length < 3 && (
                 <p className="text-sm text-destructive">
                   {3 - files.filter(Boolean).length} more image(s) required.
