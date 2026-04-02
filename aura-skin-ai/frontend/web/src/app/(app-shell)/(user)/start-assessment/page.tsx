@@ -54,8 +54,9 @@ const MIN_ESTIMATE_INTERVAL_MS = 90;
  */
 const POSE_FRONT_MIN = 0.34;
 const POSE_FRONT_MAX = 0.66;
-const POSE_LEFT_MAX = 0.44;
-const POSE_RIGHT_MIN = 0.56;
+// Slightly wider bands so auto-capture doesn't depend on a “perfect” angle.
+const POSE_LEFT_MAX = 0.46;
+const POSE_RIGHT_MIN = 0.54;
 const POSE_HYSTERESIS = 0.03;
 
 /** Normalized face box: reject tiny or edge-clipped faces before auto-capture. */
@@ -175,6 +176,23 @@ function poseMatchesTarget(viewKey: string, yawT: number, wasMatching: boolean):
   if (viewKey === "left_profile") return yawT < POSE_LEFT_MAX + margin;
   if (viewKey === "right_profile") return yawT > POSE_RIGHT_MIN - margin;
   return false;
+}
+
+function yawDistanceToTarget(viewKey: string, yawT: number): number {
+  if (viewKey === "front_face") {
+    if (yawT >= POSE_FRONT_MIN && yawT <= POSE_FRONT_MAX) return 0;
+    if (yawT < POSE_FRONT_MIN) return POSE_FRONT_MIN - yawT;
+    return yawT - POSE_FRONT_MAX;
+  }
+  if (viewKey === "left_profile") {
+    if (yawT <= POSE_LEFT_MAX) return 0;
+    return yawT - POSE_LEFT_MAX;
+  }
+  if (viewKey === "right_profile") {
+    if (yawT >= POSE_RIGHT_MIN) return 0;
+    return POSE_RIGHT_MIN - yawT;
+  }
+  return Number.POSITIVE_INFINITY;
 }
 
 const POSE_SAVED_LABELS: Record<string, string> = {
@@ -552,30 +570,88 @@ function StepForm({
         let estimateFailed = false;
         estimateInFlightRef.current = true;
         try {
-          faces = await detectorRef.current.estimateFaces(videoRef.current, {
+          const targetKey = IMAGE_VIEWS[captureIndexRef.current]?.key ?? "front_face";
+
+          const scoreCandidateFaces = (
+            candidateFaces: FaceWithBox[]
+          ): { primary: FaceWithBox; matches: boolean; dist: number } | null => {
+            if (candidateFaces.length === 0) return null;
+            const { primary, ambiguousMulti } = pickPrimaryFace(candidateFaces);
+            if (!primary || ambiguousMulti) return null;
+            if (getFaceFramingIssue(primary.box) !== "ok") return null;
+
+            const keypoints = primary.keypoints;
+            const eyeR = keypoints[MESH_EYE_SUBJECT_RIGHT];
+            const eyeL = keypoints[MESH_EYE_SUBJECT_LEFT];
+            const nose = keypoints[MESH_NOSE_TIP];
+            if (!eyeR || !eyeL || !nose) return null;
+
+            const yawFromEyes = computeHorizontalYawT(nose, eyeR, eyeL);
+            const yawT = yawFromEyes ?? (primary.box ? yawFromNormalizedBox(primary.box) : null);
+            if (yawT == null) return null;
+
+            const matches = poseMatchesTarget(targetKey, yawT, false);
+            const dist = yawDistanceToTarget(targetKey, yawT);
+            return { primary, matches, dist };
+          };
+
+          // FaceMesh: try flip:false first, then flip:true if needed. Pick the best match for the current targetKey.
+          let flipFalseFaces: FaceWithBox[] = [];
+          let flipFalseScore: ReturnType<typeof scoreCandidateFaces> = null;
+          let flipTrueFaces: FaceWithBox[] = [];
+          let flipTrueScore: ReturnType<typeof scoreCandidateFaces> = null;
+
+          flipFalseFaces = await detectorRef.current.estimateFaces(videoRef.current, {
             flipHorizontal: false,
             staticImageMode: false,
           });
-          if (faces.length === 0) {
-            faces = await detectorRef.current.estimateFaces(videoRef.current, {
+          flipFalseScore = scoreCandidateFaces(flipFalseFaces);
+
+          if (flipFalseScore?.matches) {
+            faces = [flipFalseScore.primary];
+          } else {
+            flipTrueFaces = await detectorRef.current.estimateFaces(videoRef.current, {
               flipHorizontal: true,
               staticImageMode: false,
             });
+            flipTrueScore = scoreCandidateFaces(flipTrueFaces);
+
+            const candidates = [flipFalseScore, flipTrueScore].filter(
+              (c): c is NonNullable<typeof c> => c != null
+            );
+
+            if (candidates.length > 0) {
+              const matching = candidates.filter((c) => c.matches);
+              const chosen = (matching.length > 0 ? matching : candidates).sort((a, b) => a.dist - b.dist)[0]!;
+              faces = [chosen.primary];
+            }
           }
+
+          // If Mesh found nothing usable, fall back to BlazeFace (with the same scoring).
           if (faces.length === 0 && blazeDetectorRef.current && videoRef.current.videoWidth > 0 && videoRef.current.videoHeight > 0) {
             const vw = videoRef.current.videoWidth;
             const vh = videoRef.current.videoHeight;
-            let blazeFaces = (await blazeDetectorRef.current.estimateFaces(videoRef.current, {
-              flipHorizontal: false,
-            })) as BlazeFaceLike[];
-            if (blazeFaces.length === 0) {
-              blazeFaces = (await blazeDetectorRef.current.estimateFaces(videoRef.current, {
-                flipHorizontal: true,
-              })) as BlazeFaceLike[];
+
+            const blazeFalse = (await blazeDetectorRef.current.estimateFaces(videoRef.current, { flipHorizontal: false })) as BlazeFaceLike[];
+            let blazeFalseMesh = blazeFalse.map((f) => blazeFaceToMeshLike(f, vw, vh)).filter((f): f is FaceWithBox => f != null);
+            let blazeFalseScore = scoreCandidateFaces(blazeFalseMesh);
+
+            if (blazeFalseScore?.matches) {
+              faces = [blazeFalseScore.primary];
+            } else {
+              const blazeTrue = (await blazeDetectorRef.current.estimateFaces(videoRef.current, { flipHorizontal: true })) as BlazeFaceLike[];
+              const blazeTrueMesh = blazeTrue.map((f) => blazeFaceToMeshLike(f, vw, vh)).filter((f): f is FaceWithBox => f != null);
+              const blazeTrueScore = scoreCandidateFaces(blazeTrueMesh);
+
+              const candidates = [blazeFalseScore, blazeTrueScore].filter(
+                (c): c is NonNullable<typeof c> => c != null
+              );
+              if (candidates.length > 0) {
+                const matching = candidates.filter((c) => c.matches);
+                const chosen = (matching.length > 0 ? matching : candidates).sort((a, b) => a.dist - b.dist)[0]!;
+                faces = [chosen.primary];
+              }
             }
-            faces = blazeFaces
-              .map((f) => blazeFaceToMeshLike(f, vw, vh))
-              .filter((f): f is FaceWithBox => f != null);
           }
         } catch (err) {
           estimateFailed = true;
