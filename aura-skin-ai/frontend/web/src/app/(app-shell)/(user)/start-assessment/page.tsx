@@ -48,16 +48,46 @@ const DETECTOR_READY_WAIT_MS = 8_000;
 const MIN_ESTIMATE_INTERVAL_MS = 90;
 
 /**
- * Relaxed bands so real head poses still count; nose x projected onto [eyeMinX, eyeMaxX] → ~0.5 front.
- * Left profile: user turns their head right (left cheek toward camera) → yawT decreases.
+ * Disjoint bands: nose x projected onto [eyeMinX, eyeMaxX] → ~0.5 front.
+ * Dead zone between front and profiles avoids oscillation (old 0.36–0.39 / 0.61–0.64 overlap).
+ * Left profile: user turns head right (left cheek toward camera) → yawT decreases.
  */
-const POSE_FRONT_MIN = 0.36;
-const POSE_FRONT_MAX = 0.64;
-const POSE_LEFT_MAX = 0.39;
-const POSE_RIGHT_MIN = 0.61;
+const POSE_FRONT_MIN = 0.42;
+const POSE_FRONT_MAX = 0.58;
+const POSE_LEFT_MAX = 0.36;
+const POSE_RIGHT_MIN = 0.64;
 const POSE_HYSTERESIS = 0.02;
 
+/** MediaPipe z: smaller = closer. Profile increases |zr−zl|; front keeps it small. */
+const Z_FRONT_MAX_ABS_DIFF = 5.5;
+const Z_PROFILE_MIN_SIGNED_DIFF = 1.1;
+
 type LandmarkLike = { x: number; y: number; z?: number };
+
+type FaceWithBox = { keypoints: LandmarkLike[]; box?: { width?: number; height?: number } };
+
+function faceBoxArea(face: FaceWithBox): number {
+  const w = face.box?.width ?? 0;
+  const h = face.box?.height ?? 0;
+  return Math.max(0, w) * Math.max(0, h);
+}
+
+/**
+ * Largest face wins. If a second face is tiny (&lt;30% area of primary), ignore it (reflections / edge noise).
+ * If two faces are both substantial, caller should show “multiple faces” and not capture.
+ */
+function pickPrimaryFace(faces: FaceWithBox[]): { primary: FaceWithBox | undefined; ambiguousMulti: boolean } {
+  if (faces.length === 0) return { primary: undefined, ambiguousMulti: false };
+  if (faces.length === 1) return { primary: faces[0], ambiguousMulti: false };
+  const sorted = [...faces].sort((a, b) => faceBoxArea(b) - faceBoxArea(a));
+  const primary = sorted[0]!;
+  const second = sorted[1]!;
+  const a0 = faceBoxArea(primary);
+  const a1 = faceBoxArea(second);
+  if (a0 <= 0) return { primary, ambiguousMulti: faces.length > 1 };
+  if (a1 / a0 < 0.3) return { primary, ambiguousMulti: false };
+  return { primary, ambiguousMulti: true };
+}
 
 function computeHorizontalYawT(
   nose: LandmarkLike,
@@ -71,12 +101,33 @@ function computeHorizontalYawT(
   return (nose.x - eyeMinX) / span;
 }
 
-function poseMatchesTarget(viewKey: string, yawT: number, wasMatching: boolean): boolean {
-  const margin = wasMatching ? POSE_HYSTERESIS : 0;
-  if (viewKey === "front_face") return yawT > POSE_FRONT_MIN - margin && yawT < POSE_FRONT_MAX + margin;
-  if (viewKey === "left_profile") return yawT < POSE_LEFT_MAX + margin;
-  if (viewKey === "right_profile") return yawT > POSE_RIGHT_MIN - margin;
+/** z: right eye (33) minus left (263). Left profile → left eye closer → smaller zL → zR−zL > 0. */
+function zSupportsPose(viewKey: string, eyeR: LandmarkLike, eyeL: LandmarkLike): boolean {
+  const zr = eyeR.z;
+  const zl = eyeL.z;
+  if (zr === undefined || zl === undefined) return true;
+  if (!Number.isFinite(zr) || !Number.isFinite(zl)) return true;
+  const dz = zr - zl;
+  if (viewKey === "front_face") return Math.abs(dz) <= Z_FRONT_MAX_ABS_DIFF;
+  if (viewKey === "left_profile") return dz >= Z_PROFILE_MIN_SIGNED_DIFF;
+  if (viewKey === "right_profile") return -dz >= Z_PROFILE_MIN_SIGNED_DIFF;
   return false;
+}
+
+function poseMatchesTarget(
+  viewKey: string,
+  yawT: number,
+  wasMatching: boolean,
+  eyeR: LandmarkLike,
+  eyeL: LandmarkLike
+): boolean {
+  const margin = wasMatching ? POSE_HYSTERESIS : 0;
+  let yawOk = false;
+  if (viewKey === "front_face") yawOk = yawT > POSE_FRONT_MIN - margin && yawT < POSE_FRONT_MAX + margin;
+  else if (viewKey === "left_profile") yawOk = yawT < POSE_LEFT_MAX + margin;
+  else if (viewKey === "right_profile") yawOk = yawT > POSE_RIGHT_MIN - margin;
+  else return false;
+  return yawOk && zSupportsPose(viewKey, eyeR, eyeL);
 }
 
 const POSE_SAVED_LABELS: Record<string, string> = {
@@ -252,7 +303,9 @@ function StepForm({
   const wasPoseMatchingRef = useRef(false);
   const stablePoseFramesRef = useRef(0);
   const lastEstimateErrorLogAtRef = useRef(0);
-  const lastEstimateAtRef = useRef(0);
+  /** Throttle from last completed `estimateFaces` (avoids overlap with in-flight guard). */
+  const lastEstimateCompleteAtRef = useRef(0);
+  const estimateInFlightRef = useRef(false);
   const detectorReadyRef = useRef(false);
   const manualFallbackReadyRef = useRef(false);
 
@@ -286,6 +339,7 @@ function StepForm({
     }
     return () => {
       active = false;
+      estimateInFlightRef.current = false;
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
       if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
       if (invalidTimeoutRef.current) clearTimeout(invalidTimeoutRef.current);
@@ -415,28 +469,35 @@ function StepForm({
           setStatusMsg("Warming up camera...");
           return;
         }
-        const now = Date.now();
-        if (now - lastEstimateAtRef.current < MIN_ESTIMATE_INTERVAL_MS) {
+        if (estimateInFlightRef.current) {
           return;
         }
-        lastEstimateAtRef.current = now;
+        const nowTick = Date.now();
+        if (nowTick - lastEstimateCompleteAtRef.current < MIN_ESTIMATE_INTERVAL_MS) {
+          return;
+        }
 
-        let faces: { keypoints: LandmarkLike[] }[] = [];
+        let faces: FaceWithBox[] = [];
         let estimateFailed = false;
+        estimateInFlightRef.current = true;
         try {
           faces = await detectorRef.current.estimateFaces(videoRef.current, {
-            flipHorizontal: false,
+            // User-facing stream: align landmarks with mirror-style preview (tfjs flips input tensor only).
+            flipHorizontal: true,
             staticImageMode: false,
           });
         } catch (err) {
           estimateFailed = true;
-          const now = Date.now();
-          if (now - lastEstimateErrorLogAtRef.current > 5000) {
-            lastEstimateErrorLogAtRef.current = now;
+          const nowErr = Date.now();
+          if (nowErr - lastEstimateErrorLogAtRef.current > 5000) {
+            lastEstimateErrorLogAtRef.current = nowErr;
             console.error("estimateFaces failed", err);
           }
           stablePoseFramesRef.current = 0;
           setStatusMsg("Brief detection hiccup — stay in frame");
+        } finally {
+          lastEstimateCompleteAtRef.current = Date.now();
+          estimateInFlightRef.current = false;
         }
 
         if (!detectionLoopActiveRef.current || !videoRef.current || videoRef.current.paused || videoRef.current.ended) {
@@ -452,78 +513,85 @@ function StepForm({
           wasPoseMatchingRef.current = false;
           setCircleError("no_face");
           setStatusMsg("No face detected");
-        } else if (faces.length > 1) {
-          stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
-          wasPoseMatchingRef.current = false;
-          setCircleError("multi");
-          setStatusMsg("Multiple faces detected. Please ensure only you are in frame.");
         } else {
-          setCircleError("none");
-          const face = faces[0];
-          const keypoints = face.keypoints;
-          const eyeR = keypoints[MESH_EYE_SUBJECT_RIGHT];
-          const eyeL = keypoints[MESH_EYE_SUBJECT_LEFT];
-          const nose = keypoints[MESH_NOSE_TIP];
-
-          if (eyeR && eyeL && nose) {
-            const yawT = computeHorizontalYawT(nose, eyeR, eyeL);
-            const target = IMAGE_VIEWS[captureIndexRef.current];
-
-            if (yawT == null) {
-              stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
-              wasPoseMatchingRef.current = false;
-              setStatusMsg("Move a little closer — face too small in frame");
-            } else {
-              const matches = poseMatchesTarget(target.key, yawT, wasPoseMatchingRef.current);
-              wasPoseMatchingRef.current = matches;
-
-              if (!isCapturingRef.current) {
-                if (matches) {
-                  stablePoseFramesRef.current += 1;
-                  armInvalidTimeout();
-                } else {
-                  stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 1);
-                }
-              }
-
-              const stable = stablePoseFramesRef.current;
-              const holdHint = stable >= STABLE_FRAMES_HOLD_STILL_HINT;
-
-              if (!isCapturingRef.current) {
-                if (target.key === "front_face") {
-                  if (matches && holdHint) setStatusMsg("Front face detected - Hold still...");
-                  else if (matches) setStatusMsg("Hold steady — lining up…");
-                  else setStatusMsg("Position your face to the center");
-                } else if (target.key === "left_profile") {
-                  if (matches && holdHint) setStatusMsg("Left profile detected - Hold still...");
-                  else if (matches) setStatusMsg("Hold steady — lining up…");
-                  else setStatusMsg("Turn your head to the right (left profile)");
-                } else if (target.key === "right_profile") {
-                  if (matches && holdHint) setStatusMsg("Right profile detected - Hold still...");
-                  else if (matches) setStatusMsg("Hold steady — lining up…");
-                  else setStatusMsg("Turn your head to the left (right profile)");
-                }
-              }
-
-              if (
-                matches &&
-                !isCapturingRef.current &&
-                stable >= STABLE_FRAMES_FOR_CAPTURE
-              ) {
-                armInvalidTimeout();
-                if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
-                pendingCaptureTimeoutRef.current = null;
-                isCapturingRef.current = true;
-                stablePoseFramesRef.current = 0;
-                pendingCaptureTimeoutRef.current = setTimeout(() => {
-                  captureCurrentFrame();
-                  clearPendingAutoCapture();
-                }, AUTO_CAPTURE_DELAY_MS);
-              }
-            }
-          } else {
+          const { primary, ambiguousMulti } = pickPrimaryFace(faces);
+          if (!primary) {
             stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
             wasPoseMatchingRef.current = false;
+            setCircleError("no_face");
+            setStatusMsg("No face detected");
+          } else if (ambiguousMulti) {
+            stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
+            wasPoseMatchingRef.current = false;
+            setCircleError("multi");
+            setStatusMsg("Multiple faces detected. Please ensure only you are in frame.");
+          } else {
+            setCircleError("none");
+            const keypoints = primary.keypoints;
+            const eyeR = keypoints[MESH_EYE_SUBJECT_RIGHT];
+            const eyeL = keypoints[MESH_EYE_SUBJECT_LEFT];
+            const nose = keypoints[MESH_NOSE_TIP];
+
+            if (eyeR && eyeL && nose) {
+              const yawT = computeHorizontalYawT(nose, eyeR, eyeL);
+              const target = IMAGE_VIEWS[captureIndexRef.current];
+
+              if (yawT == null) {
+                stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
+                wasPoseMatchingRef.current = false;
+                setStatusMsg("Move a little closer — face too small in frame");
+              } else {
+                const matches = poseMatchesTarget(target.key, yawT, wasPoseMatchingRef.current, eyeR, eyeL);
+                wasPoseMatchingRef.current = matches;
+
+                if (!isCapturingRef.current) {
+                  if (matches) {
+                    stablePoseFramesRef.current += 1;
+                    armInvalidTimeout();
+                  } else {
+                    stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 1);
+                  }
+                }
+
+                const stable = stablePoseFramesRef.current;
+                const holdHint = stable >= STABLE_FRAMES_HOLD_STILL_HINT;
+
+                if (!isCapturingRef.current) {
+                  if (target.key === "front_face") {
+                    if (matches && holdHint) setStatusMsg("Front face detected - Hold still...");
+                    else if (matches) setStatusMsg("Hold steady — lining up…");
+                    else setStatusMsg("Position your face to the center");
+                  } else if (target.key === "left_profile") {
+                    if (matches && holdHint) setStatusMsg("Left profile detected - Hold still...");
+                    else if (matches) setStatusMsg("Hold steady — lining up…");
+                    else setStatusMsg("Turn your head to the right (left profile)");
+                  } else if (target.key === "right_profile") {
+                    if (matches && holdHint) setStatusMsg("Right profile detected - Hold still...");
+                    else if (matches) setStatusMsg("Hold steady — lining up…");
+                    else setStatusMsg("Turn your head to the left (right profile)");
+                  }
+                }
+
+                if (
+                  matches &&
+                  !isCapturingRef.current &&
+                  stable >= STABLE_FRAMES_FOR_CAPTURE
+                ) {
+                  armInvalidTimeout();
+                  if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
+                  pendingCaptureTimeoutRef.current = null;
+                  isCapturingRef.current = true;
+                  stablePoseFramesRef.current = 0;
+                  pendingCaptureTimeoutRef.current = setTimeout(() => {
+                    captureCurrentFrame();
+                    clearPendingAutoCapture();
+                  }, AUTO_CAPTURE_DELAY_MS);
+                }
+              }
+            } else {
+              stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
+              wasPoseMatchingRef.current = false;
+            }
           }
         }
 
@@ -547,6 +615,7 @@ function StepForm({
 
   const stopCamera = () => {
     detectionLoopActiveRef.current = false;
+    estimateInFlightRef.current = false;
     stablePoseFramesRef.current = 0;
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
     clearPendingAutoCapture();
