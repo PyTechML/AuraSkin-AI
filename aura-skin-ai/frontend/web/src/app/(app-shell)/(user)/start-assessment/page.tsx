@@ -38,33 +38,43 @@ const MESH_EYE_SUBJECT_RIGHT = 33;
 const MESH_EYE_SUBJECT_LEFT = 263;
 
 const MIN_EYE_SPAN_PX = 5;
-/** Consecutive matching frames before arming the 900ms shutter. */
-const STABLE_FRAMES_FOR_CAPTURE = 8;
+/** Consecutive matching frames before arming the shutter (forgiving bands allow slightly fewer). */
+const STABLE_FRAMES_FOR_CAPTURE = 6;
 /** Status switches to “hold still” partway through stabilization. */
-const STABLE_FRAMES_HOLD_STILL_HINT = 4;
+const STABLE_FRAMES_HOLD_STILL_HINT = 3;
 const AUTO_CAPTURE_DELAY_MS = 550;
 const MANUAL_FALLBACK_DELAY_MS = 12_000;
 const DETECTOR_READY_WAIT_MS = 8_000;
 const MIN_ESTIMATE_INTERVAL_MS = 90;
 
 /**
- * Disjoint bands: nose x projected onto [eyeMinX, eyeMaxX] → ~0.5 front.
- * Dead zone between front and profiles avoids oscillation (old 0.36–0.39 / 0.61–0.64 overlap).
- * Left profile: user turns head right (left cheek toward camera) → yawT decreases.
+ * Forgiving yaw bands (nose x on [eyeMinX, eyeMaxX] → ~0.5 front).
+ * Wider front + softer profile thresholds; pose is yaw-only (no z gate) so slight tilt still works.
+ * Left step: user turns head right (left cheek toward camera) → yawT decreases.
  */
-const POSE_FRONT_MIN = 0.42;
-const POSE_FRONT_MAX = 0.58;
-const POSE_LEFT_MAX = 0.36;
-const POSE_RIGHT_MIN = 0.64;
-const POSE_HYSTERESIS = 0.02;
+const POSE_FRONT_MIN = 0.34;
+const POSE_FRONT_MAX = 0.66;
+const POSE_LEFT_MAX = 0.44;
+const POSE_RIGHT_MIN = 0.56;
+const POSE_HYSTERESIS = 0.03;
 
-/** MediaPipe z: smaller = closer. Profile increases |zr−zl|; front keeps it small. */
-const Z_FRONT_MAX_ABS_DIFF = 5.5;
-const Z_PROFILE_MIN_SIGNED_DIFF = 1.1;
+/** Normalized face box: reject tiny or edge-clipped faces before auto-capture. */
+const FACE_FRAMING_EDGE_MARGIN = 0.055;
+const FACE_MIN_AREA_REL = 0.072;
 
 type LandmarkLike = { x: number; y: number; z?: number };
 
-type FaceWithBox = { keypoints: LandmarkLike[]; box?: { width?: number; height?: number } };
+type FaceWithBox = {
+  keypoints: LandmarkLike[];
+  box?: {
+    xMin?: number;
+    yMin?: number;
+    xMax?: number;
+    yMax?: number;
+    width?: number;
+    height?: number;
+  };
+};
 
 function faceBoxArea(face: FaceWithBox): number {
   const w = face.box?.width ?? 0;
@@ -89,6 +99,25 @@ function pickPrimaryFace(faces: FaceWithBox[]): { primary: FaceWithBox | undefin
   return { primary, ambiguousMulti: true };
 }
 
+/** Box is normalized 0–1 when present (tfjs MediaPipeFaceMesh). */
+function getFaceFramingIssue(box: FaceWithBox["box"]): "ok" | "too_small" | "cut_off" {
+  if (box == null) return "ok";
+  const xMin = box.xMin;
+  const yMin = box.yMin;
+  const w = box.width;
+  const h = box.height;
+  if (xMin == null || yMin == null || w == null || h == null) return "ok";
+  if (!Number.isFinite(xMin) || !Number.isFinite(yMin) || !Number.isFinite(w) || !Number.isFinite(h)) return "ok";
+  if (w <= 0 || h <= 0) return "ok";
+  const area = w * h;
+  if (area < FACE_MIN_AREA_REL) return "too_small";
+  const m = FACE_FRAMING_EDGE_MARGIN;
+  const xMax = box.xMax ?? xMin + w;
+  const yMax = box.yMax ?? yMin + h;
+  if (xMin < m || yMin < m || xMax > 1 - m || yMax > 1 - m) return "cut_off";
+  return "ok";
+}
+
 function computeHorizontalYawT(
   nose: LandmarkLike,
   eyeSubjectRight: LandmarkLike,
@@ -101,33 +130,12 @@ function computeHorizontalYawT(
   return (nose.x - eyeMinX) / span;
 }
 
-/** z: right eye (33) minus left (263). Left profile → left eye closer → smaller zL → zR−zL > 0. */
-function zSupportsPose(viewKey: string, eyeR: LandmarkLike, eyeL: LandmarkLike): boolean {
-  const zr = eyeR.z;
-  const zl = eyeL.z;
-  if (zr === undefined || zl === undefined) return true;
-  if (!Number.isFinite(zr) || !Number.isFinite(zl)) return true;
-  const dz = zr - zl;
-  if (viewKey === "front_face") return Math.abs(dz) <= Z_FRONT_MAX_ABS_DIFF;
-  if (viewKey === "left_profile") return dz >= Z_PROFILE_MIN_SIGNED_DIFF;
-  if (viewKey === "right_profile") return -dz >= Z_PROFILE_MIN_SIGNED_DIFF;
-  return false;
-}
-
-function poseMatchesTarget(
-  viewKey: string,
-  yawT: number,
-  wasMatching: boolean,
-  eyeR: LandmarkLike,
-  eyeL: LandmarkLike
-): boolean {
+function poseMatchesTarget(viewKey: string, yawT: number, wasMatching: boolean): boolean {
   const margin = wasMatching ? POSE_HYSTERESIS : 0;
-  let yawOk = false;
-  if (viewKey === "front_face") yawOk = yawT > POSE_FRONT_MIN - margin && yawT < POSE_FRONT_MAX + margin;
-  else if (viewKey === "left_profile") yawOk = yawT < POSE_LEFT_MAX + margin;
-  else if (viewKey === "right_profile") yawOk = yawT > POSE_RIGHT_MIN - margin;
-  else return false;
-  return yawOk && zSupportsPose(viewKey, eyeR, eyeL);
+  if (viewKey === "front_face") return yawT > POSE_FRONT_MIN - margin && yawT < POSE_FRONT_MAX + margin;
+  if (viewKey === "left_profile") return yawT < POSE_LEFT_MAX + margin;
+  if (viewKey === "right_profile") return yawT > POSE_RIGHT_MIN - margin;
+  return false;
 }
 
 const POSE_SAVED_LABELS: Record<string, string> = {
@@ -136,19 +144,19 @@ const POSE_SAVED_LABELS: Record<string, string> = {
   right_profile: "Right profile saved",
 };
 
-/** In-circle titles match nose/eye ratio logic: left profile = turn head right; right profile = turn head left. */
+/** Plain-language guides; left step = show left side of face (turn head slightly toward your right). */
 const PHASE_GUIDE: Record<string, { title: string; subtitle: string }> = {
   front_face: {
-    title: "Look straight",
-    subtitle: "Center your face — hold still when aligned",
+    title: "Face the camera",
+    subtitle: "About an arm’s length — your whole face visible, then hold still",
   },
   left_profile: {
-    title: "Turn right",
-    subtitle: "Show your left profile to the camera",
+    title: "Show your left side",
+    subtitle: "Turn your head a little so your left cheek faces the camera",
   },
   right_profile: {
-    title: "Turn left",
-    subtitle: "Show your right profile to the camera",
+    title: "Show your right side",
+    subtitle: "Turn your head a little so your right cheek faces the camera",
   },
 };
 
@@ -284,7 +292,9 @@ function StepForm({
   const [statusMsg, setStatusMsg] = useState("Initializing detector...");
   const [manualFallbackReady, setManualFallbackReady] = useState(false);
   /** In-circle error hint while camera active (RAF loop updates; avoids stale closure). */
-  const [circleError, setCircleError] = useState<"none" | "no_face" | "multi">("none");
+  const [circleError, setCircleError] = useState<
+    "none" | "no_face" | "multi" | "framing_small" | "framing_clip"
+  >("none");
   /** Brief per-pose success overlay index, or null. */
   const [poseSuccessFlashIndex, setPoseSuccessFlashIndex] = useState<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -526,71 +536,83 @@ function StepForm({
             setCircleError("multi");
             setStatusMsg("Multiple faces detected. Please ensure only you are in frame.");
           } else {
-            setCircleError("none");
-            const keypoints = primary.keypoints;
-            const eyeR = keypoints[MESH_EYE_SUBJECT_RIGHT];
-            const eyeL = keypoints[MESH_EYE_SUBJECT_LEFT];
-            const nose = keypoints[MESH_NOSE_TIP];
+            const framing = getFaceFramingIssue(primary.box);
+            if (framing !== "ok") {
+              stablePoseFramesRef.current = 0;
+              wasPoseMatchingRef.current = false;
+              setCircleError(framing === "too_small" ? "framing_small" : "framing_clip");
+              setStatusMsg(
+                framing === "too_small"
+                  ? "Move a bit closer — we need to see your full face clearly."
+                  : "Center your full face in the circle — don’t let it be cut off at the edges."
+              );
+            } else {
+              setCircleError("none");
+              const keypoints = primary.keypoints;
+              const eyeR = keypoints[MESH_EYE_SUBJECT_RIGHT];
+              const eyeL = keypoints[MESH_EYE_SUBJECT_LEFT];
+              const nose = keypoints[MESH_NOSE_TIP];
 
-            if (eyeR && eyeL && nose) {
-              const yawT = computeHorizontalYawT(nose, eyeR, eyeL);
-              const target = IMAGE_VIEWS[captureIndexRef.current];
+              if (eyeR && eyeL && nose) {
+                const yawT = computeHorizontalYawT(nose, eyeR, eyeL);
+                const target = IMAGE_VIEWS[captureIndexRef.current];
 
-              if (yawT == null) {
+                if (yawT == null) {
+                  stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
+                  wasPoseMatchingRef.current = false;
+                  setStatusMsg("Move a little closer — your face looks too small in the frame");
+                } else {
+                  const matches = poseMatchesTarget(target.key, yawT, wasPoseMatchingRef.current);
+                  wasPoseMatchingRef.current = matches;
+
+                  if (!isCapturingRef.current) {
+                    if (matches) {
+                      stablePoseFramesRef.current += 1;
+                      armInvalidTimeout();
+                    } else {
+                      stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 1);
+                    }
+                  }
+
+                  const stable = stablePoseFramesRef.current;
+                  const holdHint = stable >= STABLE_FRAMES_HOLD_STILL_HINT;
+
+                  if (!isCapturingRef.current) {
+                    if (target.key === "front_face") {
+                      if (matches && holdHint) setStatusMsg("Got it — hold still for a moment…");
+                      else if (matches) setStatusMsg("Almost there — hold steady…");
+                      else setStatusMsg("Look at the camera with your whole face in view");
+                    } else if (target.key === "left_profile") {
+                      if (matches && holdHint) setStatusMsg("Left side looks good — hold still…");
+                      else if (matches) setStatusMsg("Keep turning slightly — hold steady…");
+                      else setStatusMsg("Turn a little so your left cheek faces the camera");
+                    } else if (target.key === "right_profile") {
+                      if (matches && holdHint) setStatusMsg("Right side looks good — hold still…");
+                      else if (matches) setStatusMsg("Keep turning slightly — hold steady…");
+                      else setStatusMsg("Turn a little so your right cheek faces the camera");
+                    }
+                  }
+
+                  if (
+                    matches &&
+                    !isCapturingRef.current &&
+                    stable >= STABLE_FRAMES_FOR_CAPTURE
+                  ) {
+                    armInvalidTimeout();
+                    if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
+                    pendingCaptureTimeoutRef.current = null;
+                    isCapturingRef.current = true;
+                    stablePoseFramesRef.current = 0;
+                    pendingCaptureTimeoutRef.current = setTimeout(() => {
+                      captureCurrentFrame();
+                      clearPendingAutoCapture();
+                    }, AUTO_CAPTURE_DELAY_MS);
+                  }
+                }
+              } else {
                 stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
                 wasPoseMatchingRef.current = false;
-                setStatusMsg("Move a little closer — face too small in frame");
-              } else {
-                const matches = poseMatchesTarget(target.key, yawT, wasPoseMatchingRef.current, eyeR, eyeL);
-                wasPoseMatchingRef.current = matches;
-
-                if (!isCapturingRef.current) {
-                  if (matches) {
-                    stablePoseFramesRef.current += 1;
-                    armInvalidTimeout();
-                  } else {
-                    stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 1);
-                  }
-                }
-
-                const stable = stablePoseFramesRef.current;
-                const holdHint = stable >= STABLE_FRAMES_HOLD_STILL_HINT;
-
-                if (!isCapturingRef.current) {
-                  if (target.key === "front_face") {
-                    if (matches && holdHint) setStatusMsg("Front face detected - Hold still...");
-                    else if (matches) setStatusMsg("Hold steady — lining up…");
-                    else setStatusMsg("Position your face to the center");
-                  } else if (target.key === "left_profile") {
-                    if (matches && holdHint) setStatusMsg("Left profile detected - Hold still...");
-                    else if (matches) setStatusMsg("Hold steady — lining up…");
-                    else setStatusMsg("Turn your head to the right (left profile)");
-                  } else if (target.key === "right_profile") {
-                    if (matches && holdHint) setStatusMsg("Right profile detected - Hold still...");
-                    else if (matches) setStatusMsg("Hold steady — lining up…");
-                    else setStatusMsg("Turn your head to the left (right profile)");
-                  }
-                }
-
-                if (
-                  matches &&
-                  !isCapturingRef.current &&
-                  stable >= STABLE_FRAMES_FOR_CAPTURE
-                ) {
-                  armInvalidTimeout();
-                  if (pendingCaptureTimeoutRef.current) clearTimeout(pendingCaptureTimeoutRef.current);
-                  pendingCaptureTimeoutRef.current = null;
-                  isCapturingRef.current = true;
-                  stablePoseFramesRef.current = 0;
-                  pendingCaptureTimeoutRef.current = setTimeout(() => {
-                    captureCurrentFrame();
-                    clearPendingAutoCapture();
-                  }, AUTO_CAPTURE_DELAY_MS);
-                }
               }
-            } else {
-              stablePoseFramesRef.current = Math.max(0, stablePoseFramesRef.current - 2);
-              wasPoseMatchingRef.current = false;
             }
           }
         }
@@ -876,7 +898,8 @@ function StepForm({
             <div className="space-y-4">
               <Label>Start Live Assessment</Label>
               <p className="text-sm text-muted-foreground">
-                Use live camera capture for 3 angles (front, left, right). Auto-capture triggers when the correct angle is detected.
+                We’ll grab three quick views (straight on, left side, right side). You don’t need a perfect angle — keep your whole
+                face in the circle; auto-capture will fire when it’s good enough.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button type="button" onClick={startCamera} disabled={cameraState === "starting" || cameraState === "active"}>
@@ -975,6 +998,20 @@ function StepForm({
                           <AlertCircle className="h-9 w-9 text-destructive" aria-hidden />
                           <p className="text-xs font-medium text-foreground">Multiple faces</p>
                           <p className="text-[11px] text-muted-foreground">Only you should be visible</p>
+                        </div>
+                      )}
+                      {cameraState === "active" && poseSuccessFlashIndex === null && circleError === "framing_small" && (
+                        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background/45 px-3 text-center backdrop-blur-sm">
+                          <AlertCircle className="h-9 w-9 text-amber-600 dark:text-amber-500" aria-hidden />
+                          <p className="text-xs font-medium text-foreground">Move a bit closer</p>
+                          <p className="text-[11px] text-muted-foreground">We need your full face larger in the circle</p>
+                        </div>
+                      )}
+                      {cameraState === "active" && poseSuccessFlashIndex === null && circleError === "framing_clip" && (
+                        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background/45 px-3 text-center backdrop-blur-sm">
+                          <AlertCircle className="h-9 w-9 text-amber-600 dark:text-amber-500" aria-hidden />
+                          <p className="text-xs font-medium text-foreground">Center your full face</p>
+                          <p className="text-[11px] text-muted-foreground">Nothing should be cut off at the edges</p>
                         </div>
                       )}
                       {cameraState === "active" && poseSuccessFlashIndex === null && circleError === "none" && (
