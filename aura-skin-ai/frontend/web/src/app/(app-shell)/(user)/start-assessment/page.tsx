@@ -130,6 +130,45 @@ function computeHorizontalYawT(
   return (nose.x - eyeMinX) / span;
 }
 
+/** Fallback yaw when eye span collapses on profile views. */
+function yawFromNormalizedBox(box: NonNullable<FaceWithBox["box"]>): number | null {
+  const xMin = box.xMin;
+  const w = box.width;
+  if (xMin == null || w == null || !Number.isFinite(xMin) || !Number.isFinite(w)) return null;
+  return xMin + w / 2;
+}
+
+type BlazeFaceLike = {
+  box: { xMin: number; yMin: number; xMax: number; yMax: number; width: number; height: number };
+  keypoints: Array<{ x: number; y: number; name?: string }>;
+};
+
+/** Map BlazeFace output onto existing mesh-like indices for yaw/framing pipeline. */
+function blazeFaceToMeshLike(blaze: BlazeFaceLike, vw: number, vh: number): FaceWithBox | null {
+  if (vw < 32 || vh < 32) return null;
+  const find = (name: string) => blaze.keypoints.find((k) => k.name === name);
+  const eyeR = find("rightEye");
+  const eyeL = find("leftEye");
+  const nose = find("noseTip");
+  if (!eyeR || !eyeL || !nose) return null;
+  const b = blaze.box;
+  const keypoints: LandmarkLike[] = [];
+  keypoints[MESH_NOSE_TIP] = { x: nose.x, y: nose.y };
+  keypoints[MESH_EYE_SUBJECT_RIGHT] = { x: eyeR.x, y: eyeR.y };
+  keypoints[MESH_EYE_SUBJECT_LEFT] = { x: eyeL.x, y: eyeL.y };
+  return {
+    keypoints,
+    box: {
+      xMin: b.xMin / vw,
+      yMin: b.yMin / vh,
+      width: b.width / vw,
+      height: b.height / vh,
+      xMax: b.xMax / vw,
+      yMax: b.yMax / vh,
+    },
+  };
+}
+
 function poseMatchesTarget(viewKey: string, yawT: number, wasMatching: boolean): boolean {
   const margin = wasMatching ? POSE_HYSTERESIS : 0;
   if (viewKey === "front_face") return yawT > POSE_FRONT_MIN - margin && yawT < POSE_FRONT_MAX + margin;
@@ -301,6 +340,7 @@ function StepForm({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const detectorRef = useRef<any>(null);
+  const blazeDetectorRef = useRef<any>(null);
   const detectionLoopActiveRef = useRef(false);
   /** RAF loop reads these on every frame — state alone stays stale inside `run` (single closure). */
   const captureIndexRef = useRef(0);
@@ -326,16 +366,25 @@ function StepForm({
         await import("@tensorflow/tfjs-core");
         await import("@tensorflow/tfjs-backend-webgl");
         const faceLandmarksDetection = await import("@tensorflow-models/face-landmarks-detection");
-        const detector = await faceLandmarksDetection.createDetector(
-          faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-          {
+        const faceDetection = await import("@tensorflow-models/face-detection");
+        const [detector, blazeDetector] = await Promise.all([
+          faceLandmarksDetection.createDetector(
+            faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+            {
+              runtime: "tfjs",
+              refineLandmarks: true,
+              maxFaces: 2, // Detect multiples to show error
+            }
+          ),
+          faceDetection.createDetector(faceDetection.SupportedModels.MediaPipeFaceDetector, {
             runtime: "tfjs",
-            refineLandmarks: true,
-            maxFaces: 2, // Detect multiples to show error
-          }
-        );
+            modelType: "short",
+            maxFaces: 2,
+          }),
+        ]);
         if (active) {
           detectorRef.current = detector;
+          blazeDetectorRef.current = blazeDetector;
           detectorReadyRef.current = true;
           setStatusMsg("Ready to scan");
         }
@@ -357,6 +406,18 @@ function StepForm({
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
+      try {
+        detectorRef.current?.dispose?.();
+      } catch {
+        // best-effort
+      }
+      try {
+        blazeDetectorRef.current?.dispose?.();
+      } catch {
+        // best-effort
+      }
+      detectorRef.current = null;
+      blazeDetectorRef.current = null;
       detectorReadyRef.current = false;
     };
   }, [step.key]);
@@ -492,10 +553,30 @@ function StepForm({
         estimateInFlightRef.current = true;
         try {
           faces = await detectorRef.current.estimateFaces(videoRef.current, {
-            // User-facing stream: align landmarks with mirror-style preview (tfjs flips input tensor only).
-            flipHorizontal: true,
+            flipHorizontal: false,
             staticImageMode: false,
           });
+          if (faces.length === 0) {
+            faces = await detectorRef.current.estimateFaces(videoRef.current, {
+              flipHorizontal: true,
+              staticImageMode: false,
+            });
+          }
+          if (faces.length === 0 && blazeDetectorRef.current && videoRef.current.videoWidth > 0 && videoRef.current.videoHeight > 0) {
+            const vw = videoRef.current.videoWidth;
+            const vh = videoRef.current.videoHeight;
+            let blazeFaces = (await blazeDetectorRef.current.estimateFaces(videoRef.current, {
+              flipHorizontal: false,
+            })) as BlazeFaceLike[];
+            if (blazeFaces.length === 0) {
+              blazeFaces = (await blazeDetectorRef.current.estimateFaces(videoRef.current, {
+                flipHorizontal: true,
+              })) as BlazeFaceLike[];
+            }
+            faces = blazeFaces
+              .map((f) => blazeFaceToMeshLike(f, vw, vh))
+              .filter((f): f is FaceWithBox => f != null);
+          }
         } catch (err) {
           estimateFailed = true;
           const nowErr = Date.now();
@@ -554,7 +635,8 @@ function StepForm({
               const nose = keypoints[MESH_NOSE_TIP];
 
               if (eyeR && eyeL && nose) {
-                const yawT = computeHorizontalYawT(nose, eyeR, eyeL);
+                const yawTFromEyes = computeHorizontalYawT(nose, eyeR, eyeL);
+                const yawT = yawTFromEyes ?? (primary.box ? yawFromNormalizedBox(primary.box) : null);
                 const target = IMAGE_VIEWS[captureIndexRef.current];
 
                 if (yawT == null) {
