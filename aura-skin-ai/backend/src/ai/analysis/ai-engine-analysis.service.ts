@@ -32,7 +32,11 @@ export class AiEngineAnalysisService {
     return this.baseUrl != null;
   }
 
-  /** GET /health on the AI engine (short timeout). */
+  /**
+   * GET /health on the AI engine (short timeout).
+   * Accepts canonical `{ "status": "ok" }` (see ai-engine/api/ai_server.py) or HTTP 200 with an empty body
+   * (some proxies strip JSON) so submit-health does not block scans when /analyze is healthy.
+   */
   async pingHealth(): Promise<boolean> {
     if (!this.baseUrl) return false;
     try {
@@ -41,8 +45,15 @@ export class AiEngineAnalysisService {
         signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
       });
       if (!res.ok) return false;
-      const json = (await res.json().catch(() => null)) as { status?: string } | null;
-      return json?.status === "ok";
+      const text = await res.text();
+      const trimmed = text.trim();
+      if (trimmed === "") return true;
+      try {
+        const json = JSON.parse(trimmed) as { status?: string };
+        return json?.status === "ok";
+      } catch {
+        return false;
+      }
     } catch {
       return false;
     }
