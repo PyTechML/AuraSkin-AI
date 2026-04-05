@@ -32,8 +32,39 @@ This runbook covers P0 hardening for:
 
 ### 5) AI engine reachable (SYNC_AI mode only)
 - Check: `GET /api/user/assessment/submit-health` returns `healthy=true` in `SYNC_AI` mode
-- Expected: no `AI_ENGINE_UNAVAILABLE`
-- On failure: validate `AI_ENGINE_URL` and engine process health
+- Expected: no `AI_ENGINE_UNAVAILABLE`, `AI_ENGINE_UNREACHABLE`, or `REDIS_UNAVAILABLE`
+- On failure: validate `AI_ENGINE_URL` (non-empty, correct base URL), deploy/restart the FastAPI engine, and confirm `GET {AI_ENGINE_URL}/health` returns `{"status":"ok"}` from your machine (Nest performs this probe on each submit-health call).
+
+## Vercel vs Render environment variables
+
+| Variable | Set on | Role |
+|----------|--------|------|
+| `NEXT_PUBLIC_API_URL` | **Vercel** (frontend) | Browser calls `${NEXT_PUBLIC_API_URL}/api/...` for the Nest API (e.g. your Render URL). Wrong value → login/API failures, not “analysis unavailable” alone. |
+| `NEXT_PUBLIC_ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT` | **Vercel** | Client-only UI flags (e.g. start-assessment). Does **not** change `ASSESSMENT_MODE` on the server. |
+| `ASSESSMENT_MODE` | **Render** (Nest backend) | `SYNC_AI`, `QUEUE`, or `QUESTIONNAIRE_ONLY`. Scan submit requires `SYNC_AI` or `QUEUE`, not `QUESTIONNAIRE_ONLY`. |
+| `AI_ENGINE_URL` | **Render** (Nest) | Base URL of the FastAPI service (no `/analyze` suffix). Required when `ASSESSMENT_MODE=SYNC_AI`. |
+| `REDIS_URL` | **Render** (Nest + worker) | Required when `ASSESSMENT_MODE=QUEUE`. |
+| `ENABLE_QUESTIONNAIRE_ONLY_ASSESSMENT` | **Render** | Server flag for questionnaire endpoint; independent of scan mode unless `ASSESSMENT_MODE=QUESTIONNAIRE_ONLY`. |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | **Render** (Nest) | Text report generation after vision scores; does not replace the Python `/analyze` pipeline for images. |
+
+**Render dashboard hygiene:** Remove mistaken rows where the **key** is not a real variable name (e.g. a row whose key is literally `production`). Those do not configure Node; they only confuse operators.
+
+## Render checklist (image submit)
+
+1. `ASSESSMENT_MODE=SYNC_AI` (or `QUEUE` with Redis + worker).
+2. `AI_ENGINE_URL` is the public origin of the AI engine (HTTPS on Render), e.g. `https://your-ai-service.onrender.com` — no trailing `/analyze`.
+3. AI engine service is running and exposes `GET /health` → `{"status":"ok"}`.
+4. Smoke test from your laptop (replace URL and use a **public** image URL, e.g. from Supabase `assessment-images`):
+
+```bash
+curl -sS -X POST "$AI_ENGINE_URL/analyze" \
+  -H "Content-Type: application/json" \
+  -d '{"assessment_id":"smoke-test","image_urls":["https://YOUR_PROJECT.supabase.co/storage/v1/object/public/assessment-images/...jpg"]}'
+```
+
+Expect HTTP `200` and JSON with `"status":"ok"` and a `predictions` object.
+
+5. Authenticated: `GET {NEST_URL}/api/user/assessment/submit-health` → `healthy: true` for your intended mode.
 
 ## Assessment Submit Gating Rules
 

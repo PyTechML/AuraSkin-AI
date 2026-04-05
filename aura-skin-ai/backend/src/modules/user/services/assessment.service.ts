@@ -129,7 +129,14 @@ export class AssessmentService {
       const heartbeat = this.parseHeartbeatTimestamp(await this.redis.getWorkerHeartbeat());
       if (!heartbeat || Date.now() - heartbeat > env.workerHeartbeatMaxAgeMs) reasons.push("WORKER_UNHEALTHY");
     }
-    if (env.assessmentMode === "SYNC_AI" && !aiConfigured) reasons.push("AI_ENGINE_UNAVAILABLE");
+    if (env.assessmentMode === "SYNC_AI") {
+      if (!aiConfigured) {
+        reasons.push("AI_ENGINE_UNAVAILABLE");
+      } else {
+        const engineReachable = await this.aiEngine.pingHealth();
+        if (!engineReachable) reasons.push("AI_ENGINE_UNREACHABLE");
+      }
+    }
     if (env.assessmentMode === "QUESTIONNAIRE_ONLY" && !env.enableQuestionnaireOnlyAssessment) {
       reasons.push("QUESTIONNAIRE_MODE_DISABLED");
     }
@@ -339,14 +346,21 @@ export class AssessmentService {
         const analyzed = await this.aiEngine.analyzeAssessment({ assessmentId, imageUrls });
         if (analyzed.status !== "ok" || !analyzed.predictions) {
           const analyzedMessage = (analyzed.message ?? "").toLowerCase();
+          const isUserImageIssue =
+            analyzedMessage.includes("invalid face") ||
+            analyzedMessage.includes("clear facial") ||
+            analyzedMessage.includes("facial photo") ||
+            analyzedMessage.includes("clear face");
           const shouldExposeUnavailable =
             analyzedMessage.includes("unavailable") ||
             analyzedMessage.includes("not configured") ||
             analyzedMessage.includes("timeout") ||
             analyzedMessage.includes("timed out");
-          const safeMessage = shouldExposeUnavailable
-            ? ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE
-            : "Unable to submit assessment. Please try again.";
+          const safeMessage = isUserImageIssue
+            ? (analyzed.message ?? "Please upload clear facial photos.")
+            : shouldExposeUnavailable
+              ? ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE
+              : "Unable to submit assessment. Please try again.";
           await this.setFailedProgress(assessmentId, ERRORS.SUBMIT_FAILED, safeMessage);
         }
         await this.redis.setAssessmentProgress(assessmentId, "generating_report", 70);

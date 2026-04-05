@@ -162,7 +162,11 @@ export default function AssessmentReviewPage() {
         const reason = health.reasons[0] ?? "SERVICE_UNAVAILABLE";
         if (reason === "WORKER_UNHEALTHY") {
           setSubmitDisabledReason("Assessment worker is currently unavailable. Please try again shortly.");
-        } else if (reason === "REDIS_UNAVAILABLE" || reason === "AI_ENGINE_UNAVAILABLE") {
+        } else if (
+          reason === "REDIS_UNAVAILABLE" ||
+          reason === "AI_ENGINE_UNAVAILABLE" ||
+          reason === "AI_ENGINE_UNREACHABLE"
+        ) {
           setSubmitDisabledReason(ANALYSIS_UNAVAILABLE_BACKEND_MESSAGE);
         } else {
           setSubmitDisabledReason("Assessment submit is temporarily unavailable.");

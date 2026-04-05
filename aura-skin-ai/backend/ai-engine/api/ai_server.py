@@ -6,7 +6,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Optional
 
@@ -31,6 +31,11 @@ class ChatGuardResponse(BaseModel):
     warning_count: Optional[int] = None
     block_until: Optional[str] = None
     reason: Optional[str] = None
+
+@app.get("/health")
+def health():
+    """Liveness probe for Nest submit-health and load balancers."""
+    return {"status": "ok"}
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(req: AnalyzeRequest):
