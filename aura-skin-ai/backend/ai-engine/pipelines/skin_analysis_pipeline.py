@@ -56,7 +56,7 @@ def run(
     progress_callback: callable = None,
 ) -> dict:
     """
-    image_urls: order [front_face, left_profile, right_profile, upward_angle, downward_angle].
+    image_urls: typically [front_face, left_profile, right_profile] (same order as Nest upload); additional angles optional.
     progress_callback(stage: str, progress: int) optional.
     Returns {"predictions": {...}, "recommendations": {"product_ids": [], "dermatologist_ids": []}}
     or raises ValueError(INVALID_MESSAGE) on validation failure.

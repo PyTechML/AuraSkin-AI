@@ -65,7 +65,8 @@ def run_job(payload: dict, redis_client, supabase):
     city = payload.get("city")
     lat = payload.get("latitude")
     lng = payload.get("longitude")
-    if not assessment_id or not user_id or len(image_urls) < 5:
+    # Nest API enqueues exactly three views: front_face, left_profile, right_profile (see ASSESSMENT_IMAGE_VIEWS).
+    if not assessment_id or not user_id or len(image_urls) < 3:
         set_progress(redis_client, assessment_id or "unknown", 0, "failed", error="Invalid job payload.")
         return
     start_time = time.time()

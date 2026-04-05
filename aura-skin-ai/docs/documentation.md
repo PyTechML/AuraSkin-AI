@@ -583,7 +583,7 @@ User
 ```text
 AssessmentStart
   -> POST /api/user/assessment               (creates assessments row)
-  -> POST /api/user/assessment/upload        (uploads 5 images, inserts assessment_images rows)
+  -> POST /api/user/assessment/upload        (uploads 3 face images, inserts assessment_images rows)
   -> POST /api/user/assessment/submit        (enqueue Redis job OR run HTTP AI engine sync fallback)
   -> GET  /api/user/assessment/progress/:id  (frontend polls every 2s, up to 180 attempts)
   -> report_id becomes available
@@ -613,7 +613,7 @@ AssessmentStart
 
 4. **Python worker consumes queue**  
    - `BRPOP ai:assessment:queue`
-   - Validates payload requires at least **5** `imageUrls` (`backend/ai-engine/workers/analysis_worker.py`)
+   - Validates payload requires at least **3** `imageUrls` (`backend/ai-engine/workers/analysis_worker.py`)
 
 5. **OpenCV pipeline runs**  
    - Stages in `backend/ai-engine/pipelines/skin_analysis_pipeline.py`:

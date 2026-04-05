@@ -29,6 +29,7 @@ import { RoutineRepository } from "../repositories/routine.repository";
 import { AiReportService } from "./ai-report.service";
 import { loadEnv } from "../../../config/env";
 import { getSupabaseClient } from "../../../database/supabase.client";
+import { captureException } from "../../../core/sentry/sentry.service";
 
 const ANALYSIS_TEMPORARILY_UNAVAILABLE_MESSAGE =
   "Image-based analysis service is temporarily unavailable. Please try questionnaire-only submission or retry later.";
@@ -533,7 +534,13 @@ export class AssessmentService {
       return { assessment_id: assessmentId, report_id: null };
     } catch (err) {
       if (err instanceof HttpException) throw err;
-      this.logger.log("Assessment submit error", { error: String(err), event_type: "assessment_submit_error" });
+      const stack = err instanceof Error ? err.stack : undefined;
+      this.logger.log("Assessment submit error", {
+        error: String(err),
+        stack,
+        event_type: "assessment_submit_error",
+      });
+      captureException(err, { event_type: "assessment_submit_error", phase: "assessment_submit" });
       throw new InternalServerErrorException({
         code: ERRORS.SUBMIT_FAILED,
         message: "Unable to submit assessment. Please try again.",

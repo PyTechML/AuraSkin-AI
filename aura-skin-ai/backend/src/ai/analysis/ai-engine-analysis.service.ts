@@ -36,7 +36,13 @@ export class AiEngineAnalysisService {
         signal: AbortSignal.timeout(120_000),
       });
       const json = (await res.json().catch(() => ({}))) as AiEngineAnalyzeResult;
-      if (!res.ok) return { status: "error", message: "Analysis failed. Please try again." };
+      // Include "unavailable" so AssessmentService maps to the questionnaire-friendly message (not generic submit failure).
+      if (!res.ok) {
+        return {
+          status: "error",
+          message: `AI engine unavailable (HTTP ${res.status}). Please try again later.`,
+        };
+      }
       return json;
     } catch {
       return { status: "error", message: "AI engine unavailable. Please try again." };
