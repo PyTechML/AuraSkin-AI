@@ -5,19 +5,17 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useCartStore } from "@/store/cartStore";
 import { useAuthStore } from "@/store/authStore";
-import { createCheckoutSession, createUpiPayment, createCodPayment, getProductById } from "@/services/api";
+import { createCheckoutSession, getProductById } from "@/services/api";
 import { usePanelToast } from "@/components/panel/PanelToast";
 import type { Product } from "@/types";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ImageIcon, CreditCard, MapPin, Wallet } from "lucide-react";
+import { CreditCard, ImageIcon, MapPin } from "lucide-react";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
-import { QRCodeCanvas } from "qrcode.react";
-import { dispatchPanelSync } from "@/lib/panelRealtimeSync";
 
-const STEPS = ["Address", "Payment", "Review"] as const;
+const STEPS = ["Address", "Review"] as const;
 const TAX_RATE = 0.08;
 const SHIPPING = 5.99;
 
@@ -40,16 +38,10 @@ function CheckoutContent() {
     state: "",
     zip: "",
   });
-  const [paymentMethod, setPaymentMethod] = useState<"upi" | "card" | "netbanking" | "wallet" | "cod">("card");
   const [checkoutItems, setCheckoutItems] = useState<{ product: Product; quantity: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [upiPayment, setUpiPayment] = useState<{
-    upi_url: string;
-    payment_id: string;
-    amount: number;
-  } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -110,42 +102,6 @@ function CheckoutContent() {
         ...(product.storeId ? { store_id: product.storeId } : {}),
       }));
 
-      if (paymentMethod === "upi") {
-        const result = await createUpiPayment({
-          items: itemsPayload,
-          customer_name: user.name?.trim() || undefined,
-        });
-        if (result?.upi_url && result?.payment_id) {
-          setUpiPayment(result);
-          addToast(`UPI payment initiated — ₹${result.amount}`, "success");
-          return;
-        }
-        addToast("Unable to initiate UPI payment", "error");
-        return;
-      }
-
-      if (paymentMethod === "cod") {
-        const shippingStr = [address.line1, address.line2, address.city, address.state, address.zip]
-          .filter(Boolean)
-          .join(", ");
-        const result = await createCodPayment({
-          items: itemsPayload,
-          shipping_address: shippingStr,
-          customer_name: user.name?.trim() || undefined,
-        });
-        if (result?.order_id) {
-          dispatchPanelSync("orders");
-          dispatchPanelSync("notifications");
-          dispatchPanelSync("assigned-users");
-          addToast("Order placed successfully! Pay on delivery.", "success");
-          router.push("/orders");
-          return;
-        }
-        addToast("Unable to place COD order", "error");
-        return;
-      }
-
-      // Card / Netbanking / Wallet → Stripe checkout
       const { checkout_url: checkoutUrl } = await createCheckoutSession({
         items: itemsPayload,
         customer_name: user.name?.trim() || undefined,
@@ -307,7 +263,7 @@ function CheckoutContent() {
                   />
                 </div>
                 <Button onClick={() => setStep(2)}>
-                  Continue to payment
+                  Continue to review
                 </Button>
               </CardContent>
             </Card>
@@ -316,50 +272,23 @@ function CheckoutContent() {
           {step === 2 && (
             <Card className="border-border">
               <CardHeader>
-                <h2 className="font-heading text-lg font-semibold flex items-center gap-2">
-                  <CreditCard className="h-5 w-5" />
-                  Payment method
-                </h2>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  {(["upi", "card", "netbanking", "wallet", "cod"] as const).map((method) => (
-                    <button
-                      key={method}
-                      type="button"
-                      onClick={() => setPaymentMethod(method)}
-                      className={`flex items-center gap-2 rounded-xl border p-4 text-left transition-colors ${
-                        paymentMethod === method
-                          ? "border-accent bg-accent/10"
-                          : "border-border hover:bg-muted/40"
-                      }`}
-                    >
-                      <Wallet className="h-5 w-5" />
-                      <span className="capitalize">{method === "cod" ? "Cash on Delivery" : method.replace("_", " ")}</span>
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  After review, you will complete your payment via a secure provider.
-                </p>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => setStep(1)}>
-                    Back
-                  </Button>
-                  <Button onClick={() => setStep(3)}>
-                    Continue to review
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {step === 3 && (
-            <Card className="border-border">
-              <CardHeader>
                 <h2 className="font-heading text-lg font-semibold">Review order</h2>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div
+                  className="rounded-xl border border-border/60 bg-muted/10 p-4 space-y-2 text-sm text-muted-foreground"
+                  role="note"
+                >
+                  <p className="flex items-start gap-2 font-medium text-foreground">
+                    <CreditCard className="h-5 w-5 shrink-0 mt-0.5" aria-hidden />
+                    <span>Secure payment with Stripe</span>
+                  </p>
+                  <p>
+                    You will complete payment on Stripe&apos;s secure page. Cards, wallets, and other methods shown
+                    there follow the payment methods enabled in Stripe (merchant settings).
+                  </p>
+                  <p>The shipping address you entered will be used for fulfillment.</p>
+                </div>
                 <div className="space-y-3">
                   {checkoutItems.map(({ product, quantity }) => (
                     <div key={product.id} className="flex gap-4">
@@ -379,47 +308,18 @@ function CheckoutContent() {
                   ))}
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => setStep(2)}>
+                  <Button variant="outline" onClick={() => setStep(1)}>
                     Back
                   </Button>
-                  <Button onClick={handleSubmit} disabled={submitting || (paymentMethod === "upi" && !!upiPayment)}>
-                    {paymentMethod === "upi" && upiPayment ? "UPI initiated" : submitting ? "Starting checkout…" : "Place order"}
+                  <Button
+                    type="button"
+                    onClick={handleSubmit}
+                    disabled={submitting}
+                    aria-busy={submitting}
+                  >
+                    {submitting ? "Starting checkout…" : "Continue to secure payment"}
                   </Button>
                 </div>
-
-                {paymentMethod === "upi" && upiPayment && (
-                  <div className="rounded-xl border border-border/60 bg-muted/10 p-4 space-y-3">
-                    <p className="text-sm text-muted-foreground">
-                      Scan this QR in your UPI app to pay. Payment reference:{" "}
-                      <span className="font-mono text-xs">{upiPayment.payment_id}</span>
-                    </p>
-                    <div className="flex justify-center">
-                      <div className="bg-white p-3 rounded-lg border">
-                        <QRCodeCanvas value={upiPayment.upi_url} size={220} includeMargin />
-                      </div>
-                    </div>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <Button asChild className="flex-1">
-                        <a href={upiPayment.upi_url}>Open UPI app</a>
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="flex-1"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(upiPayment.upi_url);
-                            addToast("UPI link copied", "success");
-                          } catch {
-                            addToast("Unable to copy UPI link", "error");
-                          }
-                        }}
-                      >
-                        Copy UPI link
-                      </Button>
-                    </div>
-                  </div>
-                )}
               </CardContent>
             </Card>
           )}
