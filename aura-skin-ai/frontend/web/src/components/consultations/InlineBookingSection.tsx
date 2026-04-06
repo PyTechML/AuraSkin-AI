@@ -86,6 +86,7 @@ export function RecommendedApproachWithInlineBooking(props: {
   const [error, setError] = useState<string | null>(null);
   const [rawSlots, setRawSlots] = useState<PublicSlot[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
+  const [fee, setFee] = useState<number>(0);
 
   const availability = useMemo(() => groupSlotsByDate(rawSlots), [rawSlots]);
 
@@ -116,15 +117,25 @@ export function RecommendedApproachWithInlineBooking(props: {
     if (!isOpen || !props.dermatologistId) return;
     let cancelled = false;
 
-    const loadSlots = () => {
+    const loadSlots = async () => {
       setSlotsLoading(true);
-      getDermatologistSlotsPublic(props.dermatologistId)
-        .then((slots) => {
-          if (!cancelled) setRawSlots(slots);
-        })
-        .finally(() => {
-          if (!cancelled) setSlotsLoading(false);
-        });
+      try {
+        const [{ data: profile }, slots] = await Promise.all([
+          supabase
+            .from("dermatologist_profiles")
+            .select("consultation_fee")
+            .eq("id", props.dermatologistId)
+            .maybeSingle(),
+          getDermatologistSlotsPublic(props.dermatologistId)
+        ]);
+        
+        if (!cancelled) {
+          setFee(Number(profile?.consultation_fee ?? 0));
+          setRawSlots(slots);
+        }
+      } finally {
+        if (!cancelled) setSlotsLoading(false);
+      }
     };
 
     loadSlots();
@@ -315,7 +326,7 @@ export function RecommendedApproachWithInlineBooking(props: {
                           onClick={onConfirm}
                           disabled={submitting}
                         >
-                          {submitting ? "Processing…" : "Confirm Booking"}
+                          {submitting ? "Processing…" : fee > 0 ? "Card Payment" : "Confirm Booking"}
                         </button>
                       </div>
                     </div>
@@ -328,15 +339,21 @@ export function RecommendedApproachWithInlineBooking(props: {
       </AnimatePresence>
 
       <Dialog open={sentModalOpen} onOpenChange={setSentModalOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Consultation Request Sent</DialogTitle>
-            <DialogDescription>
-              Your consultation request has been shared with the dermatologist. You will be notified once they review
-              and confirm your request.
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader className="flex flex-col items-center sm:text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-100 mb-4">
+              <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+              </svg>
+            </div>
+            <DialogTitle className="text-xl">
+              {fee > 0 ? "Payment successful" : "Consultation booked successfully"}
+            </DialogTitle>
+            <DialogDescription className="text-center pt-2">
+              Your consultation has been booked successfully. You will be notified once the dermatologist reviews it.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
+          <DialogFooter className="sm:justify-center">
             <button type="button" className={PRIMARY_BTN_MODAL} onClick={() => setSentModalOpen(false)}>
               OK
             </button>

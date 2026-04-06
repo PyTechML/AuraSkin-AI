@@ -851,7 +851,7 @@ export async function createConsultationPayment(
     upi_url?: string;
     payment_id?: string;
     instant?: boolean;
-  }>("/payments/consultation", { dermatologist_id: dermatologistId, slot_id: slotId });
+  }>("/consultations/create-checkout-session", { dermatologist_id: dermatologistId, slot_id: slotId });
 }
 
 /** Partner: bookings for a dermatologist. */

@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from "@nestjs/common";
+import { Injectable, BadRequestException, forwardRef, Inject } from "@nestjs/common";
 import { getSupabaseClient } from "../../../database/supabase.client";
 import Stripe from "stripe";
 import { LoggerService } from "../../../core/logger/logger.service";
@@ -10,6 +10,7 @@ import { AnalyticsService } from "../../analytics/analytics.service";
 import { persistConsultationAndBookSlot } from "./consultation-booking.helper";
 import { StripeService } from "./stripe.service";
 import { InvoiceEmailService } from "./invoice-email.service";
+import { ConsultationPaymentService } from "./consultation-payment.service";
 
 @Injectable()
 export class WebhooksService {
@@ -21,7 +22,9 @@ export class WebhooksService {
     private readonly logger: LoggerService,
     private readonly analytics: AnalyticsService,
     private readonly stripeService: StripeService,
-    private readonly invoiceEmailService: InvoiceEmailService
+    private readonly invoiceEmailService: InvoiceEmailService,
+    @Inject(forwardRef(() => ConsultationPaymentService))
+    private readonly consultationPaymentService: ConsultationPaymentService
   ) {}
 
   constructEvent(
@@ -122,12 +125,20 @@ export class WebhooksService {
         userId,
         metadata
       );
+    } else if (metadata.payment_type === "consultation") {
+      await this.consultationPaymentService.handleWebhookCompletion(
+        session,
+        payment.id,
+        userId,
+        metadata,
+        amount
+      );
     }
 
     this.logger.logPayment({
       event: "payment_confirmed",
       payment_id: payment.id,
-      extra: { user_id: userId, type },
+      extra: { user_id: userId, type: metadata.payment_type || type },
     });
     await this.eventsService.emit("payment_success", {
       user_id: userId,
@@ -139,7 +150,7 @@ export class WebhooksService {
     await this.paymentAuditRepository.log("checkout.session.completed", {
       session_id: session.id,
       payment_id: payment.id,
-      type,
+      type: metadata.payment_type || type,
     });
   }
 
