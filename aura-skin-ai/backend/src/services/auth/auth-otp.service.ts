@@ -18,10 +18,10 @@ import { PendingSignupRepository } from "./pending-signup.repository";
 import { LoginChallengeRepository, type LoginChallengeKind } from "./login-challenge.repository";
 import type { User } from "@supabase/supabase-js";
 
-const OTP_TTL_MS = 15 * 60 * 1000;
-const OTP_EXPIRES_MINUTES = 15;
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_EXPIRES_MINUTES = 10;
 const RESEND_COOLDOWN_MS = 60_000;
-const MAX_VERIFY_ATTEMPTS = 5;
+const MAX_VERIFY_ATTEMPTS = 100;
 const MAX_RESENDS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
 const MAX_OTP_EVENTS_PER_EMAIL_PER_HOUR = 20;
@@ -192,6 +192,8 @@ export class AuthOtpService {
     const result = await this.authService.signUp(row.email, password, {
       name: meta.name,
       requestedRole: meta.requested_role,
+      emailVerified: true,
+      otpRequired: true,
     });
     if ("error" in result) {
       throw new BadRequestException(result.error);

@@ -39,7 +39,11 @@ export class PendingSignupRepository {
       })
       .select("id")
       .single();
-    if (error || !data) return null;
+    if (error) {
+      console.error("Supabase insert error (pending_signups):", error);
+      return null;
+    }
+    if (!data) return null;
     return (data as { id: string }).id;
   }
 

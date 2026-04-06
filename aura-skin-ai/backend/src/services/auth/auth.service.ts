@@ -34,6 +34,7 @@ export type SignInResult =
       oauthRequestedRole?: string;
       /** True when login completed from an OAuth email-OTP challenge (not password OTP). */
       oauthOtpCompleted?: boolean;
+      otpRequired?: boolean;
     }
   | { error: string };
 
@@ -257,7 +258,11 @@ export class AuthService {
       return { error: AuthService.LOGIN_ERROR_MESSAGE };
     }
 
-    return this.finalizeLoginFromSession(session, user, context, requestedRole);
+    const result = await this.finalizeLoginFromSession(session, user, context, requestedRole);
+    if ("user" in result) {
+      result.otpRequired = result.user.otpRequired;
+    }
+    return result;
   }
 
   private async createRoleRequest(userId: string, requestedRole: BackendRole): Promise<void> {
@@ -272,7 +277,7 @@ export class AuthService {
   async signUp(
     email: string,
     password: string,
-    options?: { name?: string; requestedRole?: string }
+    options?: { name?: string; requestedRole?: string; emailVerified?: boolean; otpRequired?: boolean }
   ): Promise<SignUpResult> {
     const supabaseAdmin = getSupabaseClient();
     const normalizedEmail = normalizeEmail(email);
@@ -314,6 +319,9 @@ export class AuthService {
           email: normalizedEmail,
           role: "user",
           full_name: options?.name ?? null,
+          email_verified: options?.emailVerified ?? false,
+          otp_required: options?.otpRequired ?? false,
+          otp_verified_at: options?.emailVerified ? new Date().toISOString() : null,
         },
         { onConflict: "id" }
       );
@@ -389,7 +397,7 @@ export class AuthService {
     const supabaseAdmin = getSupabaseClient();
     const { data: row, error } = await supabaseAdmin
       .from("profiles")
-      .select("id, email, role, full_name, avatar_url")
+      .select("id, email, role, full_name, avatar_url, email_verified, otp_required")
       .eq("id", userId)
       .single();
     if (error || !row) return null;
@@ -405,6 +413,8 @@ export class AuthService {
       role,
       fullName: row.full_name ?? null,
       avatar: row.avatar_url ?? null,
+      emailVerified: row.email_verified ?? false,
+      otpRequired: row.otp_required ?? false,
     };
   }
 }

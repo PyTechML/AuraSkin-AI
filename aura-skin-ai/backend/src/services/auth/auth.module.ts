@@ -15,11 +15,14 @@ const otpRequired = isAuthEmailOtpRequiredEnv();
   imports: [SessionModule],
   controllers: [
     AuthSessionController,
-    ...(otpRequired ? [AuthOtpController] : [AuthPasswordController]),
+    AuthPasswordController,
+    AuthOtpController,
   ],
   providers: [
     AuthService,
-    ...(otpRequired ? [PendingSignupRepository, LoginChallengeRepository, AuthOtpService] : []),
+    AuthOtpService,
+    PendingSignupRepository,
+    LoginChallengeRepository,
   ],
   exports: [AuthService],
 })

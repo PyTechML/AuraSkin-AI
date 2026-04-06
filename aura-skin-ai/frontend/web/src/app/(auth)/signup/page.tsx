@@ -19,11 +19,8 @@ import {
   OAUTH_NOT_CONFIGURED_USER_MESSAGE,
 } from "@/lib/supabase";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import {
-  authAppleOAuthWhenGmailOnly,
-  authEmailOtpRequired,
-  authGmailOnly,
-} from "@/lib/auth-flags";
+import { authAppleOAuthWhenGmailOnly, authEmailOtpRequired, authGmailOnly } from "@/lib/auth-flags";
+import { OtpModal } from "@/components/auth/OtpModal";
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -80,6 +77,7 @@ export default function SignupPage() {
   const [pendingModalOpen, setPendingModalOpen] = useState(false);
   const [pendingRoleLabel, setPendingRoleLabel] = useState<"Store" | "Dermatologist">("Store");
   const [step, setStep] = useState<"form" | "otp">("form");
+  const [isOtpModalOpen, setIsOtpModalOpen] = useState(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [otpCode, setOtpCode] = useState("");
   const [otpSubmitting, setOtpSubmitting] = useState(false);
@@ -125,20 +123,18 @@ export default function SignupPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      if (authEmailOtpRequired) {
-        const { pendingId: id } = await signupOtpStart({
-          email: data.email,
-          password: data.password,
-          name: data.name,
-          requested_role: data.requested_role,
-        });
-        setPendingId(id);
-        setStep("otp");
-        setOtpCode("");
-        setResendCooldown(RESEND_COOLDOWN_SEC);
-        addToast("Check your email for a 6-digit verification code.", "success");
-        return;
-      }
+        if (authEmailOtpRequired) {
+          const { pendingId: id } = await signupOtpStart({
+            email: data.email,
+            password: data.password,
+            name: data.name,
+            requested_role: data.requested_role,
+          });
+          setPendingId(id);
+          setIsOtpModalOpen(true);
+          addToast("Check your email for a 6-digit verification code.", "success");
+          return;
+        }
 
       await signup({
         email: data.email,
@@ -154,35 +150,23 @@ export default function SignupPage() {
     }
   };
 
-  const onVerifyOtp = async () => {
-    if (!pendingId || otpCode.trim().length < 6) {
-      addToast("Enter the 6-digit code from your email.", "error");
-      return;
-    }
-    setOtpSubmitting(true);
+  const onVerifyOtp = async (code: string) => {
+    if (!pendingId || code.trim().length < 6) return;
     try {
-      await signupOtpComplete(pendingId, otpCode.trim());
+      await signupOtpComplete(pendingId, code.trim());
       const role = watch("requested_role") ?? "USER";
+      setIsOtpModalOpen(false);
       finishSignupSuccess(role);
-      setStep("form");
       setPendingId(null);
-      setOtpCode("");
     } catch (err) {
-      addToast(err instanceof Error ? err.message : "Verification failed.", "error");
-    } finally {
-      setOtpSubmitting(false);
+      throw err; // Propagate to modal
     }
   };
 
   const onResendOtp = async () => {
-    if (!pendingId || resendCooldown > 0) return;
-    try {
-      await signupOtpResend(pendingId);
-      setResendCooldown(RESEND_COOLDOWN_SEC);
-      addToast("A new code was sent to your email.", "success");
-    } catch (err) {
-      addToast(err instanceof Error ? err.message : "Could not resend code.", "error");
-    }
+    if (!pendingId) return;
+    await signupOtpResend(pendingId);
+    addToast("A new code was sent to your email.", "success");
   };
 
   const onChangeEmail = () => {
@@ -201,52 +185,17 @@ export default function SignupPage() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {authEmailOtpRequired && step === "otp" && (
-          <Card className="mb-6 border border-border/60 bg-card/40">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base font-heading">Verify your email</CardTitle>
-              <CardDescription className="text-xs">
-                We sent a 6-digit code to your inbox. This confirms you can receive email at that address
-                (deliverability only — not a Google account endorsement).
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="otp">Verification code</Label>
-                <Input
-                  id="otp"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  placeholder="000000"
-                  maxLength={8}
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
-                />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" onClick={() => void onVerifyOtp()} disabled={otpSubmitting}>
-                  {otpSubmitting ? "Verifying..." : "Verify and create account"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={resendCooldown > 0}
-                  onClick={() => void onResendOtp()}
-                >
-                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend code"}
-                </Button>
-                <Button type="button" variant="ghost" onClick={onChangeEmail}>
-                  Change email
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        <OtpModal
+          isOpen={isOtpModalOpen}
+          email={watch("email")}
+          onVerify={onVerifyOtp}
+          onResend={onResendOtp}
+          onClose={() => setIsOtpModalOpen(false)}
+        />
 
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (authEmailOtpRequired && step === "otp") return;
             void handleSubmit(onSubmit)(e);
           }}
           className="space-y-4"

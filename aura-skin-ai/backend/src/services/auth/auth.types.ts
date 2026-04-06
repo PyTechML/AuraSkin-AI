@@ -9,6 +9,9 @@ export interface ProfileRow {
   role: string;
   full_name: string | null;
   avatar_url: string | null;
+  email_verified: boolean;
+  otp_required: boolean;
+  otp_verified_at: string | null;
   created_at: string;
 }
 
@@ -21,4 +24,6 @@ export interface CurrentUser {
   role: BackendRole;
   fullName: string | null;
   avatar: string | null;
+  emailVerified: boolean;
+  otpRequired: boolean;
 }

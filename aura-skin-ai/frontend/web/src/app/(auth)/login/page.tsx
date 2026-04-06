@@ -20,12 +20,9 @@ import {
   messageForOAuthInitError,
   OAUTH_NOT_CONFIGURED_USER_MESSAGE,
 } from "@/lib/supabase";
-import {
-  authAppleOAuthWhenGmailOnly,
-  authEmailOtpRequired,
-  authGmailOnly,
-} from "@/lib/auth-flags";
+import { authAppleOAuthWhenGmailOnly, authEmailOtpRequired, authGmailOnly } from "@/lib/auth-flags";
 import { loginOtpStart, loginOtpComplete, loginOtpResend } from "@/services/apiAuth";
+import { OtpModal } from "@/components/auth/OtpModal";
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -107,7 +104,8 @@ function LoginForm() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [roleRequestPending, setRoleRequestPending] = useState(false);
-  const [step, setStep] = useState<"form" | "otp">("form");
+  const [step, setStep] = useState<"form" | "otp">("form"); // Keep for legacy but we'll use modal
+  const [isOtpModalOpen, setIsOtpModalOpen] = useState(false);
   const [challengeId, setChallengeId] = useState<string | null>(null);
   const [otpCode, setOtpCode] = useState("");
   const [otpSubmitting, setOtpSubmitting] = useState(false);
@@ -272,6 +270,12 @@ function LoginForm() {
         return;
       }
 
+      if ((payload as any)?.otp_required && (payload as any).challengeId) {
+        setChallengeId((payload as any).challengeId);
+        setIsOtpModalOpen(true);
+        return;
+      }
+
       if (payload?.accessToken) {
         await finalizeSession({
           accessToken: payload.accessToken,
@@ -294,15 +298,11 @@ function LoginForm() {
     }
   };
 
-  const onVerifyOtp = async () => {
-    if (!challengeId || otpCode.trim().length < 6) {
-      setApiError("Enter the 6-digit code from your email.");
-      return;
-    }
-    setOtpSubmitting(true);
+  const onVerifyOtp = async (code: string) => {
+    if (!challengeId || code.trim().length < 6) return;
     setApiError(null);
     try {
-      const payload = await loginOtpComplete(challengeId, otpCode.trim());
+      const payload = await loginOtpComplete(challengeId, code.trim());
       if (payload.oauthOtpCompleted && payload.accessToken) {
         const bridge = new URL("/oauth/bridge", window.location.origin);
         bridge.searchParams.set("token", payload.accessToken);
@@ -314,9 +314,8 @@ function LoginForm() {
         router.replace(bridge.toString());
         return;
       }
-      setStep("form");
+      setIsOtpModalOpen(false);
       setChallengeId(null);
-      setOtpCode("");
       await finalizeSession({
         accessToken: payload.accessToken,
         sessionToken: payload.sessionToken,
@@ -324,20 +323,13 @@ function LoginForm() {
         requested_role: payload.requested_role,
       });
     } catch (err) {
-      setApiError(err instanceof Error ? err.message : "Verification failed.");
-    } finally {
-      setOtpSubmitting(false);
+      throw err; // Propagate to modal's error handler
     }
   };
 
   const onResendOtp = async () => {
-    if (!challengeId || resendCooldown > 0) return;
-    try {
-      await loginOtpResend(challengeId);
-      setResendCooldown(RESEND_COOLDOWN_SEC);
-    } catch (err) {
-      setApiError(err instanceof Error ? err.message : "Could not resend code.");
-    }
+    if (!challengeId) return;
+    await loginOtpResend(challengeId);
   };
 
   const onChangeEmail = () => {
@@ -357,53 +349,18 @@ function LoginForm() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {authEmailOtpRequired && step === "otp" && (
-          <Card className="mb-6 border border-border/60 bg-card/40">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base font-heading">Verify your email</CardTitle>
-              <CardDescription className="text-xs">
-                We sent a 6-digit code to your inbox. This confirms you can receive email (deliverability only — not
-                a Google account endorsement).
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="otp">Verification code</Label>
-                <Input
-                  id="otp"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  placeholder="000000"
-                  maxLength={8}
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
-                />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" onClick={() => void onVerifyOtp()} disabled={otpSubmitting}>
-                  {otpSubmitting ? "Verifying..." : "Verify and sign in"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={resendCooldown > 0}
-                  onClick={() => void onResendOtp()}
-                >
-                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend code"}
-                </Button>
-                <Button type="button" variant="ghost" onClick={onChangeEmail}>
-                  Use different account
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        <OtpModal
+          isOpen={isOtpModalOpen}
+          email={watch("email")}
+          onVerify={onVerifyOtp}
+          onResend={onResendOtp}
+          onClose={() => setIsOtpModalOpen(false)}
+        />
 
         <form
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            if (authEmailOtpRequired && step === "otp") return;
             void handleSubmit(onSubmit)(event);
           }}
           className="space-y-4"
