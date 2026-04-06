@@ -157,6 +157,7 @@ function CheckoutContent() {
         const { checkout_url: checkoutUrl } = await createCheckoutSession({
           items: itemsPayload,
           customer_name: customerName,
+          shipping_address: fullAddress,
         });
         if (checkoutUrl) {
           window.location.href = checkoutUrl;

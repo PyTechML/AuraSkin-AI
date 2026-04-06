@@ -1,8 +1,9 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { useCartStore } from "@/store/cartStore";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Package, Truck } from "lucide-react";
@@ -12,6 +13,15 @@ function SuccessContent() {
   const method = searchParams.get("method");
   const orderId = searchParams.get("orderId");
   const isCod = method === "cod";
+  const clearCart = useCartStore((s) => s.clear);
+  const didClear = useRef(false);
+
+  useEffect(() => {
+    if (!didClear.current) {
+      didClear.current = true;
+      clearCart();
+    }
+  }, [clearCart]);
 
   return (
     <div className="space-y-6">

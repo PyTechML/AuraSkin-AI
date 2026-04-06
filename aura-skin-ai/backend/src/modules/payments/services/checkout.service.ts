@@ -49,7 +49,8 @@ export class CheckoutService {
     lines: LineInput[],
     successUrl: string,
     cancelUrl: string,
-    customerNameHint?: string | null
+    customerNameHint?: string | null,
+    shippingAddress?: string | null
   ): Promise<{ checkout_url: string }> {
     const stripe = this.stripeService.getClient();
     const supabase = getSupabaseClient();
@@ -57,6 +58,7 @@ export class CheckoutService {
     const storeId = resolved[0].storeId;
     const amount = this.sumAmount(resolved);
     const customerName = await this.resolveCustomerName(userId, customerNameHint);
+    const ship = shippingAddress?.trim() ?? "";
 
     const { data: order, error: orderError } = await supabase
       .from("orders")
@@ -67,6 +69,7 @@ export class CheckoutService {
         payment_status: "pending",
         total_amount: amount,
         ...(customerName ? { customer_name: customerName } : {}),
+        ...(ship ? { shipping_address: ship } : {}),
       } as any)
       .select()
       .single();

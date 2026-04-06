@@ -158,36 +158,39 @@ export class WebhooksService {
     metadata: Record<string, string>,
     amount: number
   ): Promise<void> {
-    const storeId = metadata.store_id;
-    const productId = metadata.product_id;
-    const quantity = parseInt(metadata.quantity ?? "1", 10);
-    const unitPrice = parseFloat(metadata.unit_price ?? "0");
-    const productName = metadata.product_name ?? "";
-
-    if (!storeId || !productId) return;
-
     const supabase = getSupabaseClient();
+    const storeId = metadata.store_id;
+    const existingOrderId = metadata.order_id;
     const customerName = await this.resolveOrderCustomerName(userId);
     const namePatch = customerName ? { customer_name: customerName } : {};
-    const existingOrderId = metadata.order_id;
+
     let order: { id: string } | null = null;
     let orderError: { message?: string } | null = null;
+
     if (existingOrderId) {
+      // Order + order_items were pre-created during checkout — just confirm.
       const { data: updatedOrder, error: updatedError } = await supabase
         .from("orders")
         .update({
           order_status: "confirmed",
+          payment_status: "completed",
           total_amount: amount,
           ...namePatch,
         })
         .eq("id", existingOrderId)
         .eq("user_id", userId)
-        .eq("store_id", storeId)
         .select("id")
         .single();
       order = (updatedOrder as { id: string } | null) ?? null;
       orderError = updatedError as { message?: string } | null;
     } else {
+      // Legacy / fallback: create a new order from session metadata.
+      const productId = metadata.product_id;
+      const quantity = parseInt(metadata.quantity ?? "1", 10);
+      const unitPrice = parseFloat(metadata.unit_price ?? "0");
+
+      if (!storeId || !productId) return;
+
       const { data: insertedOrder, error: insertedError } = await supabase
         .from("orders")
         .insert({
@@ -195,12 +198,22 @@ export class WebhooksService {
           store_id: storeId,
           total_amount: amount,
           order_status: "confirmed",
+          payment_status: "completed",
           ...namePatch,
         })
         .select("id")
         .single();
       order = (insertedOrder as { id: string } | null) ?? null;
       orderError = insertedError as { message?: string } | null;
+
+      if (order && !orderError) {
+        await supabase.from("order_items").insert({
+          order_id: order.id,
+          product_id: productId,
+          quantity,
+          price: unitPrice,
+        });
+      }
     }
 
     if (orderError || !order) {
@@ -209,15 +222,6 @@ export class WebhooksService {
         error: orderError?.message,
       });
       return;
-    }
-
-    if (!existingOrderId) {
-      await supabase.from("order_items").insert({
-        order_id: order.id,
-        product_id: productId,
-        quantity,
-        price: unitPrice,
-      });
     }
 
     await this.paymentsRepository.update(paymentId, {
@@ -233,30 +237,20 @@ export class WebhooksService {
     this.analytics
       .track("product_purchased", {
         user_id: userId,
-        store_id: storeId,
+        store_id: storeId ?? "",
         entity_type: "order",
         entity_id: order.id,
-        metadata: {
-          amount,
-          product_id: productId,
-          quantity,
-          unit_price: unitPrice,
-        },
+        metadata: { amount },
       })
       .catch(() => {});
 
     this.analytics
       .track("store_order_received", {
         user_id: userId,
-        store_id: storeId,
+        store_id: storeId ?? "",
         entity_type: "order",
         entity_id: order.id,
-        metadata: {
-          amount,
-          product_id: productId,
-          quantity,
-          unit_price: unitPrice,
-        },
+        metadata: { amount },
       })
       .catch(() => {});
 

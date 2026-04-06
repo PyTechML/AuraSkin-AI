@@ -71,7 +71,8 @@ export class CheckoutController {
       lines,
       successUrl,
       cancelUrl,
-      dto.customer_name
+      dto.customer_name,
+      dto.shipping_address
     );
     return formatSuccess(data);
   }

@@ -49,4 +49,8 @@ export class CreateCheckoutDto {
   @IsOptional()
   @IsString()
   customer_name?: string;
+
+  @IsOptional()
+  @IsString()
+  shipping_address?: string;
 }
