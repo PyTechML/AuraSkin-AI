@@ -17,7 +17,7 @@ export class PayoutsService {
   ) {
     const env = loadEnv();
     if (env.stripeSecretKey) {
-      this.stripe = new Stripe(env.stripeSecretKey, { apiVersion: "2026-02-25.clover" });
+      this.stripe = new Stripe(env.stripeSecretKey);
     }
   }
 
