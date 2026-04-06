@@ -46,7 +46,7 @@ export class ConsultationPaymentController {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const userId = user?.id ?? "";
     const baseUrl = resolveBaseUrl(req);
-    const successUrl = `${baseUrl}/payment/success`;
+    const successUrl = `${baseUrl}/payment/success?type=consultation`;
     const cancelUrl = `${baseUrl}/payment/cancel`;
     
     const data = await this.consultationPaymentService.createCheckoutSession(

@@ -37,6 +37,8 @@ function SuccessContent() {
   const searchParams = useSearchParams();
   const method = searchParams.get("method") ?? "";
   const orderId = searchParams.get("orderId");
+  const type = searchParams.get("type");
+  const isConsultation = type === "consultation";
   const isCod = method === "cod";
   const isCard = method === "card";
   const isBankTransfer = method === "bank_transfer";
@@ -53,17 +55,29 @@ function SuccessContent() {
 
   const methodInfo = METHOD_LABELS[method] ?? METHOD_LABELS.card;
 
-  const heading = isCod
-    ? "Order Placed"
-    : "Payment Successful";
+  const heading = isConsultation
+    ? "Payment Successful"
+    : isCod
+      ? "Order Placed"
+      : "Payment Successful";
 
-  const mainMessage = isCod
-    ? "Your Cash on Delivery order has been placed!"
-    : isCard
-      ? "Your payment was successful! Your order has been placed."
-      : isBankTransfer
-        ? "Your bank transfer payment was successful! Your order has been placed."
-        : "Thank you for your payment! Your order has been placed.";
+  const mainMessage = isConsultation
+    ? "Your consultation has been successfully booked."
+    : isCod
+      ? "Your Cash on Delivery order has been placed!"
+      : isCard
+        ? "Your payment was successful! Your order has been placed."
+        : isBankTransfer
+          ? "Your bank transfer payment was successful! Your order has been placed."
+          : "Thank you for your payment! Your order has been placed.";
+
+  const subtext = isConsultation
+    ? "The dermatologist will review your request and connect with you at the scheduled time."
+    : methodInfo.description;
+
+  const infoBlock = isConsultation
+    ? "Consultation confirmed. Payment processed securely via Stripe."
+    : methodInfo.label;
 
   return (
     <div className="space-y-6">
@@ -78,10 +92,10 @@ function SuccessContent() {
 
           <div className="space-y-2">
             <p className="text-lg font-medium">{mainMessage}</p>
-            <p className="text-muted-foreground">{methodInfo.description}</p>
+            <p className="text-muted-foreground">{subtext}</p>
           </div>
 
-          {orderId && (
+          {!isConsultation && orderId && (
             <div className="inline-flex items-center gap-2 rounded-lg bg-muted/50 px-4 py-2 text-sm">
               <Package className="h-4 w-4 text-muted-foreground" />
               <span className="text-muted-foreground">Order ID:</span>
@@ -94,23 +108,38 @@ function SuccessContent() {
           {isStripePayment && (
             <div className="inline-flex items-center gap-2 rounded-lg bg-muted/50 px-4 py-2 text-sm">
               {methodInfo.icon}
-              <span className="text-muted-foreground">Paid via:</span>
-              <span className="font-medium">{methodInfo.label}</span>
+              <span className="text-muted-foreground">{isConsultation ? "Status:" : "Paid via:"}</span>
+              <span className="font-medium">{infoBlock}</span>
             </div>
           )}
 
-          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Truck className="h-4 w-4" />
-            <span>Estimated delivery: 5-7 business days</span>
-          </div>
+          {!isConsultation && (
+            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Truck className="h-4 w-4" />
+              <span>Approvel with in 24hr.</span>
+            </div>
+          )}
 
           <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
-            <Button asChild>
-              <Link href="/orders">View Orders</Link>
-            </Button>
-            <Button variant="outline" asChild>
-              <Link href="/shop">Continue Shopping</Link>
-            </Button>
+            {isConsultation ? (
+              <>
+                <Button asChild>
+                  <Link href="/consultations">View Consultation</Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link href="/dashboard">Go to Dashboard</Link>
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button asChild>
+                  <Link href="/consultations">View Consultation</Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link href="/dashboard">Go to Dashboard</Link>
+                </Button>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>
