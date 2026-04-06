@@ -18,6 +18,10 @@ interface ResolvedLine {
 
 export interface PaymentMethodState {
   available: boolean;
+  code?:
+    | "BANK_TRANSFER_NOT_ENABLED"
+    | "BANK_TRANSFER_UNSUPPORTED_METHOD"
+    | "BANK_TRANSFER_STRIPE_CONFIG_ERROR";
   reason?: string;
   action?: string;
   fallback_method?: "card";
@@ -97,7 +101,7 @@ export class CheckoutService {
     const bankTransferCapability = this.stripeService.getBankTransferCapabilityState();
     if (paymentMethod === "bank_transfer" && !bankTransferCapability.available) {
       throw new BadRequestException({
-        code: "BANK_TRANSFER_NOT_ENABLED",
+        code: bankTransferCapability.code ?? "BANK_TRANSFER_NOT_ENABLED",
         message:
           bankTransferCapability.reason ??
           "Bank transfer is not enabled for hosted checkout in this environment. Use card checkout.",
@@ -178,7 +182,7 @@ export class CheckoutService {
       });
     }
 
-    const sessionParams: Stripe.Checkout.SessionCreateParams = {
+    const baseSessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: "payment",
       success_url: successUrl,
       cancel_url: cancelUrl,
@@ -198,24 +202,49 @@ export class CheckoutService {
       },
     };
 
-    if (paymentMethod === "bank_transfer") {
-      const method = this.stripeService.getConfiguredBankTransferCheckoutMethod();
-      if (!method) {
-        throw new BadRequestException({
-          code: "BANK_TRANSFER_NOT_ENABLED",
-          message:
-            "Bank transfer checkout method is not configured for this environment.",
-          action: "Select Credit / Debit Card and continue.",
-        });
-      }
-      sessionParams.payment_method_types = [method];
-    } else {
-      sessionParams.payment_method_types = ["card"];
-    }
-
-    const session = await stripe.checkout.sessions.create(sessionParams);
+    const session =
+      paymentMethod === "bank_transfer"
+        ? await this.createBankTransferCheckoutSession(stripe, baseSessionParams)
+        : await stripe.checkout.sessions.create({
+            ...baseSessionParams,
+            payment_method_types: ["card"],
+          });
 
     return { checkout_url: session.url ?? "" };
+  }
+
+  private async createBankTransferCheckoutSession(
+    stripe: Stripe,
+    baseSessionParams: Stripe.Checkout.SessionCreateParams
+  ): Promise<Stripe.Checkout.Session> {
+    const bankTransferConfig = this.stripeService.getBankTransferConfig();
+    if (!bankTransferConfig.available || !bankTransferConfig.method) {
+      throw new BadRequestException({
+        code: bankTransferConfig.code ?? "BANK_TRANSFER_STRIPE_CONFIG_ERROR",
+        message:
+          bankTransferConfig.reason ??
+          "Bank transfer is not enabled for hosted checkout in this environment.",
+        action:
+          bankTransferConfig.action ?? "Select Credit / Debit Card and continue.",
+      });
+    }
+
+    try {
+      return await stripe.checkout.sessions.create({
+        ...baseSessionParams,
+        payment_method_types: [bankTransferConfig.method],
+      });
+    } catch (error) {
+      throw new BadRequestException({
+        code: "BANK_TRANSFER_STRIPE_CONFIG_ERROR",
+        message:
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : "Unable to create Stripe bank transfer checkout session.",
+        action:
+          "Verify Stripe account settings for the configured bank transfer method and try again.",
+      });
+    }
   }
 
   /* ------------------------------------------------------------------ */

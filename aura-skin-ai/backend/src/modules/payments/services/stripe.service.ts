@@ -5,6 +5,14 @@ import Stripe from "stripe";
 export class StripeService {
   private stripe: Stripe | null = null;
   private readonly logger = new Logger(StripeService.name);
+  private readonly bankTransferMethodAliasMap: Record<
+    string,
+    Stripe.Checkout.SessionCreateParams.PaymentMethodType
+  > = {
+    us_bank_account: "us_bank_account",
+    bank_transfer: "us_bank_account",
+    ach: "us_bank_account",
+  };
   private readonly bankTransferMethodWhitelist = new Set<
     Stripe.Checkout.SessionCreateParams.PaymentMethodType
   >(["us_bank_account"]);
@@ -33,33 +41,30 @@ export class StripeService {
   }
 
   isBankTransferEnabled(): boolean {
-    const raw = process.env.STRIPE_ENABLE_BANK_TRANSFER?.trim().toLowerCase();
-    return raw === "true" && this.getConfiguredBankTransferCheckoutMethod() !== null;
+    return this.getBankTransferConfig().available;
   }
 
   getConfiguredBankTransferCheckoutMethod():
     | Stripe.Checkout.SessionCreateParams.PaymentMethodType
     | null {
-    const raw = process.env.STRIPE_BANK_TRANSFER_CHECKOUT_METHOD?.trim().toLowerCase();
-    if (!raw) return null;
-    if (
-      this.bankTransferMethodWhitelist.has(
-        raw as Stripe.Checkout.SessionCreateParams.PaymentMethodType
-      )
-    ) {
-      return raw as Stripe.Checkout.SessionCreateParams.PaymentMethodType;
-    }
-    return null;
+    return this.getBankTransferConfig().method;
   }
 
-  getBankTransferCapabilityState(): {
+  getBankTransferConfig(): {
     available: boolean;
+    method: Stripe.Checkout.SessionCreateParams.PaymentMethodType | null;
+    code?:
+      | "BANK_TRANSFER_NOT_ENABLED"
+      | "BANK_TRANSFER_UNSUPPORTED_METHOD"
+      | "BANK_TRANSFER_STRIPE_CONFIG_ERROR";
     reason?: string;
     action?: string;
   } {
     if (!this.isClientReady()) {
       return {
         available: false,
+        method: null,
+        code: "BANK_TRANSFER_STRIPE_CONFIG_ERROR",
         reason: "Stripe checkout is not configured on server.",
         action: "Set STRIPE_SECRET_KEY and restart backend.",
       };
@@ -70,16 +75,20 @@ export class StripeService {
     if (!enabledByFlag) {
       return {
         available: false,
+        method: null,
+        code: "BANK_TRANSFER_NOT_ENABLED",
         reason: "Bank transfer is disabled for this environment.",
         action:
           "Enable STRIPE_ENABLE_BANK_TRANSFER=true after Stripe account capability setup.",
       };
     }
 
-    const method = this.getConfiguredBankTransferCheckoutMethod();
-    if (!method) {
+    const rawMethod = process.env.STRIPE_BANK_TRANSFER_CHECKOUT_METHOD?.trim().toLowerCase();
+    if (!rawMethod) {
       return {
         available: false,
+        method: null,
+        code: "BANK_TRANSFER_UNSUPPORTED_METHOD",
         reason:
           "Bank transfer checkout method is not configured or unsupported for this deployment.",
         action:
@@ -87,7 +96,44 @@ export class StripeService {
       };
     }
 
-    return { available: true };
+    const normalizedMethod = this.bankTransferMethodAliasMap[rawMethod];
+    if (
+      !normalizedMethod ||
+      !this.bankTransferMethodWhitelist.has(normalizedMethod)
+    ) {
+      return {
+        available: false,
+        method: null,
+        code: "BANK_TRANSFER_UNSUPPORTED_METHOD",
+        reason:
+          "Bank transfer checkout method is not configured or unsupported for this deployment.",
+        action:
+          "Set STRIPE_BANK_TRANSFER_CHECKOUT_METHOD to a supported value (currently: us_bank_account).",
+      };
+    }
+
+    return {
+      available: true,
+      method: normalizedMethod,
+    };
+  }
+
+  getBankTransferCapabilityState(): {
+    available: boolean;
+    code?:
+      | "BANK_TRANSFER_NOT_ENABLED"
+      | "BANK_TRANSFER_UNSUPPORTED_METHOD"
+      | "BANK_TRANSFER_STRIPE_CONFIG_ERROR";
+    reason?: string;
+    action?: string;
+  } {
+    const config = this.getBankTransferConfig();
+    return {
+      available: config.available,
+      ...(config.code ? { code: config.code } : {}),
+      ...(config.reason ? { reason: config.reason } : {}),
+      ...(config.action ? { action: config.action } : {}),
+    };
   }
 
   getClient(): Stripe {
