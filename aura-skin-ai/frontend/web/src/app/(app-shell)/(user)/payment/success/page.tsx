@@ -123,18 +123,12 @@ function SuccessContent() {
           <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
             {isConsultation ? (
               <>
-                <Button asChild>
-                  <Link href="/consultations">View Consultation</Link>
-                </Button>
                 <Button variant="outline" asChild>
                   <Link href="/dashboard">Go to Dashboard</Link>
                 </Button>
               </>
             ) : (
               <>
-                <Button asChild>
-                  <Link href="/consultations">View Consultation</Link>
-                </Button>
                 <Button variant="outline" asChild>
                   <Link href="/dashboard">Go to Dashboard</Link>
                 </Button>
