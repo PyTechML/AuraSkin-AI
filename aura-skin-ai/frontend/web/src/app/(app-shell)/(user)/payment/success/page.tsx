@@ -24,7 +24,7 @@ const METHOD_LABELS: Record<string, { label: string; icon: React.ReactNode; desc
   bank_transfer: {
     label: "Bank Transfer",
     icon: <Building2 className="h-4 w-4 text-muted-foreground" />,
-    description: "Payment processed via bank transfer through Stripe.",
+    description: "Payment processed through Stripe checkout.",
   },
   cod: {
     label: "Cash on Delivery",

@@ -20,6 +20,23 @@ import { ConsultationPaymentDto } from "../dto/consultation-payment.dto";
 
 type CheckoutLineInput = { productId: string; quantity: number; storeId?: string };
 
+function resolveBaseUrl(req: Request): string {
+  const candidates = [req.headers.origin, req.headers.referer]
+    .map((v) => (typeof v === "string" ? v.trim() : ""))
+    .filter(Boolean);
+
+  for (const value of candidates) {
+    try {
+      const url = new URL(value);
+      return url.origin;
+    } catch {
+      // Ignore invalid candidate and try next.
+    }
+  }
+
+  return "http://localhost:3000";
+}
+
 function checkoutLinesFromDto(dto: CreateCheckoutDto): CheckoutLineInput[] {
   if (dto.items?.length) {
     return dto.items.map((i) => ({
@@ -58,11 +75,7 @@ export class CheckoutController {
   async createCheckout(@Req() req: Request, @Body() dto: CreateCheckoutDto) {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const userId = user?.id ?? "";
-    const baseUrl = (
-      req.headers.origin ??
-      req.headers.referer ??
-      "http://localhost:3000"
-    ).replace(/\/$/, "");
+    const baseUrl = resolveBaseUrl(req);
     const cancelUrl = `${baseUrl}/payment/cancel`;
     const paymentMethod = dto.payment_method ?? "card";
     const lines = checkoutLinesFromDto(dto);
@@ -103,11 +116,7 @@ export class CheckoutController {
   async consultation(@Req() req: Request, @Body() dto: ConsultationPaymentDto) {
     const user = (req as Request & { user?: AuthenticatedUser }).user;
     const userId = user?.id ?? "";
-    const baseUrl = (
-      req.headers.origin ??
-      req.headers.referer ??
-      "http://localhost:3000"
-    ).replace(/\/$/, "");
+    const baseUrl = resolveBaseUrl(req);
     const successUrl = `${baseUrl}/payment/success`;
     const cancelUrl = `${baseUrl}/payment/cancel`;
     const data = await this.checkoutService.createConsultationSession(

@@ -22,6 +22,18 @@ function formatNestMessage(raw: unknown): string {
   if (Array.isArray(raw)) {
     return raw.map((m) => String(m)).filter(Boolean).join("; ");
   }
+  if (raw && typeof raw === "object") {
+    const nested = raw as Record<string, unknown>;
+    const message =
+      (typeof nested.message === "string" && nested.message.trim()) ||
+      (typeof nested.error === "string" && nested.error.trim()) ||
+      "";
+    const action =
+      typeof nested.action === "string" && nested.action.trim()
+        ? ` ${nested.action.trim()}`
+        : "";
+    return `${message}${action}`.trim();
+  }
   if (typeof raw === "string" && raw.trim()) return raw.trim();
   return "";
 }
@@ -32,7 +44,16 @@ function getErrorMessage(res: Response, json: Record<string, unknown>): string {
   }
   const message =
     formatNestMessage(json?.message) || `Request failed: ${res.status}`;
-  const code = typeof json?.code === "string" ? json.code : null;
+  const nestedMessage =
+    json?.message && typeof json.message === "object"
+      ? (json.message as Record<string, unknown>)
+      : null;
+  const code =
+    typeof json?.code === "string"
+      ? json.code
+      : typeof nestedMessage?.code === "string"
+        ? nestedMessage.code
+        : null;
   if (code) {
     return `[${code}] ${message} (status=${res.status})`;
   }

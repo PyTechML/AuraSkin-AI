@@ -10,6 +10,7 @@ import {
   createCodPayment,
   getPaymentMethods,
   getProductById,
+  type PaymentMethodsResponse,
 } from "@/services/api";
 import { usePanelToast } from "@/components/panel/PanelToast";
 import type { Product } from "@/types";
@@ -56,11 +57,8 @@ function CheckoutContent() {
     zip: "",
   });
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod | null>(null);
-  const [availableMethods, setAvailableMethods] = useState<{
-    card: boolean;
-    bank_transfer: boolean;
-    cod: boolean;
-  } | null>(null);
+  const [availableMethods, setAvailableMethods] = useState<PaymentMethodsResponse | null>(null);
+  const [paymentMethodsError, setPaymentMethodsError] = useState<string | null>(null);
   const [checkoutItems, setCheckoutItems] = useState<
     { product: Product; quantity: number }[]
   >([]);
@@ -68,12 +66,25 @@ function CheckoutContent() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const loadPaymentMethods = useCallback(async () => {
+    try {
+      setPaymentMethodsError(null);
+      const methods = await getPaymentMethods();
+      setAvailableMethods(methods);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : "Unable to load payment methods right now.";
+      setPaymentMethodsError(msg);
+    }
+  }, []);
+
   useEffect(() => {
     const load = async () => {
       setLoadError(null);
       try {
-        const [methods] = await Promise.all([getPaymentMethods()]);
-        setAvailableMethods(methods);
+        await loadPaymentMethods();
 
         if (mode === "direct" && directProductId) {
           const product = await getProductById(directProductId);
@@ -103,7 +114,7 @@ function CheckoutContent() {
       }
     };
     load();
-  }, [mode, directProductId, directQty, items]);
+  }, [mode, directProductId, directQty, items, loadPaymentMethods]);
 
   useEffect(() => {
     if (
@@ -116,6 +127,19 @@ function CheckoutContent() {
       router.replace("/cart");
     }
   }, [loading, mode, items.length, checkoutItems.length, loadError, router]);
+
+  useEffect(() => {
+    if (!selectedMethod || !availableMethods) return;
+    if (selectedMethod === "card" && !availableMethods.card) {
+      setSelectedMethod(null);
+    }
+    if (selectedMethod === "bank_transfer" && !availableMethods.bank_transfer) {
+      setSelectedMethod(null);
+    }
+    if (selectedMethod === "cod" && !availableMethods.cod) {
+      setSelectedMethod(null);
+    }
+  }, [selectedMethod, availableMethods]);
 
   const subtotal = checkoutItems.reduce(
     (sum, { product, quantity }) => sum + (product.price ?? 0) * quantity,
@@ -263,6 +287,8 @@ function CheckoutContent() {
     bank_transfer: "Bank Transfer",
     cod: "Cash on Delivery",
   };
+  const showBankTransferAsSelectable = availableMethods?.bank_transfer === true;
+  const bankTransferDetails = availableMethods?.details?.bank_transfer;
 
   return (
     <div className="space-y-8">
@@ -391,20 +417,40 @@ function CheckoutContent() {
                   description="Pay securely via Stripe. Supports Visa, Mastercard, and more."
                   icon={<CreditCard className="h-6 w-6" />}
                   available={availableMethods?.card ?? false}
+                  unavailableReason={availableMethods?.details?.card?.reason}
+                  unavailableAction={availableMethods?.details?.card?.action}
                   selected={selectedMethod === "card"}
                   onSelect={() => setSelectedMethod("card")}
                 />
 
                 {/* Bank Transfer option */}
-                <PaymentMethodOption
-                  method="bank_transfer"
-                  label="Bank Transfer"
-                  description="Pay via bank transfer through Stripe's secure payment page."
-                  icon={<Building2 className="h-6 w-6" />}
-                  available={availableMethods?.bank_transfer ?? false}
-                  selected={selectedMethod === "bank_transfer"}
-                  onSelect={() => setSelectedMethod("bank_transfer")}
-                />
+                {showBankTransferAsSelectable ? (
+                  <PaymentMethodOption
+                    method="bank_transfer"
+                    label="Bank Transfer"
+                    description="Pay via bank transfer through Stripe's secure payment page."
+                    icon={<Building2 className="h-6 w-6" />}
+                    available
+                    unavailableReason={bankTransferDetails?.reason}
+                    unavailableAction={bankTransferDetails?.action}
+                    selected={selectedMethod === "bank_transfer"}
+                    onSelect={() => setSelectedMethod("bank_transfer")}
+                  />
+                ) : (
+                  <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
+                    <p className="text-sm font-medium flex items-center gap-2">
+                      <Building2 className="h-4 w-4 text-muted-foreground" />
+                      Bank Transfer (Coming soon)
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {bankTransferDetails?.reason ??
+                        "Bank transfer is currently unavailable in this environment."}
+                      {bankTransferDetails?.action
+                        ? ` ${bankTransferDetails.action}`
+                        : ""}
+                    </p>
+                  </div>
+                )}
 
                 {/* COD option */}
                 <PaymentMethodOption
@@ -413,9 +459,25 @@ function CheckoutContent() {
                   description="Pay when your order is delivered to your doorstep."
                   icon={<Banknote className="h-6 w-6" />}
                   available={availableMethods?.cod ?? true}
+                  unavailableReason={availableMethods?.details?.cod?.reason}
+                  unavailableAction={availableMethods?.details?.cod?.action}
                   selected={selectedMethod === "cod"}
                   onSelect={() => setSelectedMethod("cod")}
                 />
+
+                {paymentMethodsError && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <p>{paymentMethodsError}</p>
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="h-auto p-0 mt-1 text-amber-900"
+                      onClick={loadPaymentMethods}
+                    >
+                      Retry payment methods
+                    </Button>
+                  </div>
+                )}
 
                 {availableMethods && !availableMethods.card && !availableMethods.bank_transfer && (
                   <p className="text-xs text-amber-600 text-center pt-1">
@@ -562,6 +624,8 @@ function PaymentMethodOption({
   description,
   icon,
   available,
+  unavailableReason,
+  unavailableAction,
   selected,
   onSelect,
 }: {
@@ -570,6 +634,8 @@ function PaymentMethodOption({
   description: string;
   icon: React.ReactNode;
   available: boolean;
+  unavailableReason?: string;
+  unavailableAction?: string;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -603,7 +669,8 @@ function PaymentMethodOption({
           <p className="text-sm text-muted-foreground">{description}</p>
           {!available && (
             <p className="text-xs text-destructive mt-1">
-              Currently unavailable
+              {unavailableReason || "Currently unavailable"}
+              {unavailableAction ? ` ${unavailableAction}` : ""}
             </p>
           )}
         </div>

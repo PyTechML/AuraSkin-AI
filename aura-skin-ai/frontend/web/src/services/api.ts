@@ -629,12 +629,25 @@ export type CheckoutLinePayload = {
   store_id?: string;
 };
 
-export async function getPaymentMethods(): Promise<{
+export type PaymentMethodDetails = {
+  available: boolean;
+  reason?: string;
+  action?: string;
+  fallback_method?: "card";
+};
+
+export type PaymentMethodsResponse = {
   card: boolean;
   bank_transfer: boolean;
   cod: boolean;
-}> {
-  const fallback = { card: false, bank_transfer: false, cod: true };
+  details?: {
+    card?: PaymentMethodDetails;
+    bank_transfer?: PaymentMethodDetails;
+    cod?: PaymentMethodDetails;
+  };
+};
+
+export async function getPaymentMethods(): Promise<PaymentMethodsResponse> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(`${API_BASE}/api/payments/payment-methods`, {
@@ -642,9 +655,18 @@ export async function getPaymentMethods(): Promise<{
       });
       if (res.ok) {
         const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-        return (json?.data ?? json) as { card: boolean; bank_transfer: boolean; cod: boolean };
+        return (json?.data ?? json) as PaymentMethodsResponse;
+      }
+      const errorJson = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      const message = (typeof errorJson?.message === "string" && errorJson.message) || `Request failed: ${res.status}`;
+      if (attempt === 1) {
+        throw new Error(`${message} (status=${res.status})`);
       }
     } catch (err) {
+      if (attempt === 1) {
+        const message = err instanceof Error && err.message ? err.message : "Unable to load payment methods.";
+        throw new Error(message);
+      }
       if (process.env.NODE_ENV === "development") {
         // eslint-disable-next-line no-console
         console.error("[PaymentMethods] Backend unreachable:", err);
@@ -652,7 +674,7 @@ export async function getPaymentMethods(): Promise<{
     }
     if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
   }
-  return fallback;
+  throw new Error("Unable to load payment methods.");
 }
 
 export async function createCheckoutSession(payload: {

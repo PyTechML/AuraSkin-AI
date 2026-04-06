@@ -16,6 +16,13 @@ interface ResolvedLine {
   storeId: string;
 }
 
+export interface PaymentMethodState {
+  available: boolean;
+  reason?: string;
+  action?: string;
+  fallback_method?: "card";
+}
+
 const TAX_RATE = 0.08;
 const SHIPPING_FEE = 5.99;
 const FREE_SHIPPING_THRESHOLD = 50;
@@ -36,12 +43,41 @@ export class CheckoutService {
     card: boolean;
     bank_transfer: boolean;
     cod: boolean;
+    details?: {
+      card: PaymentMethodState;
+      bank_transfer: PaymentMethodState;
+      cod: PaymentMethodState;
+    };
   } {
-    const stripeReady = this.stripeService.isConfigured();
+    const stripeReady = this.stripeService.isClientReady();
+    const bankTransferCapability = this.stripeService.getBankTransferCapabilityState();
+    const cardState: PaymentMethodState = stripeReady
+      ? { available: true }
+      : {
+          available: false,
+          reason: "Stripe checkout is not configured on server.",
+          action: "Set STRIPE_SECRET_KEY and restart backend.",
+        };
+    const bankTransferState: PaymentMethodState = bankTransferCapability.available
+      ? { available: true }
+      : {
+          available: false,
+          reason: bankTransferCapability.reason,
+          action:
+            bankTransferCapability.action ?? "Use card checkout while bank transfer is unavailable.",
+          fallback_method: "card",
+        };
+    const codState: PaymentMethodState = { available: true };
+
     return {
-      card: stripeReady,
-      bank_transfer: stripeReady,
+      card: cardState.available,
+      bank_transfer: bankTransferState.available,
       cod: true,
+      details: {
+        card: cardState,
+        bank_transfer: bankTransferState,
+        cod: codState,
+      },
     };
   }
 
@@ -58,6 +94,18 @@ export class CheckoutService {
     shippingAddress?: string | null,
     paymentMethod: "card" | "bank_transfer" = "card"
   ): Promise<{ checkout_url: string }> {
+    const bankTransferCapability = this.stripeService.getBankTransferCapabilityState();
+    if (paymentMethod === "bank_transfer" && !bankTransferCapability.available) {
+      throw new BadRequestException({
+        code: "BANK_TRANSFER_NOT_ENABLED",
+        message:
+          bankTransferCapability.reason ??
+          "Bank transfer is not enabled for hosted checkout in this environment. Use card checkout.",
+        action:
+          bankTransferCapability.action ?? "Select Credit / Debit Card and continue.",
+      });
+    }
+
     const stripe = this.stripeService.getClient();
     const supabase = getSupabaseClient();
     const resolved = await this.resolveCheckoutLines(lines);
@@ -150,12 +198,20 @@ export class CheckoutService {
       },
     };
 
-    // Option A: Both card and bank_transfer use Stripe Card Checkout.
-    // The customer_balance + us_bank_transfer approach requires Dashboard
-    // configuration that isn't universally available in test mode.
-    // The metadata.payment_method field preserves the user's selection for
-    // order records and invoice emails.
-    sessionParams.payment_method_types = ["card"];
+    if (paymentMethod === "bank_transfer") {
+      const method = this.stripeService.getConfiguredBankTransferCheckoutMethod();
+      if (!method) {
+        throw new BadRequestException({
+          code: "BANK_TRANSFER_NOT_ENABLED",
+          message:
+            "Bank transfer checkout method is not configured for this environment.",
+          action: "Select Credit / Debit Card and continue.",
+        });
+      }
+      sessionParams.payment_method_types = [method];
+    } else {
+      sessionParams.payment_method_types = ["card"];
+    }
 
     const session = await stripe.checkout.sessions.create(sessionParams);
 
