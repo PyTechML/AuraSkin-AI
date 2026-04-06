@@ -629,18 +629,24 @@ export type CheckoutLinePayload = {
   store_id?: string;
 };
 
+export async function getPaymentMethods(): Promise<{
+  card: boolean;
+  bank_transfer: boolean;
+  cod: boolean;
+}> {
+  const res = await fetch(`${API_BASE}/api/payments/payment-methods`, {
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) return { card: false, bank_transfer: false, cod: true };
+  return (json?.data ?? json) as { card: boolean; bank_transfer: boolean; cod: boolean };
+}
+
 export async function createCheckoutSession(payload: {
   items: CheckoutLinePayload[];
   customer_name?: string;
 }): Promise<{ checkout_url: string }> {
   return await apiPost("/payments/create-checkout", payload);
-}
-
-export async function createUpiPayment(payload: {
-  items: CheckoutLinePayload[];
-  customer_name?: string;
-}): Promise<{ upi_url: string; payment_id: string; amount: number }> {
-  return await apiPost("/payments/upi", payload);
 }
 
 export async function createCodPayment(payload: {
