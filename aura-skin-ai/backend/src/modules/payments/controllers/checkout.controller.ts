@@ -63,16 +63,17 @@ export class CheckoutController {
       req.headers.referer ??
       "http://localhost:3000"
     ).replace(/\/$/, "");
-    const successUrl = `${baseUrl}/payment/success`;
     const cancelUrl = `${baseUrl}/payment/cancel`;
+    const paymentMethod = dto.payment_method ?? "card";
     const lines = checkoutLinesFromDto(dto);
     const data = await this.checkoutService.createStripeCheckout(
       userId,
       lines,
-      successUrl,
+      baseUrl,
       cancelUrl,
       dto.customer_name,
-      dto.shipping_address
+      dto.shipping_address,
+      paymentMethod
     );
     return formatSuccess(data);
   }

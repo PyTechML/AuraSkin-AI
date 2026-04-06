@@ -2,6 +2,7 @@ import { Type } from "class-transformer";
 import {
   IsString,
   IsInt,
+  IsIn,
   Min,
   IsOptional,
   IsArray,
@@ -53,4 +54,9 @@ export class CreateCheckoutDto {
   @IsOptional()
   @IsString()
   shipping_address?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(["card", "bank_transfer"])
+  payment_method?: "card" | "bank_transfer";
 }

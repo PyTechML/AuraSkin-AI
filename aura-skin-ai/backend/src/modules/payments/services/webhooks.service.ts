@@ -87,13 +87,16 @@ export class WebhooksService {
       return;
     }
 
+    const resolvedPaymentMethod =
+      (metadata.payment_method as string) || "card";
+
     const payment = await this.paymentsRepository.create({
       user_id: userId,
       amount,
       currency: (session.currency ?? "usd").toLowerCase(),
       payment_status: "completed",
       stripe_payment_id: paymentIntentId ?? session.id,
-      payment_method: "card",
+      payment_method: resolvedPaymentMethod,
     });
     if (!payment) {
       await this.paymentAuditRepository.log("checkout.session.completed.payment_insert_failed", {

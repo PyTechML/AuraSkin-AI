@@ -4,6 +4,7 @@ import { EventsService } from "../../notifications/services/events.service";
 import { AnalyticsService } from "../../analytics/analytics.service";
 import { persistConsultationAndBookSlot } from "./consultation-booking.helper";
 import { StripeService } from "./stripe.service";
+import type Stripe from "stripe";
 
 type LineInput = { productId: string; quantity: number; storeId?: string };
 
@@ -14,6 +15,10 @@ interface ResolvedLine {
   productName: string;
   storeId: string;
 }
+
+const TAX_RATE = 0.08;
+const SHIPPING_FEE = 5.99;
+const FREE_SHIPPING_THRESHOLD = 50;
 
 @Injectable()
 export class CheckoutService {
@@ -47,16 +52,20 @@ export class CheckoutService {
   async createStripeCheckout(
     userId: string,
     lines: LineInput[],
-    successUrl: string,
+    baseUrl: string,
     cancelUrl: string,
     customerNameHint?: string | null,
-    shippingAddress?: string | null
+    shippingAddress?: string | null,
+    paymentMethod: "card" | "bank_transfer" = "card"
   ): Promise<{ checkout_url: string }> {
     const stripe = this.stripeService.getClient();
     const supabase = getSupabaseClient();
     const resolved = await this.resolveCheckoutLines(lines);
     const storeId = resolved[0].storeId;
-    const amount = this.sumAmount(resolved);
+    const subtotal = this.sumAmount(resolved);
+    const tax = Math.round(subtotal * TAX_RATE * 100) / 100;
+    const shipping = subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE;
+    const totalAmount = Math.round((subtotal + tax + shipping) * 100) / 100;
     const customerName = await this.resolveCustomerName(userId, customerNameHint);
     const ship = shippingAddress?.trim() ?? "";
 
@@ -67,7 +76,7 @@ export class CheckoutService {
         store_id: storeId,
         order_status: "pending",
         payment_status: "pending",
-        total_amount: amount,
+        total_amount: totalAmount,
         ...(customerName ? { customer_name: customerName } : {}),
         ...(ship ? { shipping_address: ship } : {}),
       } as any)
@@ -83,31 +92,85 @@ export class CheckoutService {
     const orderId = (order as { id: string }).id;
     await this.insertOrderLines(orderId, resolved);
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      client_reference_id: userId,
-      line_items: resolved.map((l) => ({
+    const successUrl =
+      `${baseUrl}/payment/success` +
+      `?method=${encodeURIComponent(paymentMethod)}` +
+      `&orderId=${encodeURIComponent(orderId)}` +
+      `&session_id={CHECKOUT_SESSION_ID}`;
+
+    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] =
+      resolved.map((l) => ({
         price_data: {
           currency: "usd",
           product_data: { name: l.productName },
           unit_amount: Math.round(l.unitPrice * 100),
         },
         quantity: l.quantity,
-      })),
+      }));
+
+    if (tax > 0) {
+      lineItems.push({
+        price_data: {
+          currency: "usd",
+          product_data: { name: "Tax (8%)" },
+          unit_amount: Math.round(tax * 100),
+        },
+        quantity: 1,
+      });
+    }
+
+    if (shipping > 0) {
+      lineItems.push({
+        price_data: {
+          currency: "usd",
+          product_data: { name: "Shipping" },
+          unit_amount: Math.round(shipping * 100),
+        },
+        quantity: 1,
+      });
+    }
+
+    const sessionParams: Stripe.Checkout.SessionCreateParams = {
+      mode: "payment",
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: userId,
+      line_items: lineItems,
       metadata: {
         type: "order",
         order_id: orderId,
         user_id: userId,
         store_id: storeId,
-        total_amount: String(amount),
+        total_amount: String(totalAmount),
+        payment_method: paymentMethod,
         product_name: resolved
           .map((l) => l.productName)
           .join(", ")
           .slice(0, 500),
       },
-    });
+    };
+
+    if (paymentMethod === "bank_transfer") {
+      const stripeCustomerId = await this.resolveStripeCustomer(
+        stripe,
+        userId,
+        customerName
+      );
+      sessionParams.customer = stripeCustomerId;
+      sessionParams.payment_method_types = ["customer_balance", "card"];
+      sessionParams.payment_method_options = {
+        customer_balance: {
+          funding_type: "bank_transfer",
+          bank_transfer: {
+            type: "us_bank_transfer",
+          },
+        },
+      };
+    } else {
+      sessionParams.payment_method_types = ["card"];
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionParams);
 
     return { checkout_url: session.url ?? "" };
   }
@@ -270,6 +333,40 @@ export class CheckoutService {
   /* ------------------------------------------------------------------ */
   /*  Private helpers                                                   */
   /* ------------------------------------------------------------------ */
+
+  private async resolveStripeCustomer(
+    stripe: Stripe,
+    userId: string,
+    customerName?: string
+  ): Promise<string> {
+    const supabase = getSupabaseClient();
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("email, full_name")
+      .eq("id", userId)
+      .maybeSingle();
+
+    const email =
+      (profile as { email?: string | null } | null)?.email?.trim() || undefined;
+    const name =
+      customerName ||
+      (profile as { full_name?: string | null } | null)?.full_name?.trim() ||
+      undefined;
+
+    if (email) {
+      const existing = await stripe.customers.list({ email, limit: 1 });
+      if (existing.data.length > 0) {
+        return existing.data[0].id;
+      }
+    }
+
+    const customer = await stripe.customers.create({
+      ...(email ? { email } : {}),
+      ...(name ? { name } : {}),
+      metadata: { supabase_user_id: userId },
+    });
+    return customer.id;
+  }
 
   private async validateSlot(
     supabase: ReturnType<typeof getSupabaseClient>,

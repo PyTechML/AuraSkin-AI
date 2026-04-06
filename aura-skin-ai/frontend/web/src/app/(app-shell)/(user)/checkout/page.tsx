@@ -158,6 +158,7 @@ function CheckoutContent() {
           items: itemsPayload,
           customer_name: customerName,
           shipping_address: fullAddress,
+          payment_method: selectedMethod,
         });
         if (checkoutUrl) {
           window.location.href = checkoutUrl;

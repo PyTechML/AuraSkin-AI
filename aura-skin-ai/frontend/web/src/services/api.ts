@@ -656,6 +656,7 @@ export async function createCheckoutSession(payload: {
   items: CheckoutLinePayload[];
   customer_name?: string;
   shipping_address?: string;
+  payment_method?: "card" | "bank_transfer";
 }): Promise<{ checkout_url: string }> {
   return await apiPost("/payments/create-checkout", payload);
 }
