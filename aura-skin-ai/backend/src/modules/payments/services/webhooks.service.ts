@@ -1,5 +1,4 @@
 import { Injectable, BadRequestException } from "@nestjs/common";
-import { loadEnv } from "../../../config/env";
 import { getSupabaseClient } from "../../../database/supabase.client";
 import Stripe from "stripe";
 import { LoggerService } from "../../../core/logger/logger.service";
@@ -9,38 +8,25 @@ import { EarningsRepository } from "../../partner/dermatologist/repositories/ear
 import { EventsService } from "../../notifications/services/events.service";
 import { AnalyticsService } from "../../analytics/analytics.service";
 import { persistConsultationAndBookSlot } from "./consultation-booking.helper";
+import { StripeService } from "./stripe.service";
 
 @Injectable()
 export class WebhooksService {
-  private stripe: Stripe | null = null;
-
   constructor(
     private readonly paymentsRepository: PaymentsRepository,
     private readonly paymentAuditRepository: PaymentAuditRepository,
     private readonly earningsRepository: EarningsRepository,
     private readonly eventsService: EventsService,
     private readonly logger: LoggerService,
-    private readonly analytics: AnalyticsService
-  ) {
-    const env = loadEnv();
-    if (env.stripeSecretKey) {
-      this.stripe = new Stripe(env.stripeSecretKey);
-    }
-  }
+    private readonly analytics: AnalyticsService,
+    private readonly stripeService: StripeService
+  ) {}
 
   constructEvent(
     payload: string | Buffer,
     signature: string
   ): Stripe.Event {
-    const env = loadEnv();
-    if (!env.stripeWebhookSecret || !this.stripe) {
-      throw new BadRequestException("Webhook secret not configured");
-    }
-    return this.stripe.webhooks.constructEvent(
-      payload,
-      signature,
-      env.stripeWebhookSecret
-    );
+    return this.stripeService.constructWebhookEvent(payload, signature);
   }
 
   async handleEvent(event: Stripe.Event): Promise<void> {

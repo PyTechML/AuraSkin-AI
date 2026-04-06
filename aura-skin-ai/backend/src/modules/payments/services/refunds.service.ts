@@ -1,25 +1,18 @@
 import { Injectable, BadRequestException } from "@nestjs/common";
-import { loadEnv } from "../../../config/env";
-import Stripe from "stripe";
 import { PaymentsRepository } from "../repositories/payments.repository";
 import { RefundsRepository } from "../repositories/refunds.repository";
 import { PaymentAuditRepository } from "../repositories/payment-audit.repository";
+import { StripeService } from "./stripe.service";
 import type { DbRefund } from "../../../database/models";
 
 @Injectable()
 export class RefundsService {
-  private stripe: Stripe | null = null;
-
   constructor(
     private readonly paymentsRepository: PaymentsRepository,
     private readonly refundsRepository: RefundsRepository,
-    private readonly paymentAuditRepository: PaymentAuditRepository
-  ) {
-    const env = loadEnv();
-    if (env.stripeSecretKey) {
-      this.stripe = new Stripe(env.stripeSecretKey, { apiVersion: "2026-02-25.clover" });
-    }
-  }
+    private readonly paymentAuditRepository: PaymentAuditRepository,
+    private readonly stripeService: StripeService
+  ) {}
 
   async requestRefund(
     userId: string,
@@ -59,13 +52,19 @@ export class RefundsService {
       return refund;
     }
     const payment = await this.paymentsRepository.findById(refund.payment_id);
-    if (!payment?.stripe_payment_id || !this.stripe) {
+    let stripe;
+    try {
+      stripe = this.stripeService.getClient();
+    } catch {
+      stripe = null;
+    }
+    if (!payment?.stripe_payment_id || !stripe) {
       await this.refundsRepository.updateRefundStatus(refundId, "failed");
       return this.refundsRepository.findById(refundId);
     }
     try {
       const refundAmountCents = Math.round(refund.refund_amount * 100);
-      const stripeRefund = await this.stripe.refunds.create({
+      const stripeRefund = await stripe.refunds.create({
         payment_intent: payment.stripe_payment_id,
         amount: refundAmountCents,
       });

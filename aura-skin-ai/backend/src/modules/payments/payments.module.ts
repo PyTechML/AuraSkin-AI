@@ -13,6 +13,7 @@ import { PaymentsRepository } from "./repositories/payments.repository";
 import { PayoutsRepository } from "./repositories/payouts.repository";
 import { RefundsRepository } from "./repositories/refunds.repository";
 import { PaymentAuditRepository } from "./repositories/payment-audit.repository";
+import { StripeService } from "./services/stripe.service";
 import { DermatologistModule } from "../partner/dermatologist/dermatologist.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 
@@ -26,6 +27,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     PayoutsController,
   ],
   providers: [
+    StripeService,
     PaymentsService,
     CheckoutService,
     WebhooksService,
@@ -36,6 +38,6 @@ import { NotificationsModule } from "../notifications/notifications.module";
     RefundsRepository,
     PaymentAuditRepository,
   ],
-  exports: [PaymentsService, RefundsService, PaymentsRepository],
+  exports: [PaymentsService, RefundsService, PaymentsRepository, StripeService],
 })
 export class PaymentsModule {}

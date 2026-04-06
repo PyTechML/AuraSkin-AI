@@ -1,30 +1,21 @@
 import { Injectable, BadRequestException } from "@nestjs/common";
-import { loadEnv } from "../../../config/env";
 import { getSupabaseClient } from "../../../database/supabase.client";
-import Stripe from "stripe";
 import { PayoutsRepository } from "../repositories/payouts.repository";
 import { PaymentAuditRepository } from "../repositories/payment-audit.repository";
+import { StripeService } from "./stripe.service";
 
 const PLATFORM_FEE_PERCENT = 10;
 
 @Injectable()
 export class PayoutsService {
-  private stripe: Stripe | null = null;
-
   constructor(
     private readonly payoutsRepository: PayoutsRepository,
-    private readonly paymentAuditRepository: PaymentAuditRepository
-  ) {
-    const env = loadEnv();
-    if (env.stripeSecretKey) {
-      this.stripe = new Stripe(env.stripeSecretKey);
-    }
-  }
+    private readonly paymentAuditRepository: PaymentAuditRepository,
+    private readonly stripeService: StripeService
+  ) {}
 
   async triggerStorePayout(storeId: string): Promise<{ payout_id: string; amount: number } | null> {
-    if (!this.stripe) {
-      throw new BadRequestException("Payment service is not configured");
-    }
+    const stripe = this.stripeService.getClient();
     const supabase = getSupabaseClient();
     const { data: orders } = await supabase
       .from("orders")
@@ -54,7 +45,7 @@ export class PayoutsService {
     const stripeAccountId = await this.getStoreStripeAccountId(storeId);
     if (stripeAccountId) {
       try {
-        const transfer = await this.stripe.transfers.create({
+        const transfer = await stripe.transfers.create({
           amount: Math.round(amount * 100),
           currency: "usd",
           destination: stripeAccountId,

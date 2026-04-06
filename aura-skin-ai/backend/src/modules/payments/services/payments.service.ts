@@ -1,22 +1,21 @@
 import { Injectable, BadRequestException } from "@nestjs/common";
-import { loadEnv } from "../../../config/env";
-import Stripe from "stripe";
+import { StripeService } from "./stripe.service";
 import { PaymentsRepository } from "../repositories/payments.repository";
 import type { DbPayment } from "../../../database/models";
 
 @Injectable()
 export class PaymentsService {
-  private stripe: Stripe | null = null;
+  constructor(
+    private readonly paymentsRepository: PaymentsRepository,
+    private readonly stripeService: StripeService
+  ) {}
 
-  constructor(private readonly paymentsRepository: PaymentsRepository) {
-    const env = loadEnv();
-    if (env.stripeSecretKey) {
-      this.stripe = new Stripe(env.stripeSecretKey, { apiVersion: "2026-02-25.clover" });
+  getStripe() {
+    try {
+      return this.stripeService.getClient();
+    } catch {
+      return null;
     }
-  }
-
-  getStripe(): Stripe | null {
-    return this.stripe;
   }
 
   async getHistory(userId: string): Promise<DbPayment[]> {
@@ -24,10 +23,8 @@ export class PaymentsService {
   }
 
   async confirmPayment(userId: string, paymentIntentId: string): Promise<DbPayment | null> {
-    if (!this.stripe) {
-      throw new BadRequestException("Payment service is not configured");
-    }
-    const paymentIntent = await this.stripe.paymentIntents.retrieve(paymentIntentId);
+    const stripe = this.stripeService.getClient();
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
     if (paymentIntent.status !== "succeeded") {
       return null;
     }

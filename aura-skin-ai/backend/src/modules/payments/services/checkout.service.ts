@@ -1,24 +1,17 @@
 import { Injectable, BadRequestException } from "@nestjs/common";
-import { loadEnv } from "../../../config/env";
 import { getSupabaseClient } from "../../../database/supabase.client";
 import { EventsService } from "../../notifications/services/events.service";
 import { AnalyticsService } from "../../analytics/analytics.service";
 import { persistConsultationAndBookSlot } from "./consultation-booking.helper";
-import Stripe from "stripe";
+import { StripeService } from "./stripe.service";
 
 @Injectable()
 export class CheckoutService {
-  private stripe: Stripe | null = null;
-
   constructor(
     private readonly eventsService: EventsService,
-    private readonly analytics: AnalyticsService
-  ) {
-    const env = loadEnv();
-    if (env.stripeSecretKey) {
-      this.stripe = new Stripe(env.stripeSecretKey);
-    }
-  }
+    private readonly analytics: AnalyticsService,
+    private readonly stripeService: StripeService
+  ) {}
 
   private formatSupabaseError(
     err: { message?: string; details?: string; hint?: string } | null | undefined
@@ -66,7 +59,6 @@ export class CheckoutService {
     return n || null;
   }
 
-  /** Prefer client hint; otherwise `profiles.full_name`. */
   private async resolveCustomerName(
     userId: string,
     hint?: string | null
@@ -129,9 +121,7 @@ export class CheckoutService {
     cancelUrl: string,
     customerNameHint?: string | null
   ): Promise<{ checkout_url: string }> {
-    if (!this.stripe) {
-      throw new BadRequestException("Payment service is not configured");
-    }
+    const stripe = this.stripeService.getClient();
     const supabase = getSupabaseClient();
     const resolved = await this.resolveCheckoutLines(lines);
     const resolvedStoreId = resolved[0].storeId;
@@ -169,7 +159,7 @@ export class CheckoutService {
       }))
     );
     const first = resolved[0];
-    const session = await this.stripe.checkout.sessions.create({
+    const session = await stripe.checkout.sessions.create({
       mode: "payment",
       success_url: successUrl,
       cancel_url: cancelUrl,
@@ -259,11 +249,9 @@ export class CheckoutService {
       return { checkout_url: "", instant: true };
     }
 
-    if (!this.stripe) {
-      throw new BadRequestException("Payment service is not configured");
-    }
+    const stripe = this.stripeService.getClient();
     const amount = fee;
-    const session = await this.stripe.checkout.sessions.create({
+    const session = await stripe.checkout.sessions.create({
       mode: "payment",
       success_url: successUrl,
       cancel_url: cancelUrl,
