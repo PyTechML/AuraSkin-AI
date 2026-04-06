@@ -14,6 +14,7 @@ import { PayoutsRepository } from "./repositories/payouts.repository";
 import { RefundsRepository } from "./repositories/refunds.repository";
 import { PaymentAuditRepository } from "./repositories/payment-audit.repository";
 import { StripeService } from "./services/stripe.service";
+import { InvoiceEmailService } from "./services/invoice-email.service";
 import { DermatologistModule } from "../partner/dermatologist/dermatologist.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 
@@ -37,6 +38,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     PayoutsRepository,
     RefundsRepository,
     PaymentAuditRepository,
+    InvoiceEmailService,
   ],
   exports: [PaymentsService, RefundsService, PaymentsRepository, StripeService],
 })

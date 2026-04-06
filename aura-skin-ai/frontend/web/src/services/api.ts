@@ -644,8 +644,11 @@ export async function getPaymentMethods(): Promise<{
         const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
         return (json?.data ?? json) as { card: boolean; bank_transfer: boolean; cod: boolean };
       }
-    } catch {
-      /* retry on network / CORS errors */
+    } catch (err) {
+      if (process.env.NODE_ENV === "development") {
+        // eslint-disable-next-line no-console
+        console.error("[PaymentMethods] Backend unreachable:", err);
+      }
     }
     if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
   }

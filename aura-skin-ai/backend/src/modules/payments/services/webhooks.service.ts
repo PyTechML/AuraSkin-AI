@@ -9,6 +9,7 @@ import { EventsService } from "../../notifications/services/events.service";
 import { AnalyticsService } from "../../analytics/analytics.service";
 import { persistConsultationAndBookSlot } from "./consultation-booking.helper";
 import { StripeService } from "./stripe.service";
+import { InvoiceEmailService } from "./invoice-email.service";
 
 @Injectable()
 export class WebhooksService {
@@ -19,7 +20,8 @@ export class WebhooksService {
     private readonly eventsService: EventsService,
     private readonly logger: LoggerService,
     private readonly analytics: AnalyticsService,
-    private readonly stripeService: StripeService
+    private readonly stripeService: StripeService,
+    private readonly invoiceEmailService: InvoiceEmailService
   ) {}
 
   constructEvent(
@@ -263,6 +265,25 @@ export class WebhooksService {
       message: "New order received",
       recipient_role: "store",
     });
+
+    const sessionPaymentIntentId =
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : session.payment_intent?.id ?? "";
+
+    try {
+      await this.sendInvoiceEmail(
+        order.id,
+        userId,
+        metadata,
+        amount,
+        sessionPaymentIntentId
+      );
+    } catch (emailErr) {
+      this.logger.warn(
+        `Invoice email failed for order ${order.id}: ${String(emailErr)}`
+      );
+    }
   }
 
   private async createConsultationFromSession(
@@ -311,6 +332,89 @@ export class WebhooksService {
       dermatologist_id: dermatologistId,
       user_id: userId,
       consultation_id: booked.consultationId,
+    });
+  }
+
+  private async sendInvoiceEmail(
+    orderId: string,
+    userId: string,
+    metadata: Record<string, string>,
+    amount: number,
+    stripePaymentIntentId: string
+  ): Promise<void> {
+    const supabase = getSupabaseClient();
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("email, full_name")
+      .eq("id", userId)
+      .maybeSingle();
+
+    const email = (profile as { email?: string | null } | null)?.email?.trim();
+    const name =
+      (profile as { full_name?: string | null } | null)?.full_name?.trim() ||
+      "Customer";
+
+    if (!email) {
+      this.logger.warn(
+        `Invoice email skipped for order ${orderId}: no email on profile`
+      );
+      return;
+    }
+
+    const { data: orderItems } = await supabase
+      .from("order_items")
+      .select("quantity, price, product_name, product_id")
+      .eq("order_id", orderId);
+
+    const items = (
+      (orderItems as Array<{
+        quantity: number;
+        price: number;
+        product_name?: string;
+        product_id?: string;
+      }>) ?? []
+    ).map((oi) => ({
+      productName: oi.product_name || "Product",
+      quantity: oi.quantity,
+      unitPrice: Number(oi.price) || 0,
+    }));
+
+    const subtotal = items.reduce(
+      (sum, i) => sum + i.unitPrice * i.quantity,
+      0
+    );
+    const TAX_RATE = 0.08;
+    const SHIPPING_FEE = 5.99;
+    const FREE_SHIPPING_THRESHOLD = 50;
+    const tax = Math.round(subtotal * TAX_RATE * 100) / 100;
+    const shipping = subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE;
+
+    const { data: orderRow } = await supabase
+      .from("orders")
+      .select("shipping_address")
+      .eq("id", orderId)
+      .maybeSingle();
+
+    const shippingAddress =
+      (orderRow as { shipping_address?: string } | null)?.shipping_address ?? "";
+
+    const paymentMethod = metadata.payment_method || "card";
+    const paymentIntentId = stripePaymentIntentId || orderId;
+
+    await this.invoiceEmailService.sendOrderInvoice({
+      orderId,
+      customerEmail: email,
+      customerName: name,
+      items,
+      subtotal,
+      tax,
+      shipping,
+      totalAmount: amount,
+      paymentMethod,
+      transactionId: paymentIntentId,
+      shippingAddress,
+      purchaseDate: new Date(),
     });
   }
 

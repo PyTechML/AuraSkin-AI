@@ -150,25 +150,12 @@ export class CheckoutService {
       },
     };
 
-    if (paymentMethod === "bank_transfer") {
-      const stripeCustomerId = await this.resolveStripeCustomer(
-        stripe,
-        userId,
-        customerName
-      );
-      sessionParams.customer = stripeCustomerId;
-      sessionParams.payment_method_types = ["customer_balance", "card"];
-      sessionParams.payment_method_options = {
-        customer_balance: {
-          funding_type: "bank_transfer",
-          bank_transfer: {
-            type: "us_bank_transfer",
-          },
-        },
-      };
-    } else {
-      sessionParams.payment_method_types = ["card"];
-    }
+    // Option A: Both card and bank_transfer use Stripe Card Checkout.
+    // The customer_balance + us_bank_transfer approach requires Dashboard
+    // configuration that isn't universally available in test mode.
+    // The metadata.payment_method field preserves the user's selection for
+    // order records and invoice emails.
+    sessionParams.payment_method_types = ["card"];
 
     const session = await stripe.checkout.sessions.create(sessionParams);
 

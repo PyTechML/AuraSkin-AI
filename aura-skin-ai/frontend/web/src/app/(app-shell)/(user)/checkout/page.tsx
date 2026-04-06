@@ -417,6 +417,12 @@ function CheckoutContent() {
                   onSelect={() => setSelectedMethod("cod")}
                 />
 
+                {availableMethods && !availableMethods.card && !availableMethods.bank_transfer && (
+                  <p className="text-xs text-amber-600 text-center pt-1">
+                    Online payment is temporarily unavailable. Please use Cash on Delivery.
+                  </p>
+                )}
+
                 <div className="flex gap-2 pt-2">
                   <Button variant="outline" onClick={() => setStep(1)}>
                     Back
