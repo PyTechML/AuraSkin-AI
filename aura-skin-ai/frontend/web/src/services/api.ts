@@ -634,12 +634,22 @@ export async function getPaymentMethods(): Promise<{
   bank_transfer: boolean;
   cod: boolean;
 }> {
-  const res = await fetch(`${API_BASE}/api/payments/payment-methods`, {
-    cache: "no-store",
-  });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) return { card: false, bank_transfer: false, cod: true };
-  return (json?.data ?? json) as { card: boolean; bank_transfer: boolean; cod: boolean };
+  const fallback = { card: false, bank_transfer: false, cod: true };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE}/api/payments/payment-methods`, {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        return (json?.data ?? json) as { card: boolean; bank_transfer: boolean; cod: boolean };
+      }
+    } catch {
+      /* retry on network / CORS errors */
+    }
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
+  }
+  return fallback;
 }
 
 export async function createCheckoutSession(payload: {

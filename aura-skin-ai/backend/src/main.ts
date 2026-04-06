@@ -18,7 +18,7 @@ async function run(): Promise<void> {
     })
   );
   app.enableCors({
-    origin: process.env.CORS_ORIGIN ?? true,
+    origin: process.env.CORS_ORIGIN || true,
     credentials: true,
   });
   const port = Number(process.env.PORT) || 3001;
