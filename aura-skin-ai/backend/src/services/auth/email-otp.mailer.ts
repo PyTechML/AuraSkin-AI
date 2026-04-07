@@ -1,12 +1,51 @@
 import * as nodemailer from "nodemailer";
 import { loadEnv } from "../../config/env";
 
-/** Retry delays in milliseconds (Fail Fast: reduced for total under 8s) */
-const RETRY_DELAYS_MS = [1_000];
-const MAX_RETRIES = 1;
+/** Retry delays in milliseconds (1s, 3s, 5s per requirement) */
+const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
+const MAX_RETRIES = 2; // Total 3 attempts
 
 /** Maximum time to wait for a single sendMail call before aborting (8s total max) */
-const SEND_TIMEOUT_MS = 3_000;
+const SEND_TIMEOUT_MS = 8_000;
+
+/** Singleton transporter instance */
+let transporter: nodemailer.Transporter | null = null;
+
+function getTransporter(): nodemailer.Transporter {
+  if (transporter) return transporter;
+  const env = loadEnv();
+
+  // SMTP Priority - Fallback to Gmail defaults only if missing
+  const host = env.smtpHost || "smtp.gmail.com";
+  const port = env.smtpPort || 587;
+  const user = env.smtpUser;
+  const pass = env.smtpPass;
+
+  if (!host || !user || !pass) {
+    console.error("SMTP_ENV_MISSING: required SMTP credentials are missing.");
+    throw new Error("SMTP_ENV_MISSING");
+  }
+
+  transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: env.smtpSecure ?? false,
+    auth: {
+      user,
+      pass,
+    },
+    connectionTimeout: 8_000,
+    greetingTimeout: 8_000,
+    socketTimeout: 8_000,
+    tls: {
+      rejectUnauthorized: false, // Required for Gmail compatibility
+      minVersion: "TLSv1.2",
+    },
+  } as nodemailer.TransportOptions);
+
+  console.log("EMAIL_TRANSPORT_READY");
+  return transporter;
+}
 
 function buildOtpMailContent(code: string, expiresMinutes: number): {
   subject: string;
@@ -14,7 +53,7 @@ function buildOtpMailContent(code: string, expiresMinutes: number): {
   text: string;
 } {
   return {
-    subject: "Your AuraSkin verification code",
+    subject: "Verify your email",
     html: `<p>Your AuraSkin verification code is <strong>${code}</strong>.</p><p>This code expires in ${expiresMinutes} minutes. If you did not request it, you can ignore this email.</p>`,
     text: `Your AuraSkin verification code is ${code}. It expires in ${expiresMinutes} minutes.`,
   };
@@ -50,48 +89,48 @@ async function sendEmailOnce(toEmail: string, subject: string, html: string, tex
     return;
   }
 
-  if (env.smtpHost && env.smtpFrom && env.smtpUser && env.smtpPass) {
-    const transporter = nodemailer.createTransport({
-      host: env.smtpHost,
-      port: env.smtpPort,
-      secure: env.smtpSecure,
-      auth: {
-        user: env.smtpUser,
-        pass: env.smtpPass,
-      },
-      connectionTimeout: 5_000,  // 5s to establish TCP connection
-      greetingTimeout: 5_000,    // 5s for SMTP greeting
-      socketTimeout: 8_000,      // 8s for any socket inactivity
-      tls: {
-        rejectUnauthorized: false, // Required for Gmail SMTP compatibility
-      },
-    } as nodemailer.TransportOptions);
+  if (env.smtpHost && env.smtpUser && env.smtpPass) {
+    const smtpTransporter = getTransporter();
+    
+    // Always enforce: FROM = SMTP_FROM || SMTP_USER
+    const from = env.smtpFrom || env.smtpUser;
+    if (!from) {
+      console.error("SMTP_ENV_MISSING: SMTP_FROM or SMTP_USER is undefined.");
+      throw new Error("SMTP_ENV_MISSING");
+    }
 
-    console.log(`[LOG STEP 4] Attempting SMTP email send to ${toEmail}`);
-    await withTimeout(
-      transporter.sendMail({
-        from: env.smtpFrom,
-        to: toEmail,
-        subject,
-        html,
-        text,
-      }),
-      SEND_TIMEOUT_MS,
-      "SMTP sendMail",
-    );
-    console.log(`[LOG STEP 5] SMTP email sent successfully to ${toEmail}`);
-    return;
+    console.log(`EMAIL_SEND_ATTEMPT: sending verification code to ${toEmail}`);
+
+    try {
+      await withTimeout(
+        smtpTransporter.sendMail({
+          from,
+          to: toEmail,
+          subject,
+          html,
+          text,
+        }),
+        SEND_TIMEOUT_MS,
+        "SMTP sendMail",
+      );
+      console.log(`EMAIL_SEND_SUCCESS: verification code sent to ${toEmail}`);
+      return;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(`EMAIL_SEND_ERROR: failed to send to ${toEmail}: ${errMsg}`);
+      throw err;
+    }
   }
 
   const apiKey = env.resendApiKey;
   const from = env.resendFromEmail;
   if (!apiKey || !from) {
     throw new Error(
-      "Email delivery is not configured (set SMTP_HOST + SMTP_FROM + SMTP_USER + SMTP_PASS, or RESEND_API_KEY + RESEND_FROM_EMAIL)"
+      "Email delivery is not configured (set SMTP_HOST + SMTP_USER + SMTP_PASS, or RESEND_API_KEY + RESEND_FROM_EMAIL)"
     );
   }
 
-  console.log(`[LOG STEP 4] Attempting Resend email send to ${toEmail}`);
+  console.log(`EMAIL_SEND_ATTEMPT: trying Resend provider for ${toEmail}`);
 
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -110,16 +149,15 @@ async function sendEmailOnce(toEmail: string, subject: string, html: string, tex
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    console.error(`[LOG STEP 5] Resend email delivery FAILED for ${toEmail}: ${res.status}`);
-    throw new Error(`Resend API error: ${res.status} ${errText.slice(0, 200)}`);
+    console.error(`EMAIL_SEND_ERROR: Resend provider failed for ${toEmail}: ${res.status} ${errText.slice(0, 200)}`);
+    throw new Error(`Resend API error: ${res.status}`);
   }
-  console.log(`[LOG STEP 5] Resend email sent successfully to ${toEmail}`);
+  console.log(`EMAIL_SEND_SUCCESS: Resend provider sent to ${toEmail}`);
 }
 
 /**
  * Sends a one-time code via SMTP (Nodemailer) or Resend with automatic retry.
- * Retries up to 3 times on failure with delays of 1s, 3s, 5s.
- * Same OTP code is reused across retries — no duplicate entries created.
+ * Retries up to 2 times on failure with delays of 1s, 3s, 5s (Total 3 attempts).
  */
 export async function sendVerificationOtpEmail(toEmail: string, code: string, expiresMinutes: number): Promise<void> {
   const { subject, html, text } = buildOtpMailContent(code, expiresMinutes);
@@ -135,32 +173,15 @@ export async function sendVerificationOtpEmail(toEmail: string, code: string, ex
 
       if (attempt < MAX_RETRIES) {
         const retryNum = attempt + 1;
-        console.warn(
-          JSON.stringify({
-            event: `OTP_EMAIL_RETRY_ATTEMPT_${retryNum}`,
-            email: toEmail,
-            error: lastError.message,
-            delay_ms: RETRY_DELAYS_MS[attempt],
-            timestamp: new Date().toISOString(),
-          })
-        );
+        console.warn(`EMAIL_SEND_RETRY: attempt ${retryNum} failed, retrying in ${RETRY_DELAYS_MS[attempt]}ms...`);
         await sleep(RETRY_DELAYS_MS[attempt]);
       }
     }
   }
 
   // All retries exhausted
-  console.error(
-    JSON.stringify({
-      event: "OTP_EMAIL_DELIVERY_FAILED",
-      email: toEmail,
-      error: lastError?.message ?? "unknown",
-      total_attempts: MAX_RETRIES + 1,
-      timestamp: new Date().toISOString(),
-    })
-  );
-
-  throw new Error("Verification email could not be sent. Please try again.");
+  console.error(`EMAIL_SEND_FAILED: exhausted all ${MAX_RETRIES + 1} attempts for ${toEmail}. Last error: ${lastError?.message}`);
+  throw new Error("EMAIL_SEND_FAILED");
 }
 
 /**
@@ -168,27 +189,19 @@ export async function sendVerificationOtpEmail(toEmail: string, code: string, ex
  */
 export async function verifySmtpConnection(): Promise<boolean> {
   const env = loadEnv();
-  if (!env.smtpHost || !env.smtpUser || !env.smtpPass) {
+  if (!env.smtpHost && !env.smtpUser) {
     return false;
   }
 
-  const transporter = nodemailer.createTransport({
-    host: env.smtpHost,
-    port: env.smtpPort,
-    secure: env.smtpSecure,
-    auth: {
-      user: env.smtpUser,
-      pass: env.smtpPass,
-    },
-    connectionTimeout: 5_000,
-  } as nodemailer.TransportOptions);
-
   try {
-    await withTimeout(transporter.verify(), 5_000, "SMTP verify");
-    console.log("SMTP_READY: SMTP connection verified.");
+    const smtpTransporter = getTransporter();
+    await withTimeout(smtpTransporter.verify(), 8_000, "SMTP verify");
+    console.log("SMTP_READY");
     return true;
   } catch (err) {
-    console.error("SMTP_FAILED: SMTP connection verification failed.", err);
+    const errMsg = err instanceof Error ? err.stack || err.message : String(err);
+    console.error(`SMTP_FAILED: ${errMsg}`);
     return false;
   }
 }
+
