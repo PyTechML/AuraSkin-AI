@@ -10,6 +10,7 @@ export interface ProfileRow {
   full_name: string | null;
   avatar_url: string | null;
   email_verified: boolean;
+  provider: string | null;
   otp_required: boolean;
   otp_verified_at: string | null;
   created_at: string;
@@ -26,4 +27,5 @@ export interface CurrentUser {
   avatar: string | null;
   emailVerified: boolean;
   otpRequired: boolean;
+  provider: string | null;
 }

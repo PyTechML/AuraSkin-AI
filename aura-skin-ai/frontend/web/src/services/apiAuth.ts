@@ -13,6 +13,8 @@ export interface AuthSession {
   user: User;
   refreshToken?: string;
   sessionToken?: string;
+  role_request_pending?: boolean;
+  requested_role?: string;
 }
 
 export interface OtpRequiredResponse {

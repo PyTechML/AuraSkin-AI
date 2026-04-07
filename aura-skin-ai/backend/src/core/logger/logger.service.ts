@@ -79,7 +79,9 @@ export class LoggerService {
       | "assessment_start"
       | "assessment_submission"
       | "consultation_booking"
-      | "product_purchase";
+      | "product_purchase"
+      | "oauth_sync_start"
+      | "oauth_sync_success";
     user_id?: string;
     extra?: Record<string, unknown>;
   }): void {
@@ -149,7 +151,11 @@ export class LoggerService {
       | "otp_email_retry"
       | "otp_email_delivery_failed"
       | "otp_rate_limited"
-      | "otp_env_misconfigured";
+      | "otp_env_misconfigured"
+      | "oauth_sync_list_users_failed"
+      | "oauth_sync_user_not_found"
+      | "oauth_sync_profile_upsert_failed"
+      | "oauth_sync_endpoint_failed";
     user_id?: string;
     endpoint?: string;
     extra?: Record<string, unknown>;

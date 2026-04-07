@@ -7,6 +7,8 @@ import { AuthOtpService } from "./auth-otp.service";
 import { PendingSignupRepository } from "./pending-signup.repository";
 import { LoginChallengeRepository } from "./login-challenge.repository";
 import { SessionModule } from "../../modules/session/session.module";
+import { OAuthController } from "../../modules/auth/controllers/oauth.controller";
+import { OAuthService } from "../../modules/auth/services/oauth.service";
 import { isAuthEmailOtpRequiredEnv } from "../../config/env";
 
 const otpRequired = isAuthEmailOtpRequiredEnv();
@@ -17,10 +19,12 @@ const otpRequired = isAuthEmailOtpRequiredEnv();
     AuthSessionController,
     AuthPasswordController,
     AuthOtpController,
+    OAuthController,
   ],
   providers: [
     AuthService,
     AuthOtpService,
+    OAuthService,
     PendingSignupRepository,
     LoginChallengeRepository,
   ],
