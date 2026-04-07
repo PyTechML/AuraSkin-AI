@@ -252,7 +252,12 @@ export class AuthOtpService implements OnModuleInit {
       attempt_count: 0,
     });
 
-    await sendVerificationOtpEmail(row.email, otp, OTP_EXPIRES_MINUTES);
+    try {
+      await sendVerificationOtpEmail(row.email, otp, OTP_EXPIRES_MINUTES);
+    } catch (e) {
+      this.logger.error("OTP email send failed (signup resend)", e);
+      throw new OtpException("EMAIL_SEND_FAILED");
+    }
     this.logger.logSecurity({ event: "otp_sent", extra: { channel: "signup_resend", email: row.email } });
     return { ok: true };
   }
@@ -401,7 +406,12 @@ export class AuthOtpService implements OnModuleInit {
       last_otp_sent_at: new Date().toISOString(),
       attempt_count: 0,
     });
-    await sendVerificationOtpEmail(row.email, otp, OTP_EXPIRES_MINUTES);
+    try {
+      await sendVerificationOtpEmail(row.email, otp, OTP_EXPIRES_MINUTES);
+    } catch (e) {
+      this.logger.error("OTP email send failed (login resend)", e);
+      throw new OtpException("EMAIL_SEND_FAILED");
+    }
     this.logger.logSecurity({ event: "otp_sent", extra: { channel: "login_resend", email: row.email } });
     return { ok: true };
   }

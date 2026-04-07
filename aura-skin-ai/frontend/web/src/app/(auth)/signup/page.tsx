@@ -140,10 +140,15 @@ export default function SignupPage() {
       }
 
       finishSignupSuccess(data.requested_role);
-    } catch (err) {
-      const message =
-        err instanceof Error && err.message ? err.message : "Registration failed. Please try again.";
-      addToast(message, "error");
+    } catch (err: any) {
+      const errorCode = err?.errorCode ?? err?.code;
+      if (errorCode === "EMAIL_SEND_FAILED") {
+        addToast("Unable to send verification email. Please check your email address and try again.", "error");
+      } else {
+        const message =
+          err instanceof Error && err.message ? err.message : "Registration failed. Please try again.";
+        addToast(message, "error");
+      }
     }
   };
 

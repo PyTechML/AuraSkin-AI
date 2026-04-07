@@ -1,9 +1,12 @@
 import * as nodemailer from "nodemailer";
 import { loadEnv } from "../../config/env";
 
-/** Retry delays in milliseconds: 1s, 3s, 5s */
-const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
+/** Retry delays in milliseconds: 1s, 2s, 3s (total worst-case ≈ 6s + send time) */
+const RETRY_DELAYS_MS = [1_000, 2_000, 3_000];
 const MAX_RETRIES = RETRY_DELAYS_MS.length;
+
+/** Maximum time to wait for a single sendMail call before aborting */
+const SEND_TIMEOUT_MS = 8_000;
 
 function buildOtpMailContent(code: string, expiresMinutes: number): {
   subject: string;
@@ -19,6 +22,19 @@ function buildOtpMailContent(code: string, expiresMinutes: number): {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Race a promise against a hard deadline; rejects with TimeoutError on expiry. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
 }
 
 /**
@@ -43,14 +59,24 @@ async function sendEmailOnce(toEmail: string, subject: string, html: string, tex
         user: env.smtpUser,
         pass: env.smtpPass,
       },
-    });
-    await transporter.sendMail({
-      from: env.smtpFrom,
-      to: toEmail,
-      subject,
-      html,
-      text,
-    });
+      connectionTimeout: 5_000,  // 5s to establish TCP connection
+      greetingTimeout: 5_000,    // 5s for SMTP greeting
+      socketTimeout: 8_000,      // 8s for any socket inactivity
+      tls: {
+        rejectUnauthorized: false, // Required for Gmail SMTP compatibility
+      },
+    } as nodemailer.TransportOptions);
+    await withTimeout(
+      transporter.sendMail({
+        from: env.smtpFrom,
+        to: toEmail,
+        subject,
+        html,
+        text,
+      }),
+      SEND_TIMEOUT_MS,
+      "SMTP sendMail",
+    );
     return;
   }
 
