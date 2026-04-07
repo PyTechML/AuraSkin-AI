@@ -15,8 +15,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { authGmailOnly } from "@/lib/auth-flags";
-import { login } from "@/services/apiAuth";
 import { GoogleOAuthButton } from "@/components/auth/GoogleOAuthButton";
+import { supabase } from "@/lib/supabase";
 
 function isSafeRedirect(path: string | null): boolean {
   if (!path || typeof path !== "string") return false;
@@ -152,35 +152,46 @@ function LoginForm() {
     router.push(target);
   };
 
-  const onSubmit = async (data: FormData) => {
-    if (isSubmitting) return;
-    setApiError(null);
-    setRoleRequestPending(false);
-    setIsSubmitting(true);
-    try {
-      const res = await login({
-        email: data.email,
-        password: data.password,
-        requested_role: data.requested_role ?? "USER",
+const onSubmit = async (data: FormData) => {
+  if (isSubmitting) return;
+  setApiError(null);
+  setRoleRequestPending(false);
+  setIsSubmitting(true);
+  try {
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: data.email,
+      password: data.password,
+    });
+
+    if (authError) throw authError;
+
+    if (authData.session) {
+      // Sync profile with backend (as requested by user)
+      await fetch(`${API_BASE}/api/auth/oauth-sync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: data.email,
+          provider: "password", // Indicating password login
+        }),
       });
 
-      if ("accessToken" in res) {
-        await finalizeSession({
-          accessToken: res.accessToken,
-          sessionToken: res.sessionToken,
-          role_request_pending: !!res.role_request_pending,
-          requested_role: res.requested_role,
-        });
-        return;
-      }
-
-      setApiError("Unable to sign in right now. Please try again.");
-    } catch (err: any) {
-      setApiError(err.message || "Login failed. Please check your credentials.");
-    } finally {
-      setIsSubmitting(false);
+      await finalizeSession({
+        accessToken: authData.session.access_token,
+        // sessionToken: authData.session.access_token, // Bridge if backend expects something
+      });
+      return;
     }
-  };
+
+    setApiError("Unable to sign in right now. Please try again.");
+  } catch (err: any) {
+    setApiError(err.message || "Login failed. Please check your credentials.");
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   return (
     <Card className="border-0 shadow-none bg-transparent">

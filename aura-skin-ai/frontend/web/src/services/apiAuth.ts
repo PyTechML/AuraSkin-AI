@@ -1,4 +1,4 @@
-import { apiPost } from "./apiInternal";
+import { supabase } from "@/lib/supabase";
 
 export interface User {
   id: string;
@@ -19,10 +19,10 @@ export interface AuthSession {
 
 export type AuthResponse = AuthSession;
 
-export async function login(credentials: Record<string, any>): Promise<AuthResponse> {
-  return await apiPost<AuthResponse>("/auth/login", credentials);
+export async function logout() {
+  return await supabase.auth.signOut();
 }
 
-export async function signup(data: Record<string, any>): Promise<AuthResponse> {
-  return await apiPost<AuthResponse>("/auth/signup", data);
+export async function getSession() {
+  return await supabase.auth.getSession();
 }

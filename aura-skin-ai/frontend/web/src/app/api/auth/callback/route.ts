@@ -9,9 +9,6 @@ function safeRedirect(path: string): string {
   return trimmed;
 }
 
-function serverAuthOtpRequired(): boolean {
-  return process.env.AUTH_EMAIL_OTP_REQUIRED === "true";
-}
 
 function serverGmailOnly(): boolean {
   return process.env.AUTH_GMAIL_ONLY === "true";

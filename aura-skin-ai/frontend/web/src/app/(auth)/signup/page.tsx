@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { signup } from "@/services/apiAuth";
 import { usePanelToast } from "@/components/panel/PanelToast";
 import {
   Dialog, 
@@ -22,6 +21,8 @@ import {
 } from "@/components/ui/dialog";
 import { authGmailOnly } from "@/lib/auth-flags";
 import { GoogleOAuthButton } from "@/components/auth/GoogleOAuthButton";
+import { supabase } from "@/lib/supabase";
+import { API_BASE } from "@/services/apiBase";
 
 const baseSignupSchema = z
   .object({
@@ -70,25 +71,44 @@ export default function SignupPage() {
     router.push("/login");
   };
 
-  const onSubmit = async (data: FormData) => {
-    setIsSubmitting(true);
-    try {
-      await signup({
-        email: data.email,
-        password: data.password,
-        name: data.name,
-        requested_role: data.requested_role,
-      });
+const onSubmit = async (data: FormData) => {
+  setIsSubmitting(true);
+  try {
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: data.email,
+      password: data.password,
+      options: {
+        data: {
+          full_name: data.name,
+          role: data.requested_role,
+        },
+      },
+    });
 
-      setIsSubmitting(false);
-      finishSignupSuccess(data.requested_role);
-    } catch (err: any) {
-      setIsSubmitting(false);
-      const message =
-        err instanceof Error && err.message ? err.message : "Registration failed. Please try again.";
-      addToast(message, "error");
-    }
-  };
+    if (authError) throw authError;
+
+    // Sync with backend to ensure profile exists and role request is logged
+    await fetch(`${API_BASE}/api/auth/oauth-sync`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email: data.email,
+        name: data.name,
+        provider: "email", // Indicating this is a native email signup
+      }),
+    });
+
+    setIsSubmitting(false);
+    finishSignupSuccess(data.requested_role);
+  } catch (err: any) {
+    setIsSubmitting(false);
+    const message =
+      err instanceof Error && err.message ? err.message : "Registration failed. Please try again.";
+    addToast(message, "error");
+  }
+};
 
   return (
     <Card className="border-0 shadow-none bg-transparent">
