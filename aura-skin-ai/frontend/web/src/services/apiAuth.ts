@@ -1,73 +1,63 @@
 import { apiPost } from "./apiInternal";
-import { API_BASE } from "./apiBase";
 
-export interface SignupPayload {
+export interface User {
+  id: string;
   email: string;
-  password: string;
-  name?: string;
-  requested_role?: "USER" | "STORE" | "DERMATOLOGIST";
+  full_name: string;
+  role: "USER" | "STORE" | "DERMATOLOGIST";
+  is_approved?: boolean;
 }
 
-function formatPublicError(res: Response, json: Record<string, unknown>): string {
-  const m = json.message;
-  if (Array.isArray(m)) return m.map(String).join("; ");
-  if (typeof m === "string" && m.trim()) return m.trim();
-  return `Request failed (${res.status})`;
-}
-
-async function apiPostNoAuth<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}/api${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) throw new Error(formatPublicError(res, json));
-  return (json.data ?? json) as T;
-}
-
-export async function signup(payload: SignupPayload): Promise<void> {
-  await apiPost("/auth/signup", payload);
-}
-
-export async function signupOtpStart(payload: SignupPayload): Promise<{ pendingId: string }> {
-  return apiPostNoAuth("/auth/signup/start", payload);
-}
-
-export async function signupOtpComplete(pendingId: string, otp: string): Promise<{ success: true }> {
-  return apiPostNoAuth("/auth/signup/complete", { pendingId, otp });
-}
-
-export async function signupOtpResend(pendingId: string): Promise<{ ok: true }> {
-  return apiPostNoAuth("/auth/signup/resend", { pendingId });
-}
-
-export async function loginOtpStart(payload: {
-  email: string;
-  password: string;
-  requested_role?: string;
-}): Promise<{ challengeId: string }> {
-  return apiPostNoAuth("/auth/login/start", payload);
-}
-
-export async function loginOtpComplete(
-  challengeId: string,
-  otp: string
-): Promise<{
+export interface AuthSession {
   accessToken: string;
-  refreshToken: string;
-  user: { id: string; email: string; role: string; fullName?: string | null };
+  user: User;
+  refreshToken?: string;
   sessionToken?: string;
-  role_request_pending?: boolean;
-  requested_role?: string;
-  oauthBridgeNext?: string;
-  oauthRequestedRole?: string;
-  oauthOtpCompleted?: boolean;
-}> {
-  return apiPostNoAuth("/auth/login/complete", { challengeId, otp });
 }
 
-export async function loginOtpResend(challengeId: string): Promise<{ ok: true }> {
-  return apiPostNoAuth("/auth/login/resend", { challengeId });
+export interface OtpRequiredResponse {
+  otp_required: true;
+  challengeId?: string; // from /auth/login
+  pendingId?: string;   // from /auth/signup
 }
 
+export type AuthResponse = AuthSession | OtpRequiredResponse;
+
+/** Check if response is an OTP challenge. */
+export function isOtpRequired(res: any): res is OtpRequiredResponse {
+  return res && (res as OtpRequiredResponse).otp_required === true;
+}
+
+export async function login(credentials: Record<string, any>): Promise<AuthResponse> {
+  return await apiPost<AuthResponse>("/auth/login", credentials);
+}
+
+export async function signup(data: Record<string, any>): Promise<AuthResponse> {
+  return await apiPost<AuthResponse>("/auth/signup", data);
+}
+
+/** Unified OTP verification for both login and signup flows. */
+export async function verifyOtp(
+  id: string,
+  otp: string,
+  flow: "login" | "signup"
+): Promise<AuthSession | { success: boolean }> {
+  const path = `/auth/${flow}/complete`;
+  const payload = flow === "login" ? { challengeId: id, otp } : { pendingId: id, otp };
+  return await apiPost<AuthSession | { success: boolean }>(path, payload);
+}
+
+/** Unified OTP resend for both login and signup flows. */
+export async function resendOtp(id: string, flow: "login" | "signup"): Promise<{ ok: boolean }> {
+  const path = `/auth/${flow}/resend`;
+  const payload = flow === "login" ? { challengeId: id } : { pendingId: id };
+  return await apiPost<{ ok: boolean }>(path, payload);
+}
+
+// Compatibility Shims for old code (to be removed after refactoring pages)
+export const signupOtpStart = signup; 
+export const signupOtpComplete = (pendingId: string, otp: string) => verifyOtp(pendingId, otp, "signup");
+export const signupOtpResend = (pendingId: string) => resendOtp(pendingId, "signup");
+export const loginOtpStart = login;
+export const loginOtpComplete = (challengeId: string, otp: string) => verifyOtp(challengeId, otp, "login") as Promise<any>;
+export const loginOtpResend = (challengeId: string) => resendOtp(challengeId, "login") as Promise<any>;

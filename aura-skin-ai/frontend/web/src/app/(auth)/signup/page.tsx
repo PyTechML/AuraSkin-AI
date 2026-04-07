@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { signup, signupOtpStart, signupOtpComplete, signupOtpResend } from "@/services/apiAuth";
+import { signup, verifyOtp, resendOtp, isOtpRequired } from "@/services/apiAuth";
 import { usePanelToast } from "@/components/panel/PanelToast";
 import {
   supabase,
@@ -18,8 +18,15 @@ import {
   messageForOAuthInitError,
   OAUTH_NOT_CONFIGURED_USER_MESSAGE,
 } from "@/lib/supabase";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { authAppleOAuthWhenGmailOnly, authEmailOtpRequired, authGmailOnly } from "@/lib/auth-flags";
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogDescription, 
+  DialogFooter, 
+  DialogHeader, 
+  DialogTitle 
+} from "@/components/ui/dialog";
+import { authAppleOAuthWhenGmailOnly, authGmailOnly } from "@/lib/auth-flags";
 import { OtpModal } from "@/components/auth/OtpModal";
 
 function GoogleIcon({ className }: { className?: string }) {
@@ -63,8 +70,6 @@ const signupSchema = authGmailOnly
 
 type FormData = z.infer<typeof signupSchema>;
 
-const RESEND_COOLDOWN_SEC = 60;
-
 export default function SignupPage() {
   const router = useRouter();
   const { addToast } = usePanelToast();
@@ -76,11 +81,8 @@ export default function SignupPage() {
   } = useForm<FormData>({ resolver: zodResolver(signupSchema) });
   const [pendingModalOpen, setPendingModalOpen] = useState(false);
   const [pendingRoleLabel, setPendingRoleLabel] = useState<"Store" | "Dermatologist">("Store");
-  const [step, setStep] = useState<"form" | "otp">("form");
   const [isOtpModalOpen, setIsOtpModalOpen] = useState(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [otpCode, setOtpCode] = useState("");
-  const [otpSubmitting, setOtpSubmitting] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
 
   const requestedRole = watch("requested_role") ?? "USER";
@@ -123,25 +125,20 @@ export default function SignupPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-        if (authEmailOtpRequired) {
-          const { pendingId: id } = await signupOtpStart({
-            email: data.email,
-            password: data.password,
-            name: data.name,
-            requested_role: data.requested_role,
-          });
-          setPendingId(id);
-          setIsOtpModalOpen(true);
-          addToast("Check your email for a 6-digit verification code.", "success");
-          return;
-        }
-
-      await signup({
+      const res = await signup({
         email: data.email,
         password: data.password,
         name: data.name,
         requested_role: data.requested_role,
       });
+
+      if (isOtpRequired(res)) {
+        setPendingId(res.pendingId || null);
+        setIsOtpModalOpen(true);
+        addToast("Check your email for a 6-digit verification code.", "success");
+        return;
+      }
+
       finishSignupSuccess(data.requested_role);
     } catch (err) {
       const message =
@@ -153,7 +150,7 @@ export default function SignupPage() {
   const onVerifyOtp = async (code: string) => {
     if (!pendingId || code.trim().length < 6) return;
     try {
-      await signupOtpComplete(pendingId, code.trim());
+      await verifyOtp(pendingId, code.trim(), "signup");
       const role = watch("requested_role") ?? "USER";
       setIsOtpModalOpen(false);
       finishSignupSuccess(role);
@@ -165,15 +162,8 @@ export default function SignupPage() {
 
   const onResendOtp = async () => {
     if (!pendingId) return;
-    await signupOtpResend(pendingId);
+    await resendOtp(pendingId, "signup");
     addToast("A new code was sent to your email.", "success");
-  };
-
-  const onChangeEmail = () => {
-    setStep("form");
-    setPendingId(null);
-    setOtpCode("");
-    setResendCooldown(0);
   };
 
   return (
@@ -206,7 +196,6 @@ export default function SignupPage() {
               id="requested_role"
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               {...register("requested_role")}
-              disabled={authEmailOtpRequired && step === "otp"}
             >
               <option value="USER">User</option>
               <option value="STORE">Store Partner</option>
@@ -219,7 +208,6 @@ export default function SignupPage() {
               id="name"
               placeholder="Your name"
               {...register("name")}
-              disabled={authEmailOtpRequired && step === "otp"}
             />
             {errors.name && <p className="text-sm text-destructive">{errors.name.message}</p>}
           </div>
@@ -230,7 +218,6 @@ export default function SignupPage() {
               type="email"
               placeholder={authGmailOnly ? "you@gmail.com" : "you@example.com"}
               {...register("email")}
-              disabled={authEmailOtpRequired && step === "otp"}
             />
             {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
           </div>
@@ -241,7 +228,6 @@ export default function SignupPage() {
               type="password"
               placeholder="••••••••"
               {...register("password")}
-              disabled={authEmailOtpRequired && step === "otp"}
             />
             {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
           </div>
@@ -252,17 +238,14 @@ export default function SignupPage() {
               type="password"
               placeholder="••••••••"
               {...register("confirmPassword")}
-              disabled={authEmailOtpRequired && step === "otp"}
             />
             {errors.confirmPassword && (
               <p className="text-sm text-destructive">{errors.confirmPassword.message}</p>
             )}
           </div>
-          {!(authEmailOtpRequired && step === "otp") && (
-            <Button type="submit" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? "Creating account..." : authEmailOtpRequired ? "Continue" : "Create account"}
-            </Button>
-          )}
+          <Button type="submit" className="w-full" disabled={isSubmitting}>
+            {isSubmitting ? "Creating account..." : "Continue"}
+          </Button>
         </form>
 
         <p className="mt-4 text-center text-sm text-muted-foreground">

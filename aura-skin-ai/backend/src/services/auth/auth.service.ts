@@ -211,7 +211,6 @@ export class AuthService {
       });
       return { ok: false, error: AuthService.LOGIN_ERROR_MESSAGE };
     }
-    await client.auth.signOut();
     return {
       ok: true,
       accessToken: session.access_token,
@@ -237,7 +236,11 @@ export class AuthService {
       return { error: gmailErr };
     }
 
-    const { data, error } = await this.supabase.auth.signInWithPassword({
+    // SECURITY FIX: Always use an ephemeral client to prevent singleton
+    // session pollution. The singleton Supabase client must never hold a
+    // session for an OTP-required user before their OTP is verified.
+    const client = this.createEphemeralAnonClient();
+    const { data, error } = await client.auth.signInWithPassword({
       email: normalizedEmail,
       password,
     });
@@ -258,9 +261,29 @@ export class AuthService {
       return { error: AuthService.LOGIN_ERROR_MESSAGE };
     }
 
+    // Check otp_required BEFORE creating any app-level session.
+    // If the user requires OTP we return ONLY the flag — no tokens leak.
+    const profile = await this.getProfileByUserId(user.id);
+    if (profile?.otpRequired) {
+      this.logger.logSecurity({
+        event: "login_otp_challenge",
+        extra: { email: normalizedEmail, user_id: user.id },
+      });
+      // Return a lean result with ONLY the otpRequired flag.
+      // The controller will trigger the OTP challenge flow.
+      // accessToken/refreshToken are NOT exposed to the caller.
+      return {
+        accessToken: "",   // placeholder — never sent to client
+        refreshToken: "",  // placeholder — never sent to client
+        user: profile,
+        otpRequired: true,
+      };
+    }
+
+    // Legacy user (otp_required=false): proceed with full session.
     const result = await this.finalizeLoginFromSession(session, user, context, requestedRole);
     if ("user" in result) {
-      result.otpRequired = result.user.otpRequired;
+      result.otpRequired = false;
     }
     return result;
   }
@@ -313,6 +336,8 @@ export class AuthService {
 
     const userId = data.user?.id;
     if (userId) {
+      // For new signups, we ALWAYS enforce email_verified = true (once OTP passes)
+      // and otp_required = true for future logins.
       const { error: upsertError } = await supabaseAdmin.from("profiles").upsert(
         {
           id: userId,
@@ -320,7 +345,7 @@ export class AuthService {
           role: "user",
           full_name: options?.name ?? null,
           email_verified: options?.emailVerified ?? false,
-          otp_required: options?.otpRequired ?? false,
+          otp_required: options?.otpRequired ?? true, // Default to true for new accounts
           otp_verified_at: options?.emailVerified ? new Date().toISOString() : null,
         },
         { onConflict: "id" }

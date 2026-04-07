@@ -1,6 +1,22 @@
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import { API_BASE } from "./apiBase";
 
+/**
+ * Custom error class that carries a machine-readable errorCode
+ * from backend structured OTP error responses.
+ */
+export class ApiError extends Error {
+  public readonly errorCode?: string;
+  public readonly statusCode?: number;
+
+  constructor(message: string, errorCode?: string, statusCode?: number) {
+    super(message);
+    this.name = "ApiError";
+    this.errorCode = errorCode;
+    this.statusCode = statusCode;
+  }
+}
+
 /** Returns Authorization: Bearer <accessToken> when token is present; used for user-facing API calls. */
 export function getAuthHeaders(): Record<string, string> {
   let token = useAuthStore.getState().accessToken ?? null;
@@ -38,6 +54,30 @@ function formatNestMessage(raw: unknown): string {
   return "";
 }
 
+/** Extract errorCode from NestJS structured error response (OtpException format). */
+function extractErrorCode(json: Record<string, unknown>): string | null {
+  // Direct errorCode field: { statusCode, errorCode, message }
+  if (typeof json?.errorCode === "string") return json.errorCode;
+  // Nested in message object: { message: { statusCode, errorCode, message } }
+  if (json?.message && typeof json.message === "object") {
+    const nested = json.message as Record<string, unknown>;
+    if (typeof nested.errorCode === "string") return nested.errorCode;
+  }
+  return null;
+}
+
+/** Extract user-friendly message from structured OTP error response. */
+function extractUserMessage(json: Record<string, unknown>): string | null {
+  // Nested format from OtpException: { message: { errorCode, message } }
+  if (json?.message && typeof json.message === "object") {
+    const nested = json.message as Record<string, unknown>;
+    if (typeof nested.message === "string" && nested.message.trim()) {
+      return nested.message.trim();
+    }
+  }
+  return null;
+}
+
 function getErrorMessage(res: Response, json: Record<string, unknown>): string {
   if (res.status === 401) {
     return "Session expired. Please login again.";
@@ -68,7 +108,10 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   });
   const json = await res.json().catch(() => ({})) as Record<string, unknown>;
   if (!res.ok) {
-    throw new Error(getErrorMessage(res, json));
+    // Extract structured errorCode from OtpException responses
+    const errorCode = extractErrorCode(json);
+    const message = extractUserMessage(json) || getErrorMessage(res, json);
+    throw new ApiError(message, errorCode ?? undefined, res.status);
   }
   return ((json?.data ?? json) as T);
 }

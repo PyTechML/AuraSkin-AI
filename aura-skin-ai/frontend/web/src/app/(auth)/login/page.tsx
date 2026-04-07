@@ -20,8 +20,8 @@ import {
   messageForOAuthInitError,
   OAUTH_NOT_CONFIGURED_USER_MESSAGE,
 } from "@/lib/supabase";
-import { authAppleOAuthWhenGmailOnly, authEmailOtpRequired, authGmailOnly } from "@/lib/auth-flags";
-import { loginOtpStart, loginOtpComplete, loginOtpResend } from "@/services/apiAuth";
+import { authAppleOAuthWhenGmailOnly, authGmailOnly } from "@/lib/auth-flags";
+import { login, verifyOtp, resendOtp, isOtpRequired } from "@/services/apiAuth";
 import { OtpModal } from "@/components/auth/OtpModal";
 
 function GoogleIcon({ className }: { className?: string }) {
@@ -101,14 +101,11 @@ function LoginForm() {
   const setSession = useAuthStore((s) => s.setSession);
   const logout = useAuthStore((s) => s.logout);
   const redirect = searchParams.get("redirect");
+  const [isOtpModalOpen, setIsOtpModalOpen] = useState(false);
+  const [challengeId, setChallengeId] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [roleRequestPending, setRoleRequestPending] = useState(false);
-  const [step, setStep] = useState<"form" | "otp">("form"); // Keep for legacy but we'll use modal
-  const [isOtpModalOpen, setIsOtpModalOpen] = useState(false);
-  const [challengeId, setChallengeId] = useState<string | null>(null);
-  const [otpCode, setOtpCode] = useState("");
-  const [otpSubmitting, setOtpSubmitting] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
 
   const {
@@ -220,79 +217,31 @@ function LoginForm() {
     setRoleRequestPending(false);
     setIsSubmitting(true);
     try {
-      if (authEmailOtpRequired) {
-        const { challengeId: cid } = await loginOtpStart({
-          email: data.email,
-          password: data.password,
-          requested_role: data.requested_role ?? "USER",
-        });
-        setChallengeId(cid);
-        setStep("otp");
-        setOtpCode("");
-        setResendCooldown(RESEND_COOLDOWN_SEC);
-        return;
-      }
-
-      const res = await fetch(`${API_BASE}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: data.email,
-          password: data.password,
-          requested_role: data.requested_role ?? "USER",
-        }),
+      const res = await login({
+        email: data.email,
+        password: data.password,
+        requested_role: data.requested_role ?? "USER",
       });
-      const json = await res.json().catch(() => ({}));
-      const backendMessage =
-        (json as { message?: string })?.message ?? ((json as { error?: string })?.error ?? "");
-      const payload = (json as {
-        data?: {
-          accessToken?: string;
-          user?: { id: string; email: string; role: string; fullName?: string | null };
-          sessionToken?: string;
-          role_request_pending?: boolean;
-          requested_role?: string;
-        };
-      })?.data;
 
-      if (!res.ok) {
-        if (res.status === 401) {
-          setApiError("Invalid email or password");
-        } else if (res.status === 429) {
-          setApiError("Too many login attempts. Please wait a minute and try again.");
-        } else if (res.status >= 500) {
-          setApiError("Server is temporarily unavailable. Please try again.");
-        } else if (backendMessage) {
-          setApiError(backendMessage);
-        } else {
-          setApiError("Unable to sign in right now. Please try again.");
-        }
-        return;
-      }
-
-      if ((payload as any)?.otp_required && (payload as any).challengeId) {
-        setChallengeId((payload as any).challengeId);
+      if (isOtpRequired(res)) {
+        setChallengeId(res.challengeId || null);
         setIsOtpModalOpen(true);
         return;
       }
 
-      if (payload?.accessToken) {
+      if ("accessToken" in res) {
         await finalizeSession({
-          accessToken: payload.accessToken,
-          sessionToken: payload.sessionToken,
-          role_request_pending: payload.role_request_pending,
-          requested_role: payload.requested_role,
+          accessToken: res.accessToken,
+          sessionToken: res.sessionToken,
+          role_request_pending: !!(res as any).role_request_pending,
+          requested_role: (res as any).requested_role,
         });
         return;
       }
 
       setApiError("Unable to sign in right now. Please try again.");
-    } catch {
-      const devHint =
-        process.env.NODE_ENV === "development"
-          ? ` The app tried to reach ${API_BASE} — start the Nest API (default port 3001) or set NEXT_PUBLIC_API_URL in .env.local.`
-          : "";
-      setApiError(`Network error. Check your internet/server connection and try again.${devHint}`);
+    } catch (err: any) {
+      setApiError(err.message || "Login failed. Please check your credentials.");
     } finally {
       setIsSubmitting(false);
     }
@@ -302,7 +251,9 @@ function LoginForm() {
     if (!challengeId || code.trim().length < 6) return;
     setApiError(null);
     try {
-      const payload = await loginOtpComplete(challengeId, code.trim());
+      const res = await verifyOtp(challengeId, code.trim(), "login");
+      const payload = res as any; // Cast for session handling
+      
       if (payload.oauthOtpCompleted && payload.accessToken) {
         const bridge = new URL("/oauth/bridge", window.location.origin);
         bridge.searchParams.set("token", payload.accessToken);
@@ -314,14 +265,18 @@ function LoginForm() {
         router.replace(bridge.toString());
         return;
       }
+      
       setIsOtpModalOpen(false);
       setChallengeId(null);
-      await finalizeSession({
-        accessToken: payload.accessToken,
-        sessionToken: payload.sessionToken,
-        role_request_pending: payload.role_request_pending,
-        requested_role: payload.requested_role,
-      });
+      
+      if (payload.accessToken) {
+        await finalizeSession({
+          accessToken: payload.accessToken,
+          sessionToken: payload.sessionToken,
+          role_request_pending: payload.role_request_pending,
+          requested_role: payload.requested_role,
+        });
+      }
     } catch (err) {
       throw err; // Propagate to modal's error handler
     }
@@ -329,13 +284,11 @@ function LoginForm() {
 
   const onResendOtp = async () => {
     if (!challengeId) return;
-    await loginOtpResend(challengeId);
+    await resendOtp(challengeId, "login");
   };
 
   const onChangeEmail = () => {
-    setStep("form");
     setChallengeId(null);
-    setOtpCode("");
     setResendCooldown(0);
     setApiError(null);
   };
@@ -372,7 +325,6 @@ function LoginForm() {
               type="email"
               placeholder={authGmailOnly ? "you@gmail.com" : "you@example.com"}
               {...register("email")}
-              disabled={authEmailOtpRequired && step === "otp"}
             />
             {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
           </div>
@@ -382,7 +334,6 @@ function LoginForm() {
               id="requested_role"
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               {...register("requested_role")}
-              disabled={authEmailOtpRequired && step === "otp"}
             >
               {ROLE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -406,7 +357,6 @@ function LoginForm() {
               type="password"
               placeholder="••••••••"
               {...register("password")}
-              disabled={authEmailOtpRequired && step === "otp"}
             />
             {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
           </div>
@@ -416,11 +366,9 @@ function LoginForm() {
               Role change requested. Pending admin approval. You have been signed in with your current role.
             </p>
           )}
-          {!(authEmailOtpRequired && step === "otp") && (
-            <Button type="submit" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? "Signing in..." : authEmailOtpRequired ? "Continue" : "Sign in"}
-            </Button>
-          )}
+          <Button type="submit" className="w-full" disabled={isSubmitting}>
+            {isSubmitting ? "Signing in..." : "Sign in"}
+          </Button>
         </form>
         <p className="mt-4 text-center text-sm text-muted-foreground">
           Don&apos;t have an account?{" "}

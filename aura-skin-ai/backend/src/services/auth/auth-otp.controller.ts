@@ -1,8 +1,23 @@
-import { Controller, Post, Body, Req, UnauthorizedException, BadRequestException } from "@nestjs/common";
+import { Controller, Post, Body, Req, UnauthorizedException, BadRequestException, HttpException } from "@nestjs/common";
 import { Request } from "express";
 import { Throttle } from "@nestjs/throttler";
-import { AuthOtpService } from "./auth-otp.service";
+import { AuthOtpService, OtpException } from "./auth-otp.service";
 import { formatSuccess } from "../../shared/utils/responseFormatter";
+
+/**
+ * Extracts structured error info from OtpException for the response body.
+ * Returns `{ statusCode, errorCode, message }` on OTP-specific errors.
+ */
+function rethrowWithErrorCode(err: unknown): never {
+  if (err instanceof OtpException) {
+    const response = err.getResponse();
+    // OtpException stores { statusCode, errorCode, message } in the response
+    if (typeof response === "object" && response !== null) {
+      throw new HttpException(response, err.getStatus());
+    }
+  }
+  throw err;
+}
 
 @Controller("auth")
 export class AuthOtpController {
@@ -13,21 +28,29 @@ export class AuthOtpController {
   async signupStart(
     @Body() body: { email: string; password: string; name?: string; requested_role?: string }
   ) {
-    const data = await this.authOtpService.signupStart({
-      email: body.email ?? "",
-      password: body.password ?? "",
-      name: body.name,
-      requested_role: body.requested_role,
-    });
-    return formatSuccess(data);
+    try {
+      const data = await this.authOtpService.signupStart({
+        email: body.email ?? "",
+        password: body.password ?? "",
+        name: body.name,
+        requested_role: body.requested_role,
+      });
+      return formatSuccess(data);
+    } catch (err) {
+      rethrowWithErrorCode(err);
+    }
   }
 
   @Throttle({ otp: { limit: 8, ttl: 60_000 } })
   @Post("signup/resend")
   async signupResend(@Body() body: { pendingId: string }) {
     if (!body.pendingId?.trim()) throw new BadRequestException("pendingId is required");
-    const data = await this.authOtpService.signupResend(body.pendingId.trim());
-    return formatSuccess(data);
+    try {
+      const data = await this.authOtpService.signupResend(body.pendingId.trim());
+      return formatSuccess(data);
+    } catch (err) {
+      rethrowWithErrorCode(err);
+    }
   }
 
   @Throttle({ otp: { limit: 12, ttl: 60_000 } })
@@ -36,8 +59,12 @@ export class AuthOtpController {
     if (!body.pendingId?.trim() || !body.otp?.trim()) {
       throw new BadRequestException("pendingId and otp are required");
     }
-    const data = await this.authOtpService.signupComplete(body.pendingId.trim(), body.otp.trim());
-    return formatSuccess(data);
+    try {
+      const data = await this.authOtpService.signupComplete(body.pendingId.trim(), body.otp.trim());
+      return formatSuccess(data);
+    } catch (err) {
+      rethrowWithErrorCode(err);
+    }
   }
 
   @Throttle({ otp: { limit: 8, ttl: 60_000 } })
@@ -51,23 +78,31 @@ export class AuthOtpController {
       req.socket?.remoteAddress ||
       null;
     const deviceInfo = req.headers["user-agent"] ?? null;
-    const data = await this.authOtpService.loginStart(
-      {
-        email: body.email ?? "",
-        password: body.password ?? "",
-        requested_role: body.requested_role,
-      },
-      { ipAddress, deviceInfo }
-    );
-    return formatSuccess(data);
+    try {
+      const data = await this.authOtpService.loginStart(
+        {
+          email: body.email ?? "",
+          password: body.password ?? "",
+          requested_role: body.requested_role,
+        },
+        { ipAddress, deviceInfo }
+      );
+      return formatSuccess(data);
+    } catch (err) {
+      rethrowWithErrorCode(err);
+    }
   }
 
   @Throttle({ otp: { limit: 8, ttl: 60_000 } })
   @Post("login/resend")
   async loginResend(@Body() body: { challengeId: string }) {
     if (!body.challengeId?.trim()) throw new BadRequestException("challengeId is required");
-    const data = await this.authOtpService.loginResend(body.challengeId.trim());
-    return formatSuccess(data);
+    try {
+      const data = await this.authOtpService.loginResend(body.challengeId.trim());
+      return formatSuccess(data);
+    } catch (err) {
+      rethrowWithErrorCode(err);
+    }
   }
 
   @Throttle({ otp: { limit: 12, ttl: 60_000 } })
@@ -84,14 +119,18 @@ export class AuthOtpController {
       req.socket?.remoteAddress ||
       null;
     const deviceInfo = req.headers["user-agent"] ?? null;
-    const result = await this.authOtpService.loginComplete(body.challengeId.trim(), body.otp.trim(), {
-      ipAddress,
-      deviceInfo,
-    });
-    if ("error" in result) {
-      throw new UnauthorizedException("Invalid email or password");
+    try {
+      const result = await this.authOtpService.loginComplete(body.challengeId.trim(), body.otp.trim(), {
+        ipAddress,
+        deviceInfo,
+      });
+      if ("error" in result) {
+        throw new UnauthorizedException("Invalid email or password");
+      }
+      return formatSuccess(result);
+    } catch (err) {
+      rethrowWithErrorCode(err);
     }
-    return formatSuccess(result);
   }
 
   @Post("oauth-otp/start")
@@ -112,12 +151,16 @@ export class AuthOtpController {
     if (!body.access_token?.trim() || !body.refresh_token?.trim()) {
       throw new BadRequestException("access_token and refresh_token are required");
     }
-    const data = await this.authOtpService.oauthOtpStart({
-      access_token: body.access_token.trim(),
-      refresh_token: body.refresh_token.trim(),
-      requested_role: body.requested_role,
-      oauth_next: body.oauth_next,
-    });
-    return formatSuccess(data);
+    try {
+      const data = await this.authOtpService.oauthOtpStart({
+        access_token: body.access_token.trim(),
+        refresh_token: body.refresh_token.trim(),
+        requested_role: body.requested_role,
+        oauth_next: body.oauth_next,
+      });
+      return formatSuccess(data);
+    } catch (err) {
+      rethrowWithErrorCode(err);
+    }
   }
 }

@@ -38,6 +38,8 @@ export class AuthPasswordController {
     }
 
     // 2. If user requires OTP (new user or forced), trigger the OTP flow
+    // IMPORTANT: We do NOT return the session tokens from 'result' if OTP is required.
+    // This prevents the frontend from bypassing the OTP verification step.
     if (result.otpRequired) {
       const challenge = await this.authOtpService.loginStart(
         {
@@ -47,7 +49,11 @@ export class AuthPasswordController {
         },
         { ipAddress, deviceInfo }
       );
-      return formatSuccess({ otp_required: true, ...challenge });
+      // Return ONLY the OTP challenge information
+      return formatSuccess({ 
+        otp_required: true, 
+        challengeId: challenge.challengeId 
+      });
     }
 
     // 3. Legacy user: proceed with immediate session
@@ -59,28 +65,17 @@ export class AuthPasswordController {
   async signup(
     @Body() body: { email: string; password: string; name?: string; requested_role?: string }
   ) {
-    const env = loadEnv();
+    // New signups ALWAYS go through OTP flow. Direct signup is disabled for security.
+    const result = await this.authOtpService.signupStart({
+      email: body.email ?? "",
+      password: body.password ?? "",
+      name: body.name,
+      requested_role: body.requested_role as any,
+    });
     
-    // If global OTP is enabled, new signups go through OTP flow
-    if (env.authEmailOtpRequired) {
-      const result = await this.authOtpService.signupStart({
-        email: body.email ?? "",
-        password: body.password ?? "",
-        name: body.name,
-        requested_role: body.requested_role as any,
-      });
-      return formatSuccess({ otp_required: true, ...result });
-    }
-
-    // Fallback to legacy signup (unverified) if flag is off
-    const result = await this.authService.signUp(
-      body.email ?? "",
-      body.password ?? "",
-      { name: body.name, requestedRole: body.requested_role }
-    );
-    if ("error" in result) {
-      throw new BadRequestException(result.error);
-    }
-    return formatSuccess({ success: true });
+    return formatSuccess({ 
+      otp_required: true, 
+      ...result 
+    });
   }
 }

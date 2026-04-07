@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Injectable, UnauthorizedException, OnModuleInit } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { timingSafeEqual } from "crypto";
 import { createClient } from "@supabase/supabase-js";
@@ -18,22 +18,104 @@ import { PendingSignupRepository } from "./pending-signup.repository";
 import { LoginChallengeRepository, type LoginChallengeKind } from "./login-challenge.repository";
 import type { User } from "@supabase/supabase-js";
 
+/* ------------------------------------------------------------------ */
+/*  Constants                                                          */
+/* ------------------------------------------------------------------ */
+
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_EXPIRES_MINUTES = 10;
 const RESEND_COOLDOWN_MS = 60_000;
-const MAX_VERIFY_ATTEMPTS = 100;
+const MAX_VERIFY_ATTEMPTS = 5;
 const MAX_RESENDS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
 const MAX_OTP_EVENTS_PER_EMAIL_PER_HOUR = 20;
 
+/** TASK 6 — tighter 15-minute rate window */
+const MAX_OTP_SENDS_PER_15_MIN = 5;
+const RATE_LIMIT_15_MIN_MS = 15 * 60 * 1000;
+
+/* ------------------------------------------------------------------ */
+/*  Structured OTP Error Codes (TASK 10)                               */
+/* ------------------------------------------------------------------ */
+
+export const OTP_ERROR_CODES = {
+  INVALID_OTP: "INVALID_OTP",
+  OTP_EXPIRED: "OTP_EXPIRED",
+  CHALLENGE_EXPIRED: "CHALLENGE_EXPIRED",
+  TOO_MANY_ATTEMPTS: "TOO_MANY_ATTEMPTS",
+  TOO_MANY_REQUESTS: "TOO_MANY_REQUESTS",
+  EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
+} as const;
+
+export type OtpErrorCode = (typeof OTP_ERROR_CODES)[keyof typeof OTP_ERROR_CODES];
+
+const OTP_ERROR_MESSAGES: Record<OtpErrorCode, string> = {
+  INVALID_OTP: "Invalid code. Please try again.",
+  OTP_EXPIRED: "Code expired. Request a new one.",
+  CHALLENGE_EXPIRED: "Your verification session expired. Request a new code.",
+  TOO_MANY_ATTEMPTS: "Too many attempts. A new code has been sent.",
+  TOO_MANY_REQUESTS: "Too many requests. Try again later.",
+  EMAIL_SEND_FAILED: "Unable to send verification email. Try again.",
+};
+
+/**
+ * Custom exception that carries a machine-readable `errorCode` alongside
+ * the human-friendly `message`. Controllers extract these into the response.
+ */
+export class OtpException extends BadRequestException {
+  public readonly errorCode: OtpErrorCode;
+
+  constructor(code: OtpErrorCode, messageOverride?: string) {
+    const msg = messageOverride ?? OTP_ERROR_MESSAGES[code];
+    super({ statusCode: 400, errorCode: code, message: msg });
+    this.errorCode = code;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Service                                                            */
+/* ------------------------------------------------------------------ */
+
 @Injectable()
-export class AuthOtpService {
+export class AuthOtpService implements OnModuleInit {
   constructor(
     private readonly authService: AuthService,
     private readonly pendingRepo: PendingSignupRepository,
     private readonly challengeRepo: LoginChallengeRepository,
     private readonly logger: LoggerService
   ) {}
+
+  /* ---------------------------------------------------------------- */
+  /*  TASK 9 — Env validation at startup (non-fatal)                  */
+  /* ---------------------------------------------------------------- */
+
+  onModuleInit(): void {
+    const warnKeys = [
+      "AUTH_EMAIL_OTP_REQUIRED",
+      "AUTH_OTP_ENCRYPTION_KEY",
+      "SMTP_HOST",
+      "SMTP_PORT",
+      "SMTP_USER",
+      "SMTP_PASS",
+    ];
+    const missing = warnKeys.filter((k) => {
+      const v = process.env[k];
+      return v === undefined || v === "";
+    });
+    if (missing.length > 0) {
+      this.logger.logSecurity({
+        event: "otp_env_misconfigured",
+        extra: { missing_keys: missing },
+      });
+      this.logger.warn(
+        `OTP_ENV_MISCONFIGURED: Missing env vars: ${missing.join(", ")}. OTP feature may not work correctly.`
+      );
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Internals                                                       */
+  /* ---------------------------------------------------------------- */
 
   private ephemeralClient() {
     const { url, anonKey } = getSupabaseConfig();
@@ -50,6 +132,7 @@ export class AuthOtpService {
     }
   }
 
+  /** TASK 6 — hourly rate limit (existing) */
   private async assertEmailRateLimit(email: string): Promise<void> {
     const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const [a, b] = await Promise.all([
@@ -57,13 +140,31 @@ export class AuthOtpService {
       this.challengeRepo.countStartsSince(email, since),
     ]);
     if (a + b >= MAX_OTP_EVENTS_PER_EMAIL_PER_HOUR) {
-      throw new BadRequestException("Too many verification requests for this email. Try again later.");
+      this.logger.logSecurity({ event: "otp_rate_limited", extra: { email, window: "1h", count: a + b } });
+      throw new OtpException("TOO_MANY_REQUESTS");
+    }
+  }
+
+  /** TASK 6 — tighter 15-minute rate limit */
+  private async assertEmailRateLimit15Min(email: string): Promise<void> {
+    const since = new Date(Date.now() - RATE_LIMIT_15_MIN_MS).toISOString();
+    const [a, b] = await Promise.all([
+      this.pendingRepo.countStartsSince(email, since),
+      this.challengeRepo.countStartsSince(email, since),
+    ]);
+    if (a + b >= MAX_OTP_SENDS_PER_15_MIN) {
+      this.logger.logSecurity({ event: "otp_rate_limited", extra: { email, window: "15m", count: a + b } });
+      throw new OtpException("TOO_MANY_REQUESTS", "Too many attempts. Please try again in 15 minutes.");
     }
   }
 
   private nowLockedUntil(): string {
     return new Date(Date.now() + LOCKOUT_MS).toISOString();
   }
+
+  /* ---------------------------------------------------------------- */
+  /*  Signup Flow                                                      */
+  /* ---------------------------------------------------------------- */
 
   async signupStart(payload: {
     email: string;
@@ -78,6 +179,7 @@ export class AuthOtpService {
     }
 
     await this.assertEmailRateLimit(email);
+    await this.assertEmailRateLimit15Min(email);
 
     await this.pendingRepo.deleteByEmail(email);
 
@@ -107,7 +209,7 @@ export class AuthOtpService {
     } catch (e) {
       await this.pendingRepo.deleteById(id);
       this.logger.error("OTP email send failed (signup)", e);
-      throw new BadRequestException("Unable to send verification email. Try again later.");
+      throw new OtpException("EMAIL_SEND_FAILED");
     }
 
     this.logger.logSecurity({
@@ -120,21 +222,24 @@ export class AuthOtpService {
 
   async signupResend(pendingId: string): Promise<{ ok: true }> {
     const row = await this.pendingRepo.findById(pendingId);
-    if (!row) throw new BadRequestException("Invalid or expired signup session.");
+    if (!row) throw new OtpException("CHALLENGE_EXPIRED", "Invalid or expired signup session.");
     if (row.locked_until && new Date(row.locked_until) > new Date()) {
       this.logger.logSecurity({ event: "otp_locked", extra: { channel: "signup_resend", id: pendingId } });
-      throw new BadRequestException("Too many attempts. Try again later.");
+      throw new OtpException("TOO_MANY_REQUESTS", "Too many attempts. Try again later.");
     }
     if (new Date(row.expires_at) < new Date()) {
-      throw new BadRequestException("This signup session has expired. Start again.");
+      throw new OtpException("CHALLENGE_EXPIRED", "This signup session has expired. Start again.");
     }
     if (row.resend_count >= MAX_RESENDS) {
-      throw new BadRequestException("Maximum resend attempts reached.");
+      throw new OtpException("TOO_MANY_REQUESTS", "Maximum resend attempts reached.");
     }
     const last = row.last_otp_sent_at ? new Date(row.last_otp_sent_at).getTime() : 0;
     if (Date.now() - last < RESEND_COOLDOWN_MS) {
       throw new BadRequestException("Please wait before requesting another code.");
     }
+
+    // 15-minute rate limit check for resend
+    await this.assertEmailRateLimit15Min(row.email);
 
     const otp = generateNumericOtp6();
     const otpHash = await hashOtp(otp);
@@ -154,29 +259,39 @@ export class AuthOtpService {
 
   async signupComplete(pendingId: string, otp: string): Promise<{ success: true }> {
     const row = await this.pendingRepo.findById(pendingId);
-    if (!row) throw new BadRequestException("Invalid or expired signup session.");
+    if (!row) throw new OtpException("CHALLENGE_EXPIRED", "Invalid or expired signup session.");
     if (row.locked_until && new Date(row.locked_until) > new Date()) {
       this.logger.logSecurity({ event: "otp_locked", extra: { channel: "signup_complete", id: pendingId } });
-      throw new BadRequestException("Too many attempts. Try again later.");
+      throw new OtpException("TOO_MANY_REQUESTS", "Too many attempts. Try again later.");
     }
     if (new Date(row.expires_at) < new Date()) {
       await this.pendingRepo.deleteById(pendingId);
-      throw new BadRequestException("This signup session has expired. Start again.");
+      throw new OtpException("OTP_EXPIRED");
     }
 
     const ok = await verifyOtpConstantTime(otp.trim(), row.otp_hash);
     if (!ok) {
       const attempts = row.attempt_count + 1;
-      const lockedUntil = attempts >= MAX_VERIFY_ATTEMPTS ? this.nowLockedUntil() : null;
-      await this.pendingRepo.updateOtpState(row.id, { attempt_count: attempts, locked_until: lockedUntil });
       this.logger.logSecurity({
         event: "otp_failed",
         extra: { channel: "signup_verify", email: row.email, attempts },
       });
       if (attempts >= MAX_VERIFY_ATTEMPTS) {
-        throw new BadRequestException("Too many incorrect codes. Try again later.");
+        // Auto-regenerate: invalidate old OTP and issue a fresh one
+        const newOtp = generateNumericOtp6();
+        const newHash = await hashOtp(newOtp);
+        const newExpiry = new Date(Date.now() + OTP_TTL_MS).toISOString();
+        await this.pendingRepo.updateOtpState(row.id, {
+          otp_hash: newHash,
+          expires_at: newExpiry,
+          attempt_count: 0,
+          last_otp_sent_at: new Date().toISOString(),
+        });
+        await sendVerificationOtpEmail(row.email, newOtp, OTP_EXPIRES_MINUTES).catch(() => {});
+        throw new OtpException("TOO_MANY_ATTEMPTS");
       }
-      throw new BadRequestException("Invalid verification code.");
+      await this.pendingRepo.updateOtpState(row.id, { attempt_count: attempts });
+      throw new OtpException("INVALID_OTP");
     }
 
     let password: string;
@@ -202,6 +317,10 @@ export class AuthOtpService {
     return { success: true };
   }
 
+  /* ---------------------------------------------------------------- */
+  /*  Login Flow                                                       */
+  /* ---------------------------------------------------------------- */
+
   async loginStart(
     payload: { email: string; password: string; requested_role?: string },
     context: SignInContext
@@ -213,6 +332,7 @@ export class AuthOtpService {
 
     const email = normalizeEmail(start.userEmail);
     await this.assertEmailRateLimit(email);
+    await this.assertEmailRateLimit15Min(email);
 
     const otp = generateNumericOtp6();
     const otpHash = await hashOtp(otp);
@@ -243,7 +363,7 @@ export class AuthOtpService {
     } catch (e) {
       await this.challengeRepo.deleteById(challengeId);
       this.logger.error("OTP email send failed (login)", e);
-      throw new BadRequestException("Unable to send verification email. Try again later.");
+      throw new OtpException("EMAIL_SEND_FAILED");
     }
 
     this.logger.logSecurity({ event: "otp_sent", extra: { channel: "login", email } });
@@ -252,21 +372,24 @@ export class AuthOtpService {
 
   async loginResend(challengeId: string): Promise<{ ok: true }> {
     const row = await this.challengeRepo.findById(challengeId);
-    if (!row) throw new BadRequestException("Invalid or expired login session.");
+    if (!row) throw new OtpException("CHALLENGE_EXPIRED", "Invalid or expired login session.");
     if (row.locked_until && new Date(row.locked_until) > new Date()) {
       this.logger.logSecurity({ event: "otp_locked", extra: { channel: "login_resend", id: challengeId } });
-      throw new BadRequestException("Too many attempts. Try again later.");
+      throw new OtpException("TOO_MANY_REQUESTS", "Too many attempts. Try again later.");
     }
     if (new Date(row.expires_at) < new Date()) {
-      throw new BadRequestException("This login session has expired. Sign in again.");
+      throw new OtpException("CHALLENGE_EXPIRED", "This login session has expired. Sign in again.");
     }
     if (row.resend_count >= MAX_RESENDS) {
-      throw new BadRequestException("Maximum resend attempts reached.");
+      throw new OtpException("TOO_MANY_REQUESTS", "Maximum resend attempts reached.");
     }
     const last = row.last_otp_sent_at ? new Date(row.last_otp_sent_at).getTime() : 0;
     if (Date.now() - last < RESEND_COOLDOWN_MS) {
       throw new BadRequestException("Please wait before requesting another code.");
     }
+
+    // 15-minute rate limit check for resend
+    await this.assertEmailRateLimit15Min(row.email);
 
     const otp = generateNumericOtp6();
     const otpHash = await hashOtp(otp);
@@ -289,29 +412,39 @@ export class AuthOtpService {
     context: SignInContext
   ): Promise<SignInResult> {
     const row = await this.challengeRepo.findById(challengeId);
-    if (!row) throw new BadRequestException("Invalid or expired login session.");
+    if (!row) throw new OtpException("CHALLENGE_EXPIRED", "Invalid or expired login session.");
     if (row.locked_until && new Date(row.locked_until) > new Date()) {
       this.logger.logSecurity({ event: "otp_locked", extra: { channel: "login_complete", id: challengeId } });
-      throw new BadRequestException("Too many attempts. Try again later.");
+      throw new OtpException("TOO_MANY_REQUESTS", "Too many attempts. Try again later.");
     }
     if (new Date(row.expires_at) < new Date()) {
       await this.challengeRepo.deleteById(challengeId);
-      throw new BadRequestException("This login session has expired. Sign in again.");
+      throw new OtpException("CHALLENGE_EXPIRED");
     }
 
     const ok = await verifyOtpConstantTime(otp.trim(), row.otp_hash);
     if (!ok) {
       const attempts = row.attempt_count + 1;
-      const lockedUntil = attempts >= MAX_VERIFY_ATTEMPTS ? this.nowLockedUntil() : null;
-      await this.challengeRepo.updateState(row.id, { attempt_count: attempts, locked_until: lockedUntil });
       this.logger.logSecurity({
         event: "otp_failed",
         extra: { channel: "login_verify", email: row.email, attempts },
       });
       if (attempts >= MAX_VERIFY_ATTEMPTS) {
-        throw new BadRequestException("Too many incorrect codes. Try again later.");
+        // Auto-regenerate: invalidate old OTP and issue a fresh one
+        const newOtp = generateNumericOtp6();
+        const newHash = await hashOtp(newOtp);
+        const newExpiry = new Date(Date.now() + OTP_TTL_MS).toISOString();
+        await this.challengeRepo.updateState(row.id, {
+          otp_hash: newHash,
+          expires_at: newExpiry,
+          attempt_count: 0,
+          last_otp_sent_at: new Date().toISOString(),
+        });
+        await sendVerificationOtpEmail(row.email, newOtp, OTP_EXPIRES_MINUTES).catch(() => {});
+        throw new OtpException("TOO_MANY_ATTEMPTS");
       }
-      throw new BadRequestException("Invalid verification code.");
+      await this.challengeRepo.updateState(row.id, { attempt_count: attempts });
+      throw new OtpException("INVALID_OTP");
     }
 
     let tokens: { access_token: string; refresh_token: string };
@@ -357,6 +490,10 @@ export class AuthOtpService {
 
     return this.authService.finalizeLoginFromSession(session, user, context, requestedRole, extras);
   }
+
+  /* ---------------------------------------------------------------- */
+  /*  OAuth OTP Bridge                                                 */
+  /* ---------------------------------------------------------------- */
 
   validateInternalOtpSecret(headerValue: string | undefined): void {
     const env = loadEnv();
@@ -412,6 +549,7 @@ export class AuthOtpService {
     }
 
     await this.assertEmailRateLimit(email);
+    await this.assertEmailRateLimit15Min(email);
 
     const otp = generateNumericOtp6();
     const otpHash = await hashOtp(otp);
@@ -442,12 +580,16 @@ export class AuthOtpService {
     } catch (e) {
       await this.challengeRepo.deleteById(challengeId);
       this.logger.error("OTP email send failed (oauth)", e);
-      throw new BadRequestException("Unable to send verification email. Try again later.");
+      throw new OtpException("EMAIL_SEND_FAILED");
     }
 
     this.logger.logSecurity({ event: "otp_sent", extra: { channel: "oauth", email } });
     return { challengeId };
   }
+
+  /* ---------------------------------------------------------------- */
+  /*  Cleanup Cron                                                     */
+  /* ---------------------------------------------------------------- */
 
   @Cron(CronExpression.EVERY_30_MINUTES)
   async purgeExpiredRows(): Promise<void> {

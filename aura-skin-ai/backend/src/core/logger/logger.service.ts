@@ -144,7 +144,12 @@ export class LoggerService {
       | "gmail_rejected_oauth"
       | "gmail_rejected_signup"
       | "gmail_rejected_login"
-      | "oauth_otp_bridge_rejected";
+      | "login_otp_challenge"
+      | "oauth_otp_bridge_rejected"
+      | "otp_email_retry"
+      | "otp_email_delivery_failed"
+      | "otp_rate_limited"
+      | "otp_env_misconfigured";
     user_id?: string;
     endpoint?: string;
     extra?: Record<string, unknown>;
