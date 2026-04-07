@@ -32,13 +32,8 @@ export type SignInResult =
       /** Present after OAuth + OTP when client should continue via /oauth/bridge */
       oauthBridgeNext?: string;
       oauthRequestedRole?: string;
-      /** True when login completed from an OAuth email-OTP challenge (not password OTP). */
-      oauthOtpCompleted?: boolean;
-      otpRequired?: boolean;
     }
   | { error: string };
-
-export type SignUpResult = { success: true } | { error: string };
 
 @Injectable()
 export class AuthService {
@@ -58,10 +53,7 @@ export class AuthService {
   /** Backend roles that require admin approval when requested at login. */
   private static readonly REQUESTABLE_ROLES: BackendRole[] = ["store", "dermatologist", "admin"];
 
-  private createEphemeralAnonClient(): SupabaseClient {
-    const { url, anonKey } = getSupabaseConfig();
-    return createClient(url, anonKey, { auth: { persistSession: false } });
-  }
+
 
   /** @returns Error message if Gmail-only policy rejects; otherwise null. */
   private enforceGmailForPasswordAuth(normalizedLowerEmail: string): string | null {
@@ -162,62 +154,8 @@ export class AuthService {
     if (oauthExtras?.oauthRequestedRole !== undefined) {
       result.oauthRequestedRole = oauthExtras.oauthRequestedRole;
     }
-    if (oauthExtras) {
-      result.oauthOtpCompleted = true;
-    }
 
     return result;
-  }
-
-  /**
-   * Validates password using an isolated Supabase client (no singleton session pollution).
-   * Used only when email OTP is required before returning tokens.
-   */
-  async signInWithPasswordForOtpStart(
-    email: string,
-    password: string
-  ): Promise<
-    | { ok: true; accessToken: string; refreshToken: string; userId: string; userEmail: string }
-    | { ok: false; error: string }
-  > {
-    const normalizedEmail = normalizeEmail(email);
-    const gmailErr = this.enforceGmailForPasswordAuth(normalizedEmail);
-    if (gmailErr) {
-      this.logger.logSecurity({
-        event: "gmail_rejected_login",
-        extra: { email: normalizedEmail },
-      });
-      return { ok: false, error: gmailErr };
-    }
-
-    const client = this.createEphemeralAnonClient();
-    const { data, error } = await client.auth.signInWithPassword({
-      email: normalizedEmail,
-      password,
-    });
-    if (error) {
-      this.logger.logSecurity({
-        event: "failed_login",
-        extra: { email: normalizedEmail, reason: error.message },
-      });
-      return { ok: false, error: AuthService.LOGIN_ERROR_MESSAGE };
-    }
-    const session = data.session;
-    const user = data.user;
-    if (!session || !user) {
-      this.logger.logSecurity({
-        event: "failed_login",
-        extra: { email: normalizedEmail, reason: "missing_session_or_user" },
-      });
-      return { ok: false, error: AuthService.LOGIN_ERROR_MESSAGE };
-    }
-    return {
-      ok: true,
-      accessToken: session.access_token,
-      refreshToken: session.refresh_token ?? "",
-      userId: user.id,
-      userEmail: (user.email ?? normalizedEmail).trim().toLowerCase(),
-    };
   }
 
   async signInWithPassword(
@@ -236,14 +174,11 @@ export class AuthService {
       return { error: gmailErr };
     }
 
-    // SECURITY FIX: Always use an ephemeral client to prevent singleton
-    // session pollution. The singleton Supabase client must never hold a
-    // session for an OTP-required user before their OTP is verified.
-    const client = this.createEphemeralAnonClient();
-    const { data, error } = await client.auth.signInWithPassword({
+    const { data, error } = await this.supabase.auth.signInWithPassword({
       email: normalizedEmail,
       password,
     });
+
     if (error) {
       this.logger.logSecurity({
         event: "failed_login",
@@ -251,6 +186,7 @@ export class AuthService {
       });
       return { error: AuthService.LOGIN_ERROR_MESSAGE };
     }
+
     const session = data.session;
     const user = data.user;
     if (!session || !user) {
@@ -261,31 +197,7 @@ export class AuthService {
       return { error: AuthService.LOGIN_ERROR_MESSAGE };
     }
 
-    // Check otp_required BEFORE creating any app-level session.
-    // If the user requires OTP we return ONLY the flag — no tokens leak.
-    const profile = await this.getProfileByUserId(user.id);
-    if (profile?.otpRequired) {
-      this.logger.logSecurity({
-        event: "login_otp_challenge",
-        extra: { email: normalizedEmail, user_id: user.id },
-      });
-      // Return a lean result with ONLY the otpRequired flag.
-      // The controller will trigger the OTP challenge flow.
-      // accessToken/refreshToken are NOT exposed to the caller.
-      return {
-        accessToken: "",   // placeholder — never sent to client
-        refreshToken: "",  // placeholder — never sent to client
-        user: profile,
-        otpRequired: true,
-      };
-    }
-
-    // Legacy user (otp_required=false): proceed with full session.
-    const result = await this.finalizeLoginFromSession(session, user, context, requestedRole);
-    if ("user" in result) {
-      result.otpRequired = false;
-    }
-    return result;
+    return this.finalizeLoginFromSession(session, user, context, requestedRole);
   }
 
   private async createRoleRequest(userId: string, requestedRole: BackendRole): Promise<void> {
@@ -301,7 +213,7 @@ export class AuthService {
     email: string,
     password: string,
     options?: { name?: string; requestedRole?: string; emailVerified?: boolean; otpRequired?: boolean }
-  ): Promise<SignUpResult> {
+  ): Promise<SignInResult> {
     const supabaseAdmin = getSupabaseClient();
     const normalizedEmail = normalizeEmail(email);
 
@@ -345,7 +257,7 @@ export class AuthService {
           role: "user",
           full_name: options?.name ?? null,
           email_verified: options?.emailVerified ?? false,
-          otp_required: options?.otpRequired ?? true, // Default to true for new accounts
+          otp_required: options?.otpRequired ?? false, // Default to false (custom OTP removed)
           otp_verified_at: options?.emailVerified ? new Date().toISOString() : null,
         },
         { onConflict: "id" }
@@ -369,7 +281,8 @@ export class AuthService {
       user_id: data.user?.id ?? "unknown",
     });
 
-    return { success: true };
+    // Automatically sign in the user after signup to return a session
+    return this.signInWithPassword(normalizedEmail, password);
   }
 
   async signOut(): Promise<void> {
@@ -422,7 +335,7 @@ export class AuthService {
     const supabaseAdmin = getSupabaseClient();
     const { data: row, error } = await supabaseAdmin
       .from("profiles")
-      .select("id, email, role, full_name, avatar_url, email_verified, otp_required, provider")
+      .select("id, email, role, full_name, avatar_url, email_verified, provider")
       .eq("id", userId)
       .single();
     if (error || !row) return null;
@@ -439,7 +352,6 @@ export class AuthService {
       fullName: row.full_name ?? null,
       avatar: row.avatar_url ?? null,
       emailVerified: row.email_verified ?? false,
-      otpRequired: row.otp_required ?? false,
       provider: row.provider ?? null,
     };
   }

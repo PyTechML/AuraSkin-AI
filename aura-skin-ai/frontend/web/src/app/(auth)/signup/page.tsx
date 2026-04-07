@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { signup, verifyOtp, resendOtp, isOtpRequired } from "@/services/apiAuth";
+import { signup } from "@/services/apiAuth";
 import { usePanelToast } from "@/components/panel/PanelToast";
 import {
   Dialog, 
@@ -21,7 +21,6 @@ import {
   DialogTitle 
 } from "@/components/ui/dialog";
 import { authGmailOnly } from "@/lib/auth-flags";
-import { OtpModal } from "@/components/auth/OtpModal";
 import { GoogleOAuthButton } from "@/components/auth/GoogleOAuthButton";
 
 const baseSignupSchema = z
@@ -57,18 +56,9 @@ export default function SignupPage() {
   } = useForm<FormData>({ resolver: zodResolver(signupSchema) });
   const [pendingModalOpen, setPendingModalOpen] = useState(false);
   const [pendingRoleLabel, setPendingRoleLabel] = useState<"Store" | "Dermatologist">("Store");
-  const [otpOpen, setOtpOpen] = useState(false);
-  const [pendingId, setPendingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [resendCooldown, setResendCooldown] = useState(0);
 
   const requestedRole = watch("requested_role") ?? "USER";
-
-  useEffect(() => {
-    if (resendCooldown <= 0) return;
-    const t = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000);
-    return () => clearInterval(t);
-  }, [resendCooldown]);
 
   const finishSignupSuccess = (role: "USER" | "STORE" | "DERMATOLOGIST") => {
     if (role === "STORE" || role === "DERMATOLOGIST") {
@@ -83,53 +73,21 @@ export default function SignupPage() {
   const onSubmit = async (data: FormData) => {
     setIsSubmitting(true);
     try {
-      const res = await signup({
+      await signup({
         email: data.email,
         password: data.password,
         name: data.name,
         requested_role: data.requested_role,
       });
 
-      if (isOtpRequired(res)) {
-        setPendingId(res.pendingId || null);
-        setIsSubmitting(false); // Stop loading immediately
-        setOtpOpen(true);
-        addToast("Check your email for a 6-digit verification code.", "success");
-        return;
-      }
-
       setIsSubmitting(false);
       finishSignupSuccess(data.requested_role);
     } catch (err: any) {
       setIsSubmitting(false);
-      const errorCode = err?.errorCode ?? err?.code;
-      if (errorCode === "EMAIL_SEND_FAILED") {
-        addToast("Unable to send verification email. Please check your email address and try again.", "error");
-      } else {
-        const message =
-          err instanceof Error && err.message ? err.message : "Registration failed. Please try again.";
-        addToast(message, "error");
-      }
+      const message =
+        err instanceof Error && err.message ? err.message : "Registration failed. Please try again.";
+      addToast(message, "error");
     }
-  };
-
-  const onVerifyOtp = async (code: string) => {
-    if (!pendingId || code.trim().length < 6) return;
-    try {
-      await verifyOtp(pendingId, code.trim(), "signup");
-      const role = watch("requested_role") ?? "USER";
-      setOtpOpen(false);
-      finishSignupSuccess(role);
-      setPendingId(null);
-    } catch (err) {
-      throw err; // Propagate to modal
-    }
-  };
-
-  const onResendOtp = async () => {
-    if (!pendingId) return;
-    await resendOtp(pendingId, "signup");
-    addToast("A new code was sent to your email.", "success");
   };
 
   return (
@@ -141,14 +99,6 @@ export default function SignupPage() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <OtpModal
-          isOpen={otpOpen}
-          email={watch("email")}
-          onVerify={onVerifyOtp}
-          onResend={onResendOtp}
-          onClose={() => setOtpOpen(false)}
-        />
-
         <form
           onSubmit={(e) => {
             e.preventDefault();

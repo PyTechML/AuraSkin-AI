@@ -15,8 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { authGmailOnly } from "@/lib/auth-flags";
-import { login, verifyOtp, resendOtp, isOtpRequired } from "@/services/apiAuth";
-import { OtpModal } from "@/components/auth/OtpModal";
+import { login } from "@/services/apiAuth";
 import { GoogleOAuthButton } from "@/components/auth/GoogleOAuthButton";
 
 function isSafeRedirect(path: string | null): boolean {
@@ -65,7 +64,6 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   oauth_missing_token: "Session token missing. Please sign in again.",
   oauth_gmail_required: "Only Gmail (@gmail.com) accounts are allowed. Google Workspace addresses on a custom domain are not accepted.",
   oauth_apple_blocked: "Apple sign-in is not available with the current account policy. Use Google (Gmail) or email and password.",
-  oauth_otp_start_failed: "Could not start email verification. Please try again.",
 };
 
 function LoginForm() {
@@ -74,8 +72,6 @@ function LoginForm() {
   const setSession = useAuthStore((s) => s.setSession);
   const logout = useAuthStore((s) => s.logout);
   const redirect = searchParams.get("redirect");
-  const [isOtpModalOpen, setIsOtpModalOpen] = useState(false);
-  const [challengeId, setChallengeId] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [roleRequestPending, setRoleRequestPending] = useState(false);
@@ -168,12 +164,6 @@ function LoginForm() {
         requested_role: data.requested_role ?? "USER",
       });
 
-      if (isOtpRequired(res)) {
-        setChallengeId(res.challengeId || null);
-        setIsOtpModalOpen(true);
-        return;
-      }
-
       if ("accessToken" in res) {
         await finalizeSession({
           accessToken: res.accessToken,
@@ -192,33 +182,6 @@ function LoginForm() {
     }
   };
 
-  const onVerifyOtp = async (code: string) => {
-    if (!challengeId || code.trim().length < 6) return;
-    setApiError(null);
-    try {
-      const res = (await verifyOtp(challengeId, code.trim(), "login")) as any;
-      
-      setIsOtpModalOpen(false);
-      setChallengeId(null);
-      
-      if (res.accessToken) {
-        await finalizeSession({
-          accessToken: res.accessToken,
-          sessionToken: res.sessionToken,
-          role_request_pending: res.role_request_pending,
-          requested_role: res.requested_role,
-        });
-      }
-    } catch (err) {
-      throw err;
-    }
-  };
-
-  const onResendOtp = async () => {
-    if (!challengeId) return;
-    await resendOtp(challengeId, "login");
-  };
-
   return (
     <Card className="border-0 shadow-none bg-transparent">
       <CardHeader>
@@ -228,14 +191,6 @@ function LoginForm() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <OtpModal
-          isOpen={isOtpModalOpen}
-          email={watch("email")}
-          onVerify={onVerifyOtp}
-          onResend={onResendOtp}
-          onClose={() => setIsOtpModalOpen(false)}
-        />
-
         <form
           onSubmit={(event) => {
             event.preventDefault();

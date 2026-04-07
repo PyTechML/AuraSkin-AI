@@ -26,6 +26,5 @@ export interface CurrentUser {
   fullName: string | null;
   avatar: string | null;
   emailVerified: boolean;
-  otpRequired: boolean;
   provider: string | null;
 }

@@ -68,54 +68,6 @@ export async function GET(req: Request) {
     return NextResponse.redirect(new URL(`/login?error=oauth_backend_unreachable`, url.origin));
   }
 
-  if (serverAuthOtpRequired()) {
-    const secret = process.env.INTERNAL_OTP_BRIDGE_SECRET?.trim();
-    if (!secret) {
-      await supabase.auth.signOut();
-      return NextResponse.redirect(new URL(`/login?error=oauth_otp_start_failed`, url.origin));
-    }
-    const refreshToken = data.session.refresh_token ?? "";
-    if (!refreshToken) {
-      await supabase.auth.signOut();
-      return NextResponse.redirect(new URL(`/login?error=oauth_otp_start_failed`, url.origin));
-    }
-
-    const startRes = await fetch(`${API_BASE}/api/auth/oauth-otp/start`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-internal-otp-bridge-secret": secret,
-      },
-      body: JSON.stringify({
-        access_token: data.session.access_token,
-        refresh_token: refreshToken,
-        requested_role: requestedRole,
-        oauth_next: next,
-      }),
-    });
-    const startJson = (await startRes.json().catch(() => ({}))) as { data?: { challengeId?: string } };
-    const challengeId = startJson?.data?.challengeId;
-    if (!startRes.ok || !challengeId) {
-      await supabase.auth.signOut();
-      return NextResponse.redirect(new URL(`/login?error=oauth_otp_start_failed`, url.origin));
-    }
-
-    await supabase.auth.signOut();
-
-    const verifyUrl = new URL(`/oauth/verify-otp`, url.origin);
-    verifyUrl.searchParams.set("requested_role", requestedRole);
-    verifyUrl.searchParams.set("next", next);
-    const res = NextResponse.redirect(verifyUrl);
-    res.cookies.set("oauth_otp_challenge", challengeId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 900,
-    });
-    return res;
-  }
-
   const bridge = new URL(`/oauth/bridge`, url.origin);
   bridge.searchParams.set("token", data.session.access_token);
   bridge.searchParams.set("requested_role", requestedRole);
