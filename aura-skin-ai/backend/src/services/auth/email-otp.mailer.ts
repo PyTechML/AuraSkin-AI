@@ -1,12 +1,12 @@
 import * as nodemailer from "nodemailer";
 import { loadEnv } from "../../config/env";
 
-/** Retry delays in milliseconds: 1s, 2s, 3s (total worst-case ≈ 6s + send time) */
-const RETRY_DELAYS_MS = [1_000, 2_000, 3_000];
-const MAX_RETRIES = RETRY_DELAYS_MS.length;
+/** Retry delays in milliseconds (Fail Fast: reduced for total under 8s) */
+const RETRY_DELAYS_MS = [1_000];
+const MAX_RETRIES = 1;
 
-/** Maximum time to wait for a single sendMail call before aborting */
-const SEND_TIMEOUT_MS = 8_000;
+/** Maximum time to wait for a single sendMail call before aborting (8s total max) */
+const SEND_TIMEOUT_MS = 3_000;
 
 function buildOtpMailContent(code: string, expiresMinutes: number): {
   subject: string;
@@ -66,6 +66,8 @@ async function sendEmailOnce(toEmail: string, subject: string, html: string, tex
         rejectUnauthorized: false, // Required for Gmail SMTP compatibility
       },
     } as nodemailer.TransportOptions);
+
+    console.log(`[LOG STEP 4] Attempting SMTP email send to ${toEmail}`);
     await withTimeout(
       transporter.sendMail({
         from: env.smtpFrom,
@@ -77,6 +79,7 @@ async function sendEmailOnce(toEmail: string, subject: string, html: string, tex
       SEND_TIMEOUT_MS,
       "SMTP sendMail",
     );
+    console.log(`[LOG STEP 5] SMTP email sent successfully to ${toEmail}`);
     return;
   }
 
@@ -87,6 +90,8 @@ async function sendEmailOnce(toEmail: string, subject: string, html: string, tex
       "Email delivery is not configured (set SMTP_HOST + SMTP_FROM + SMTP_USER + SMTP_PASS, or RESEND_API_KEY + RESEND_FROM_EMAIL)"
     );
   }
+
+  console.log(`[LOG STEP 4] Attempting Resend email send to ${toEmail}`);
 
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -105,8 +110,10 @@ async function sendEmailOnce(toEmail: string, subject: string, html: string, tex
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
+    console.error(`[LOG STEP 5] Resend email delivery FAILED for ${toEmail}: ${res.status}`);
     throw new Error(`Resend API error: ${res.status} ${errText.slice(0, 200)}`);
   }
+  console.log(`[LOG STEP 5] Resend email sent successfully to ${toEmail}`);
 }
 
 /**
@@ -154,4 +161,34 @@ export async function sendVerificationOtpEmail(toEmail: string, code: string, ex
   );
 
   throw new Error("Verification email could not be sent. Please try again.");
+}
+
+/**
+ * Verifies SMTP connection on startup.
+ */
+export async function verifySmtpConnection(): Promise<boolean> {
+  const env = loadEnv();
+  if (!env.smtpHost || !env.smtpUser || !env.smtpPass) {
+    return false;
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: env.smtpHost,
+    port: env.smtpPort,
+    secure: env.smtpSecure,
+    auth: {
+      user: env.smtpUser,
+      pass: env.smtpPass,
+    },
+    connectionTimeout: 5_000,
+  } as nodemailer.TransportOptions);
+
+  try {
+    await withTimeout(transporter.verify(), 5_000, "SMTP verify");
+    console.log("SMTP_READY: SMTP connection verified.");
+    return true;
+  } catch (err) {
+    console.error("SMTP_FAILED: SMTP connection verification failed.", err);
+    return false;
+  }
 }

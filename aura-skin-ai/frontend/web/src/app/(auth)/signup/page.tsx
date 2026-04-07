@@ -77,12 +77,13 @@ export default function SignupPage() {
     register,
     handleSubmit,
     watch,
-    formState: { errors, isSubmitting },
+    formState: { errors },
   } = useForm<FormData>({ resolver: zodResolver(signupSchema) });
   const [pendingModalOpen, setPendingModalOpen] = useState(false);
   const [pendingRoleLabel, setPendingRoleLabel] = useState<"Store" | "Dermatologist">("Store");
-  const [isOtpModalOpen, setIsOtpModalOpen] = useState(false);
+  const [otpOpen, setOtpOpen] = useState(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
 
   const requestedRole = watch("requested_role") ?? "USER";
@@ -124,6 +125,7 @@ export default function SignupPage() {
   };
 
   const onSubmit = async (data: FormData) => {
+    setIsSubmitting(true);
     try {
       const res = await signup({
         email: data.email,
@@ -134,13 +136,16 @@ export default function SignupPage() {
 
       if (isOtpRequired(res)) {
         setPendingId(res.pendingId || null);
-        setIsOtpModalOpen(true);
+        setIsSubmitting(false); // Stop loading immediately
+        setOtpOpen(true);
         addToast("Check your email for a 6-digit verification code.", "success");
         return;
       }
 
+      setIsSubmitting(false);
       finishSignupSuccess(data.requested_role);
     } catch (err: any) {
+      setIsSubmitting(false);
       const errorCode = err?.errorCode ?? err?.code;
       if (errorCode === "EMAIL_SEND_FAILED") {
         addToast("Unable to send verification email. Please check your email address and try again.", "error");
@@ -157,7 +162,7 @@ export default function SignupPage() {
     try {
       await verifyOtp(pendingId, code.trim(), "signup");
       const role = watch("requested_role") ?? "USER";
-      setIsOtpModalOpen(false);
+      setOtpOpen(false);
       finishSignupSuccess(role);
       setPendingId(null);
     } catch (err) {
@@ -181,11 +186,11 @@ export default function SignupPage() {
       </CardHeader>
       <CardContent>
         <OtpModal
-          isOpen={isOtpModalOpen}
+          isOpen={otpOpen}
           email={watch("email")}
           onVerify={onVerifyOtp}
           onResend={onResendOtp}
-          onClose={() => setIsOtpModalOpen(false)}
+          onClose={() => setOtpOpen(false)}
         />
 
         <form

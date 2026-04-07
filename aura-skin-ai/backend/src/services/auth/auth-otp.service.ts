@@ -11,7 +11,7 @@ import {
   isGmailDomainEmail,
   normalizeEmail,
 } from "./auth-gmail.util";
-import { sendVerificationOtpEmail } from "./email-otp.mailer";
+import { sendVerificationOtpEmail, verifySmtpConnection } from "./email-otp.mailer";
 import { encryptJsonPayload, decryptJsonPayload } from "./otp-payload-crypto.util";
 import { generateNumericOtp6, hashOtp, verifyOtpConstantTime } from "./otp-crypto.util";
 import { PendingSignupRepository } from "./pending-signup.repository";
@@ -111,6 +111,12 @@ export class AuthOtpService implements OnModuleInit {
         `OTP_ENV_MISCONFIGURED: Missing env vars: ${missing.join(", ")}. OTP feature may not work correctly.`
       );
     }
+
+    // SMTP validation
+    verifySmtpConnection().then((ok) => {
+      if (ok) console.log("SMTP_READY");
+      else console.warn("SMTP_FAILED");
+    });
   }
 
   /* ---------------------------------------------------------------- */
@@ -178,12 +184,16 @@ export class AuthOtpService implements OnModuleInit {
       throw new BadRequestException("Password must be at least 6 characters");
     }
 
+    console.log(`[LOG STEP 1] signup request received for ${email}`);
+
     await this.assertEmailRateLimit(email);
     await this.assertEmailRateLimit15Min(email);
 
     await this.pendingRepo.deleteByEmail(email);
 
     const otp = generateNumericOtp6();
+    console.log(`[LOG STEP 2] OTP generated for ${email}`);
+    
     const otpHash = await hashOtp(otp);
     const expiresAt = new Date(Date.now() + OTP_TTL_MS).toISOString();
     const passwordCiphertext = encryptJsonPayload({ password: payload.password });
@@ -204,6 +214,8 @@ export class AuthOtpService implements OnModuleInit {
     });
     if (!id) throw new BadRequestException("Unable to start signup. Try again later.");
 
+    console.log(`[LOG STEP 3] pending signup stored for ${email}, id=${id}`);
+
     try {
       await sendVerificationOtpEmail(email, otp, OTP_EXPIRES_MINUTES);
     } catch (e) {
@@ -217,6 +229,7 @@ export class AuthOtpService implements OnModuleInit {
       extra: { channel: "signup", email },
     });
 
+    console.log(`[LOG STEP 6] OTP_REQUIRED response returned for ${email}`);
     return { pendingId: id };
   }
 

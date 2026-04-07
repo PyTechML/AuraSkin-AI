@@ -16,7 +16,8 @@ export interface AuthSession {
 }
 
 export interface OtpRequiredResponse {
-  otp_required: true;
+  otp_required?: boolean;
+  status?: string;
   challengeId?: string; // from /auth/login
   pendingId?: string;   // from /auth/signup
 }
@@ -25,7 +26,11 @@ export type AuthResponse = AuthSession | OtpRequiredResponse;
 
 /** Check if response is an OTP challenge. */
 export function isOtpRequired(res: any): res is OtpRequiredResponse {
-  return res && (res as OtpRequiredResponse).otp_required === true;
+  if (!res) return false;
+  return (
+    res.otp_required === true || 
+    res.status === "OTP_REQUIRED"
+  );
 }
 
 export async function login(credentials: Record<string, any>): Promise<AuthResponse> {
