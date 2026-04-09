@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import { isRedirectAllowedForRole } from "@/store/authStore";
 import { useAssistantSettingsStore } from "@/store/assistantSettingsStore";
 import type { UserRole } from "@/types";
@@ -39,8 +39,8 @@ export function AppShellLayout({ children }: { children: React.ReactNode }) {
     isAuthenticated &&
     !!role &&
     enabled &&
-    !!safeEnabledForRole[role] &&
-    isRedirectAllowedForRole(pathname, role);
+    !!safeEnabledForRole[role as UserRole] &&
+    isRedirectAllowedForRole(pathname, role as UserRole);
 
   return (
     <div className="min-h-screen flex flex-col bg-background">

@@ -32,18 +32,18 @@ function OAuthCallbackHandler() {
           throw new Error("Authentication failed or session missing.");
         }
 
-        const user = session.user;
-        const requestedRole = searchParams.get("requested_role") || "USER";
+        // 2. Read requested_role from URL
+        const requested_role = searchParams.get("requested_role") || "user";
 
-        // 2. Sync profile with the backend
+        // 3. Call backend sync endpoint
         const syncRes = await fetch(`${API_BASE}/api/auth/oauth-sync`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            email: user.email,
-            name: user.user_metadata?.full_name || user.user_metadata?.name || "",
+            email: session.user.email,
+            requested_role: requested_role,
             provider: "google",
           }),
         });
@@ -53,7 +53,7 @@ function OAuthCallbackHandler() {
           throw new Error(resJson.error || "Failed to sync your profile with the server.");
         }
 
-        // 3. Fetch final profile and update auth store
+        // 4. Finalize session (hydration)
         const meRes = await fetch(`${API_BASE}/api/auth/me`, {
           headers: { Authorization: `Bearer ${session.access_token}` },
           cache: "no-store",
@@ -82,12 +82,11 @@ function OAuthCallbackHandler() {
             role: frontendRole,
           },
           frontendRole,
-          null // sessionToken placeholder
+          null
         );
 
-        // 4. Redirect to dashboard or requested role logic
-        const target = getRedirectPathForRole(frontendRole);
-        router.replace(target);
+        // 5. Redirect user to dashboard
+        router.replace("/dashboard");
 
       } catch (err: any) {
         console.error("OAuth callback error:", err);

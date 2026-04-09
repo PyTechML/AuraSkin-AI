@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import { useAuthStore } from "@/store/authStore";
 import { getRedirectPathForRole } from "@/store/authStore";
 import { useCartStore } from "@/store/cartStore";

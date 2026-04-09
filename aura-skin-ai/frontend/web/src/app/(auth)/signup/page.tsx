@@ -65,10 +65,11 @@ export default function SignupPage() {
     if (role === "STORE" || role === "DERMATOLOGIST") {
       setPendingRoleLabel(role === "STORE" ? "Store" : "Dermatologist");
       setPendingModalOpen(true);
+      addToast(`Registration as ${role} request submitted for review.`, "success");
     } else {
       addToast("Registration successful. Welcome to AuraSkin AI.", "success");
+      router.push("/login");
     }
-    router.push("/login");
   };
 
 const onSubmit = async (data: FormData) => {

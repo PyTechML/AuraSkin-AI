@@ -17,6 +17,7 @@ import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { authGmailOnly } from "@/lib/auth-flags";
 import { GoogleOAuthButton } from "@/components/auth/GoogleOAuthButton";
 import { supabase } from "@/lib/supabase";
+import { finalizeSession } from "@/lib/finalizeSession";
 
 function isSafeRedirect(path: string | null): boolean {
   if (!path || typeof path !== "string") return false;
@@ -69,8 +70,6 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const setSession = useAuthStore((s) => s.setSession);
-  const logout = useAuthStore((s) => s.logout);
   const redirect = searchParams.get("redirect");
   const [apiError, setApiError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -95,62 +94,7 @@ function LoginForm() {
     }
   }, [searchParams]);
 
-  const finalizeSession = async (payload: {
-    accessToken: string;
-    sessionToken?: string;
-    role_request_pending?: boolean;
-    requested_role?: string;
-  }) => {
-    useAuthStore.setState({
-      accessToken: payload.accessToken,
-      sessionToken: payload.sessionToken ?? null,
-      user: null,
-      role: null,
-      isAuthenticated: false,
-    });
 
-    const meRes = await fetch(`${API_BASE}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${payload.accessToken}` },
-      cache: "no-store",
-    });
-    const meJson = await meRes.json().catch(() => ({}));
-    const me = meJson.data;
-
-    if (!meRes.ok || !me?.id || !me?.email) {
-      logout();
-      setApiError("Unable to restore your session. Please try signing in again.");
-      return;
-    }
-
-    const frontendRole: UserRole =
-      me.role ? BACKEND_TO_FRONTEND_ROLE[me.role.toLowerCase()] ?? "USER" : "USER";
-
-    setSession(
-      payload.accessToken,
-      {
-        id: me.id,
-        email: me.email,
-        name: me.fullName ?? me.email,
-        role: frontendRole,
-      },
-      frontendRole,
-      payload.sessionToken ?? null
-    );
-
-    if (payload.role_request_pending) {
-      setRoleRequestPending(true);
-    }
-
-    let target =
-      redirect && isSafeRedirect(redirect) && isRedirectAllowedForRole(redirect, frontendRole)
-        ? redirect
-        : getRedirectPathForRole(frontendRole);
-    
-    if (payload.role_request_pending) {
-      target += target.includes("?") ? "&role_request_pending=1" : "?role_request_pending=1";
-    }
-    router.push(target);
-  };
 
 const onSubmit = async (data: FormData) => {
   if (isSubmitting) return;
@@ -166,22 +110,14 @@ const onSubmit = async (data: FormData) => {
     if (authError) throw authError;
 
     if (authData.session) {
-      // Sync profile with backend (as requested by user)
-      await fetch(`${API_BASE}/api/auth/oauth-sync`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email: data.email,
-          provider: "password", // Indicating password login
-        }),
-      });
-
-      await finalizeSession({
-        accessToken: authData.session.access_token,
-        // sessionToken: authData.session.access_token, // Bridge if backend expects something
-      });
+      const { role } = await finalizeSession(authData.session, "password");
+      
+      const target =
+        redirect && isSafeRedirect(redirect) && isRedirectAllowedForRole(redirect, role)
+          ? redirect
+          : getRedirectPathForRole(role);
+      
+      router.push(target);
       return;
     }
 

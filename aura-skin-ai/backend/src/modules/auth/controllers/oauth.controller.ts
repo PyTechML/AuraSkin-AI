@@ -12,7 +12,7 @@ export class OAuthController {
 
   @Post("oauth-sync")
   async syncProfile(
-    @Body() body: { email: string; name?: string; provider: string },
+    @Body() body: { email: string; name?: string; provider: string; requested_role?: string },
     @Res() res: Response
   ) {
     try {
@@ -25,7 +25,8 @@ export class OAuthController {
       const result = await this.oauthService.syncOAuthProfile(
         body.email,
         body.name || "",
-        body.provider
+        body.provider,
+        body.requested_role
       );
 
       return res.status(HttpStatus.OK).json({

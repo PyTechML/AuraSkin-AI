@@ -3,8 +3,12 @@
 import { useCallback, useEffect, useRef } from "react";
 import { getPersistedAccessToken, useAuthStore } from "@/store/authStore";
 import { postSessionHeartbeat } from "@/services/sessionApi";
+import { supabase } from "@/lib/supabase";
 import type { User, UserRole } from "@/types";
 import { API_BASE } from "@/services/apiBase";
+
+export { useAuth } from "./AuthContext";
+import { AuthContext, AuthContextValue } from "./AuthContext";
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
 /** Transient API/network failures on refresh should not immediately drop the session. */
@@ -17,47 +21,29 @@ const BACKEND_TO_FRONTEND_ROLE: Record<string, UserRole> = {
   dermatologist: "DERMATOLOGIST",
 };
 
-export interface AuthSession {
-  user: User;
-  role: UserRole;
-}
-
-export interface AuthContextValue {
-  session: AuthSession | null;
-  role: UserRole | null;
-  isAuthenticated: boolean;
-  loading: boolean;
-}
-
-/**
- * useAuth() — session-driven auth for Navbar and AppShellLayout.
- * Returns session, role, isAuthenticated, and loading (true until auth bootstrap completes).
- */
-export function useAuth(): AuthContextValue {
-  const { user, role, isAuthenticated, _hasHydrated } = useAuthStore();
-  const effectiveRole = role ?? user?.role ?? null;
-  const session: AuthSession | null =
-    user && effectiveRole ? { user, role: effectiveRole } : null;
-  return {
-    session,
-    role: effectiveRole,
-    isAuthenticated,
-    loading: !_hasHydrated,
-  };
-}
-
 /**
  * AuthProvider — client boundary for auth-aware layout.
  * After Zustand persist finishes, reconciles session with /api/auth/me when a token exists.
  * Sends session heartbeat every 60s when authenticated and sessionToken is set.
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const { user, role, isAuthenticated, _hasHydrated } = useAuthStore();
   const sessionToken = useAuthStore((s) => s.sessionToken);
-  const hasHydrated = useAuthStore((s) => s._hasHydrated);
+  const hasHydrated = _hasHydrated;
   const setHasHydrated = useAuthStore((s) => s.setHasHydrated);
   const setSession = useAuthStore((s) => s.setSession);
   const logout = useAuthStore((s) => s.logout);
+
+  const effectiveRole = role ?? user?.role ?? null;
+  const currentSession = user && effectiveRole ? { user, role: effectiveRole } : null;
+
+  const authValue: AuthContextValue = {
+    session: currentSession,
+    role: effectiveRole,
+    isAuthenticated,
+    loading: !_hasHydrated,
+  };
+
 
   /** Ensures UI never stays in loading forever if persist never calls onFinishHydration (parse error, Strict Mode race). */
   const authReadyMarkedRef = useRef(false);
@@ -128,10 +114,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       let token = useAuthStore.getState().accessToken;
       if (typeof token !== "string" || token.trim() === "") {
-        const fromLs = getPersistedAccessToken();
-        if (fromLs) {
-          useAuthStore.setState({ accessToken: fromLs });
-          token = fromLs;
+        // Try to get from Supabase session directly to handle cases where store was cleared but cookies remain
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          useAuthStore.setState({ accessToken: session.access_token });
+          token = session.access_token;
+        } else {
+          const fromLs = getPersistedAccessToken();
+          if (fromLs) {
+            useAuthStore.setState({ accessToken: fromLs });
+            token = fromLs;
+          }
         }
       }
       const safe = typeof token === "string" && token.trim() !== "" ? token : null;
@@ -253,5 +246,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [logout, reconcileWithMe]);
 
-  return <>{children}</>;
+  return (
+    <AuthContext.Provider value={authValue}>
+      {children}
+    </AuthContext.Provider>
+  );
 }

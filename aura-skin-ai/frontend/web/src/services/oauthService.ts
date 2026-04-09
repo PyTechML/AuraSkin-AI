@@ -6,12 +6,12 @@ import { supabase } from "@/lib/supabase";
  * After successful authentication at Google, the user is redirected to the /auth/callback page.
  */
 export async function signInWithGoogle(requestedRole: string = "USER") {
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
+  const origin = typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_SITE_URL;
   
   const { error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: `${siteUrl}/auth/callback?requested_role=${requestedRole}`,
+      redirectTo: `${origin}/auth/callback?requested_role=${requestedRole}`,
       queryParams: {
         access_type: "offline",
         prompt: "consent",

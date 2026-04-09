@@ -10,18 +10,16 @@ export class OAuthService {
     private readonly authService: AuthService
   ) {}
 
-  async syncOAuthProfile(email: string, name: string, provider: string) {
+  async syncOAuthProfile(email: string, name: string, provider: string, requestedRole?: string) {
     const supabaseAdmin = getSupabaseClient();
     const normalizedEmail = email.trim().toLowerCase();
 
     this.logger.logUserActivity({
       event: "oauth_sync_start",
-      extra: { email: normalizedEmail, provider },
+      extra: { email: normalizedEmail, provider, requestedRole },
     });
 
     // 1. Find the user ID by email in auth.users
-    // Since we're calling this from the callback where the user is already authenticated by Supabase, 
-    // we assume the user already exists in Supabase.
     const { data: userData, error: userError } = await supabaseAdmin.auth.admin.listUsers();
     if (userError) {
       this.logger.logSecurity({
@@ -40,13 +38,14 @@ export class OAuthService {
       throw new Error("User not found in authentication system");
     }
 
-    // 2. Upsert profile with provider and otp_required = false
+    // 2. Upsert profile
     const { error: profileError } = await supabaseAdmin.from("profiles").upsert(
       {
         id: user.id,
         email: normalizedEmail,
         full_name: name || user.user_metadata?.full_name || user.user_metadata?.name || null,
         provider: provider,
+        role: requestedRole ? requestedRole.toLowerCase() : "user",
         otp_required: false, // Google verified email ownership
         email_verified: true,
       },
