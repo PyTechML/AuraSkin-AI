@@ -30,8 +30,11 @@ export async function finalizeSession(session: Session, provider = "email") {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        userId: supabaseUser.id,
         email: supabaseUser.email,
+        name: supabaseUser.user_metadata?.full_name || supabaseUser.user_metadata?.name || null,
         provider: provider,
+        requested_role: useAuthStore.getState().role, // Pass current role if we have it
       }),
     });
 

@@ -335,7 +335,7 @@ export class AuthService {
     const supabaseAdmin = getSupabaseClient();
     const { data: row, error } = await supabaseAdmin
       .from("profiles")
-      .select("id, email, role, full_name, avatar_url, email_verified, provider")
+      .select("id, email, role, full_name, avatar_url, email_verified")
       .eq("id", userId)
       .single();
     if (error || !row) return null;
@@ -352,7 +352,6 @@ export class AuthService {
       fullName: row.full_name ?? null,
       avatar: row.avatar_url ?? null,
       emailVerified: row.email_verified ?? false,
-      provider: row.provider ?? null,
     };
   }
 }

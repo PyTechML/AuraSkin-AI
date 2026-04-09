@@ -3,7 +3,7 @@ import { Response } from "express";
 import { OAuthService } from "../services/oauth.service";
 import { LoggerService } from "../../../core/logger/logger.service";
 
-@Controller("api/auth")
+@Controller("auth")
 export class OAuthController {
   constructor(
     private readonly oauthService: OAuthService,
@@ -12,7 +12,7 @@ export class OAuthController {
 
   @Post("oauth-sync")
   async syncProfile(
-    @Body() body: { email: string; name?: string; provider: string; requested_role?: string },
+    @Body() body: { email: string; name?: string; provider: string; requested_role?: string; userId?: string },
     @Res() res: Response
   ) {
     try {
@@ -26,7 +26,8 @@ export class OAuthController {
         body.email,
         body.name || "",
         body.provider,
-        body.requested_role
+        body.requested_role,
+        body.userId
       );
 
       return res.status(HttpStatus.OK).json({
