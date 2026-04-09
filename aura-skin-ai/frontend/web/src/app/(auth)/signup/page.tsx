@@ -23,6 +23,9 @@ import { authGmailOnly } from "@/lib/auth-flags";
 import { GoogleOAuthButton } from "@/components/auth/GoogleOAuthButton";
 import { supabase } from "@/lib/supabase";
 import { API_BASE } from "@/services/apiBase";
+import { otpService } from "@/services/otpService";
+import { OtpVerificationForm } from "@/components/auth/OtpVerificationForm";
+import { finalizeSession } from "@/lib/finalizeSession";
 
 const baseSignupSchema = z
   .object({
@@ -58,6 +61,9 @@ export default function SignupPage() {
   const [pendingModalOpen, setPendingModalOpen] = useState(false);
   const [pendingRoleLabel, setPendingRoleLabel] = useState<"Store" | "Dermatologist">("Store");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showOtp, setShowOtp] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
+  const [signupData, setSignupData] = useState<FormData | null>(null);
 
   const requestedRole = watch("requested_role") ?? "USER";
 
@@ -75,40 +81,64 @@ export default function SignupPage() {
 const onSubmit = async (data: FormData) => {
   setIsSubmitting(true);
   try {
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: data.email,
-      password: data.password,
-      options: {
-        data: {
-          full_name: data.name,
-          role: data.requested_role,
-        },
-      },
+    // Stage 1: Call signUp which triggers OTP
+    await otpService.sendSignupOtp(data.email, data.password, {
+      full_name: data.name,
+      role: data.requested_role,
     });
 
-    if (authError) throw authError;
+    setUserEmail(data.email);
+    setSignupData(data);
+    setShowOtp(true);
+    addToast("Verification code sent to your email.", "success");
+  } catch (err: any) {
+    const message = err?.message || "Registration failed. Please try again.";
+    addToast(message, "error");
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
-    // Sync with backend to ensure profile exists and role request is logged
+const onVerifyOtp = async (token: string) => {
+  if (!signupData) return;
+  try {
+    // Stage 2: Verify OTP
+    const { session } = await otpService.verifySignupOtp(userEmail, token);
+    
+    if (!session) {
+      throw new Error("Verification failed. Please try again.");
+    }
+
+    // Stage 3: Finalize session and sync with backend
+    await finalizeSession(session, "email");
+
+    // Stage 4: Sync with backend again to ensure role request logic is triggered if needed
+    // (finalizeSession already calls oauth-sync, but we follow the user requirement for explicit sync if needed)
     await fetch(`${API_BASE}/api/auth/oauth-sync`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        email: data.email,
-        name: data.name,
-        provider: "email", // Indicating this is a native email signup
+        provider: "email",
+        email: signupData.email,
+        name: signupData.name,
       }),
     });
 
-    setIsSubmitting(false);
-    finishSignupSuccess(data.requested_role);
+    addToast("Email verified successfully!", "success");
+    finishSignupSuccess(signupData.requested_role);
   } catch (err: any) {
-    setIsSubmitting(false);
-    const message =
-      err instanceof Error && err.message ? err.message : "Registration failed. Please try again.";
-    addToast(message, "error");
+    addToast(err.message || "Invalid OTP", "error");
+    throw err;
   }
+};
+
+const onResendOtp = async () => {
+  if (!signupData) return;
+  await otpService.sendSignupOtp(signupData.email, signupData.password, {
+    full_name: signupData.name,
+    role: signupData.requested_role,
+  });
+  addToast("Verification code resent.", "success");
 };
 
   return (
@@ -120,90 +150,100 @@ const onSubmit = async (data: FormData) => {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void handleSubmit(onSubmit)(e);
-          }}
-          className="space-y-4"
-        >
-          <div className="space-y-2">
-            <Label htmlFor="requested_role">Register as</Label>
-            <select
-              id="requested_role"
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              {...register("requested_role")}
-            >
-              <option value="USER">User</option>
-              <option value="STORE">Store Partner</option>
-              <option value="DERMATOLOGIST">Dermatologist</option>
-            </select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="name">Full name</Label>
-            <Input
-              id="name"
-              placeholder="Your name"
-              {...register("name")}
-            />
-            {errors.name && <p className="text-sm text-destructive">{errors.name.message}</p>}
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
-            <Input
-              id="email"
-              type="email"
-              placeholder={authGmailOnly ? "you@gmail.com" : "you@example.com"}
-              {...register("email")}
-            />
-            {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              type="password"
-              placeholder="••••••••"
-              {...register("password")}
-            />
-            {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="confirmPassword">Confirm password</Label>
-            <Input
-              id="confirmPassword"
-              type="password"
-              placeholder="••••••••"
-              {...register("confirmPassword")}
-            />
-            {errors.confirmPassword && (
-              <p className="text-sm text-destructive">{errors.confirmPassword.message}</p>
-            )}
-          </div>
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Creating account..." : "Continue"}
-          </Button>
-        </form>
-
-        <p className="mt-4 text-center text-sm text-muted-foreground">
-          Already have an account?{" "}
-          <Link href="/login" className="text-accent hover:underline">
-            Sign in
-          </Link>
-        </p>
-
-        <div className="mt-6 flex items-center gap-3">
-          <div className="flex-1 h-px bg-border/40" />
-          <span className="text-xs text-muted-foreground">OR</span>
-          <div className="flex-1 h-px bg-border/40" />
-        </div>
-
-        <div className="mt-4 flex w-full flex-col gap-3">
-          <GoogleOAuthButton 
-            requestedRole={requestedRole}
-            onError={(msg) => addToast(msg, "error")}
+        {showOtp ? (
+          <OtpVerificationForm
+            email={userEmail}
+            onVerify={onVerifyOtp}
+            onResend={onResendOtp}
           />
-        </div>
+        ) : (
+          <>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleSubmit(onSubmit)(e);
+              }}
+              className="space-y-4"
+            >
+              <div className="space-y-2">
+                <Label htmlFor="requested_role">Register as</Label>
+                <select
+                  id="requested_role"
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  {...register("requested_role")}
+                >
+                  <option value="USER">User</option>
+                  <option value="STORE">Store Partner</option>
+                  <option value="DERMATOLOGIST">Dermatologist</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="name">Full name</Label>
+                <Input
+                  id="name"
+                  placeholder="Your name"
+                  {...register("name")}
+                />
+                {errors.name && <p className="text-sm text-destructive">{errors.name.message}</p>}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder={authGmailOnly ? "you@gmail.com" : "you@example.com"}
+                  {...register("email")}
+                />
+                {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  {...register("password")}
+                />
+                {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">Confirm password</Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  placeholder="••••••••"
+                  {...register("confirmPassword")}
+                />
+                {errors.confirmPassword && (
+                  <p className="text-sm text-destructive">{errors.confirmPassword.message}</p>
+                )}
+              </div>
+              <Button type="submit" className="w-full" disabled={isSubmitting}>
+                {isSubmitting ? "Creating account..." : "Continue"}
+              </Button>
+            </form>
+
+            <p className="mt-4 text-center text-sm text-muted-foreground">
+              Already have an account?{" "}
+              <Link href="/login" className="text-accent hover:underline">
+                Sign in
+              </Link>
+            </p>
+
+            <div className="mt-6 flex items-center gap-3">
+              <div className="flex-1 h-px bg-border/40" />
+              <span className="text-xs text-muted-foreground">OR</span>
+              <div className="flex-1 h-px bg-border/40" />
+            </div>
+
+            <div className="mt-4 flex w-full flex-col gap-3">
+              <GoogleOAuthButton 
+                requestedRole={requestedRole}
+                onError={(msg) => addToast(msg, "error")}
+              />
+            </div>
+          </>
+        )}
       </CardContent>
       <Dialog open={pendingModalOpen} onOpenChange={setPendingModalOpen}>
         <DialogContent>

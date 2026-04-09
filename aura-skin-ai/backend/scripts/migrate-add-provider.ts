@@ -34,7 +34,11 @@ async function migrate() {
     }
 
   } catch (err) {
-    console.error('Migration failed:', err.message);
+    if (err instanceof Error) {
+      console.error('Migration failed:', err.message);
+    } else {
+      console.error('Migration failed:', err);
+    }
   } finally {
     await client.end();
   }
