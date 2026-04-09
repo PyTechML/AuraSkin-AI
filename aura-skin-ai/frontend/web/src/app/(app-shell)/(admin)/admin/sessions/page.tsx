@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  AdminHeader,
-  AdminPrimaryGrid,
-} from "@/components/admin";
+import { AdminHeader } from "@/components/admin/AdminHeader";
+import { AdminPrimaryGrid } from "@/components/admin/AdminPrimaryGrid";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

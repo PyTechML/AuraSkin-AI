@@ -7,7 +7,9 @@ import {
   rejectAdminStore,
 } from "@/services/apiAdmin";
 import type { AdminStore } from "@/types/store";
-import { AdminHeader, AdminPrimaryGrid, AdminTableCardSkeleton } from "@/components/admin";
+import { AdminHeader } from "@/components/admin/AdminHeader";
+import { AdminPrimaryGrid } from "@/components/admin/AdminPrimaryGrid";
+import { AdminTableCardSkeleton } from "@/components/admin/AdminLoadingSkeleton";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

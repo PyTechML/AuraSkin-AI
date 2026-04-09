@@ -7,12 +7,10 @@ import {
   rejectDermatologist,
 } from "@/services/apiAdmin";
 import type { AdminDermatologistVerification } from "@/types/dermatologist";
-import {
-  AdminHeader,
-  AdminPrimaryGrid,
-  AdminDrawer,
-  AdminTableCardSkeleton,
-} from "@/components/admin";
+import { AdminHeader } from "@/components/admin/AdminHeader";
+import { AdminPrimaryGrid } from "@/components/admin/AdminPrimaryGrid";
+import { AdminDrawer } from "@/components/admin/AdminDrawer";
+import { AdminTableCardSkeleton } from "@/components/admin/AdminLoadingSkeleton";
 import { safeFormatDateTime, safeFiniteNumber } from "@/lib/dateDisplay";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { Card } from "@/components/ui/card";

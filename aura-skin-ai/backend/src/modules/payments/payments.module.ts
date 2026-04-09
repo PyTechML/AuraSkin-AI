@@ -19,9 +19,10 @@ import { StripeService } from "./services/stripe.service";
 import { InvoiceEmailService } from "./services/invoice-email.service";
 import { DermatologistModule } from "../partner/dermatologist/dermatologist.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { EmailModule } from "../email/email.module";
 
 @Module({
-  imports: [DermatologistModule, NotificationsModule],
+  imports: [DermatologistModule, NotificationsModule, EmailModule],
   controllers: [
     PaymentsController,
     CheckoutController,

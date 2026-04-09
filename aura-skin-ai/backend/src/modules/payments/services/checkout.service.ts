@@ -189,7 +189,7 @@ export class CheckoutService {
       client_reference_id: userId,
       line_items: lineItems,
       metadata: {
-        type: "order",
+        type: "product",
         order_id: orderId,
         user_id: userId,
         store_id: storeId,

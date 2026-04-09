@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { AdminHeader, AdminPrimaryGrid } from "@/components/admin";
+import { AdminHeader } from "@/components/admin/AdminHeader";
+import { AdminPrimaryGrid } from "@/components/admin/AdminPrimaryGrid";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { Card } from "@/components/ui/card";
 import {
@@ -26,7 +27,7 @@ import { Label } from "@/components/ui/label";
 import { Shield } from "lucide-react";
 import { getAdminAuditLogs } from "@/services/apiAdmin";
 import { safeFormatDateTime } from "@/lib/dateDisplay";
-import { AdminTableCardSkeleton } from "@/components/admin";
+import { AdminTableCardSkeleton } from "@/components/admin/AdminLoadingSkeleton";
 import type { AdminAuditLog } from "@/types/governance";
 
 const PAGE_SIZE = 10;

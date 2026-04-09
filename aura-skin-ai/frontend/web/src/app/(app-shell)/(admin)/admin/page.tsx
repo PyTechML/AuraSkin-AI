@@ -13,11 +13,9 @@ import {
   isDocumentVisible,
   PANEL_LIVE_POLL_INTERVAL_MS,
 } from "@/lib/panelPolling";
-import {
-  AdminHeader,
-  AdminPrimaryGrid,
-  AdminDashboardSkeleton,
-} from "@/components/admin";
+import { AdminHeader } from "@/components/admin/AdminHeader";
+import { AdminPrimaryGrid } from "@/components/admin/AdminPrimaryGrid";
+import { AdminDashboardSkeleton } from "@/components/admin/AdminLoadingSkeleton";
 import { safeFormatDateTime, safeFiniteNumber } from "@/lib/dateDisplay";
 import { getAdminActivityTimelineTitle } from "@/lib/adminActivityTimelineLabel";
 import { cn } from "@/lib/utils";

@@ -1,11 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState, useMemo } from "react";
-import {
-  AdminHeader,
-  AdminPrimaryGrid,
-  AdminDrawer,
-} from "@/components/admin";
+import { AdminHeader } from "@/components/admin/AdminHeader";
+import { AdminPrimaryGrid } from "@/components/admin/AdminPrimaryGrid";
+import { AdminDrawer } from "@/components/admin/AdminDrawer";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

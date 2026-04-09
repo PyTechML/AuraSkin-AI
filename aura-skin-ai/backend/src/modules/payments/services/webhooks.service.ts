@@ -11,6 +11,9 @@ import { persistConsultationAndBookSlot } from "./consultation-booking.helper";
 import { StripeService } from "./stripe.service";
 import { InvoiceEmailService } from "./invoice-email.service";
 import { ConsultationPaymentService } from "./consultation-payment.service";
+import { EmailService } from "../../email/email.service";
+import { getProductInvoiceTemplate } from "../../email/templates/productInvoice.template";
+import { getConsultationInvoiceTemplate } from "../../email/templates/consultationInvoice.template";
 
 @Injectable()
 export class WebhooksService {
@@ -23,6 +26,7 @@ export class WebhooksService {
     private readonly analytics: AnalyticsService,
     private readonly stripeService: StripeService,
     private readonly invoiceEmailService: InvoiceEmailService,
+    private readonly emailService: EmailService,
     @Inject(forwardRef(() => ConsultationPaymentService))
     private readonly consultationPaymentService: ConsultationPaymentService
   ) {}
@@ -116,7 +120,7 @@ export class WebhooksService {
     });
 
     const type = metadata.type as string | undefined;
-    if (type === "order") {
+    if (type === "product" || type === "order") {
       await this.createOrderFromSession(session, payment.id, userId, metadata, amount);
     } else if (type === "consultation") {
       await this.createConsultationFromSession(
@@ -344,6 +348,19 @@ export class WebhooksService {
       user_id: userId,
       consultation_id: booked.consultationId,
     });
+
+    // Send Consultation Invoice Email (SAFE ASYNC)
+    const sessionPaymentIntentId =
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : session.payment_intent?.id ?? session.id;
+
+    void this.sendConsultationInvoiceSafe(
+      booked.consultationId,
+      userId,
+      metadata,
+      sessionPaymentIntentId
+    );
   }
 
   private async sendInvoiceEmail(
@@ -427,6 +444,76 @@ export class WebhooksService {
       shippingAddress,
       purchaseDate: new Date(),
     });
+
+    // New branded email sending (SAFE ASYNC)
+    const html = getProductInvoiceTemplate({
+      invoiceId: orderId,
+      paymentId: paymentIntentId,
+      productName: items[0]?.productName || "AuraSkin Product",
+      quantity: items[0]?.quantity || 1,
+      unitPrice: items[0]?.unitPrice || amount,
+      totalAmount: `$${amount.toFixed(2)}`,
+      customerEmail: email,
+      purchaseDate: new Date().toLocaleDateString(),
+    });
+
+    await this.emailService.sendEmailSafe(
+      email,
+      `Invoice for Order ${orderId.slice(0, 8).toUpperCase()}`,
+      html
+    );
+  }
+
+  private async sendConsultationInvoiceSafe(
+    consultationId: string,
+    userId: string,
+    metadata: Record<string, string>,
+    stripePaymentIntentId: string
+  ): Promise<void> {
+    const supabase = getSupabaseClient();
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("email")
+      .eq("id", userId)
+      .maybeSingle();
+
+    const email = (profile as { email?: string | null } | null)?.email?.trim();
+    if (!email) {
+      this.logger.warn(`Consultation invoice skipped: no email for ${userId}`);
+      return;
+    }
+
+    // Attempt to get doctor name from metadata or fallback
+    const doctorId = metadata.dermatologist_id;
+    let doctorName = "Dermatologist";
+    if (doctorId) {
+      const { data: docProfile } = await supabase
+        .from("dermatologist_profiles")
+        .select("full_name")
+        .eq("id", doctorId)
+        .maybeSingle();
+      if ((docProfile as any)?.full_name) {
+        doctorName = (docProfile as any).full_name;
+      }
+    }
+
+    const fee = metadata.amount || "0";
+    const date = new Date().toLocaleDateString();
+
+    const html = getConsultationInvoiceTemplate({
+      invoiceId: consultationId,
+      paymentId: stripePaymentIntentId,
+      doctorName,
+      consultationDate: date,
+      consultationFee: `$${Number(fee).toFixed(2)}`,
+      customerEmail: email,
+    });
+
+    await this.emailService.sendEmailSafe(
+      email,
+      `Invoice for Consultation ${consultationId.slice(0, 8).toUpperCase()}`,
+      html
+    );
   }
 
   private async handlePaymentIntentSucceeded(

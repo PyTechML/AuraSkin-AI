@@ -1,11 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  AdminHeader,
-  AdminPrimaryGrid,
-  AdminAnalyticsSkeleton,
-} from "@/components/admin";
+import { AdminHeader } from "@/components/admin/AdminHeader";
+import { AdminPrimaryGrid } from "@/components/admin/AdminPrimaryGrid";
+import { AdminAnalyticsSkeleton } from "@/components/admin/AdminLoadingSkeleton";
 import { Breadcrumb } from "@/components/layouts/Breadcrumb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, Users, Store, Package, BarChart3 } from "lucide-react";
