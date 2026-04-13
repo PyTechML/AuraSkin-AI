@@ -1,8 +1,13 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import dynamic from "next/dynamic";
+
+const MotionDiv = dynamic(
+  () => import("framer-motion").then((mod) => mod.motion.div),
+  { ssr: false }
+);
 
 /** Panel section reveal: fade in + slide up (16px), 300ms, trigger once. */
 const panelSectionVariants = {
@@ -19,7 +24,7 @@ interface PanelSectionRevealProps {
 
 export function PanelSectionReveal({ children, className }: PanelSectionRevealProps) {
   return (
-    <motion.div
+    <MotionDiv
       className={cn(className)}
       initial={panelSectionVariants.initial}
       whileInView={panelSectionVariants.animate}
@@ -27,7 +32,7 @@ export function PanelSectionReveal({ children, className }: PanelSectionRevealPr
       transition={panelSectionTransition}
     >
       {children}
-    </motion.div>
+    </MotionDiv>
   );
 }
 
@@ -41,7 +46,7 @@ interface PanelStaggerProps {
 
 export function PanelStagger({ children, className }: PanelStaggerProps) {
   return (
-    <motion.div
+    <MotionDiv
       className={cn(className)}
       initial="hidden"
       whileInView="visible"
@@ -54,7 +59,7 @@ export function PanelStagger({ children, className }: PanelStaggerProps) {
       }}
     >
       {children}
-    </motion.div>
+    </MotionDiv>
   );
 }
 
@@ -66,7 +71,7 @@ interface PanelStaggerItemProps {
 
 export function PanelStaggerItem({ children, className }: PanelStaggerItemProps) {
   return (
-    <motion.div
+    <MotionDiv
       className={cn(className)}
       variants={{
         visible: {
@@ -78,6 +83,6 @@ export function PanelStaggerItem({ children, className }: PanelStaggerItemProps)
       }}
     >
       {children}
-    </motion.div>
+    </MotionDiv>
   );
 }
