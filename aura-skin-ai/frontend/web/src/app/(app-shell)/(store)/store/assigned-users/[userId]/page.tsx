@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { getAssignedUserDetail } from "@/services/apiPartner";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import type { AssignedUserDetail } from "@/types";
 import {
   Card,

@@ -9,7 +9,7 @@ import {
   submitProductForReview,
   deleteProduct,
 } from "@/services/apiPartner";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import type { PartnerProduct } from "@/types";
 import {
   Card,

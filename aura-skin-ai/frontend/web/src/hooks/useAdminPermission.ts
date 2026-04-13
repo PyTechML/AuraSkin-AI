@@ -1,6 +1,6 @@
 "use client";
 
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import { canAdminAction, type AdminPermissionAction, type AdminRoleLabel } from "@/config/adminPermissions";
 
 /**

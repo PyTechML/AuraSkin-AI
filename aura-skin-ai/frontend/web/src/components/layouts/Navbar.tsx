@@ -114,7 +114,6 @@ function getEffectiveMode(isAuthenticated: boolean, role: UserRole | null): NavM
   if (!isAuthenticated) return "public";
   if (role === "ADMIN") return "admin";
   if (role === "DERMATOLOGIST" || role === "STORE") return "partner";
-  // Keep authenticated users on user navigation even if role hydration lags.
   return "user";
 }
 
@@ -165,8 +164,6 @@ export function Navbar({
   const adminActiveGroup = pathname ? getAdminGroupForPath(pathname) : null;
 
   useEffect(() => {
-    // Prevent invisible/stale overlays from blocking clicks after route changes.
-    // This is intentionally state-only (no styling changes).
     setMobileOpen(false);
     setAdminMobileOpen(false);
     setProfileOpen(false);
@@ -207,7 +204,9 @@ export function Navbar({
   const handleLogout = () => {
     setProfileOpen(false);
     logout();
-    window.location.href = "/";
+    if (typeof window !== "undefined") {
+      window.location.href = "/";
+    }
   };
 
   const dropdownItems = getDropdownItems(role);
@@ -219,20 +218,10 @@ export function Navbar({
   if (loading) {
     return (
       <header className="sticky top-0 z-50 w-full pt-3 pb-2 px-4 bg-transparent">
-        <div
-          className={cn(
-            "mx-auto w-full max-w-5xl rounded-full border shadow-md transition-shadow",
-            "backdrop-blur-[20px] bg-white/30 border border-border/60"
-          )}
-        >
+        <div className="mx-auto w-full max-w-5xl rounded-full border shadow-md backdrop-blur-[20px] bg-white/30 border border-border/60">
           <div className="flex h-14 items-center justify-between px-6 gap-4">
-            <div className="h-5 w-24 rounded bg-muted/60 animate-pulse" aria-hidden />
-            <div className="hidden md:flex items-center gap-6">
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-4 w-16 rounded bg-muted/60 animate-pulse" aria-hidden />
-              ))}
-            </div>
-            <div className="h-9 w-20 rounded-full bg-muted/60 animate-pulse" aria-hidden />
+            <div className="h-5 w-24 rounded bg-muted/60 animate-pulse" />
+            <div className="h-9 w-20 rounded-full bg-muted/60 animate-pulse" />
           </div>
         </div>
       </header>
@@ -240,23 +229,14 @@ export function Navbar({
   }
 
   const pillContent = (
-    <div
-      className={cn(
-        "flex h-14 items-center justify-between px-6 gap-4",
-        effectiveMode === "partner" && "relative"
-      )}
-    >
+    <div className={cn("flex h-14 items-center justify-between px-6 gap-4", effectiveMode === "partner" && "relative")}>
       <div className="flex items-center gap-4">
         {(showSidebarToggle || (effectiveMode === "admin" && isAdminRoute)) && (
           <button
             type="button"
-            aria-label="Open admin menu"
             className="md:hidden p-2 rounded-full hover:bg-white/20 transition-colors"
-            onClick={
-              effectiveMode === "admin" && isAdminRoute
-                ? () => setAdminMobileOpen(!adminMobileOpen)
-                : onMenuClick
-            }
+            onClick={effectiveMode === "admin" && isAdminRoute ? () => setAdminMobileOpen(!adminMobileOpen) : onMenuClick}
+            aria-label="Menu"
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -264,9 +244,9 @@ export function Navbar({
         {(effectiveMode === "public" || effectiveMode === "user" || effectiveMode === "partner") && !showSidebarToggle && (
           <button
             type="button"
-            aria-label="Toggle menu"
             className="md:hidden p-2 rounded-full hover:bg-white/20 transition-colors"
             onClick={() => setMobileOpen((o) => !o)}
+            aria-label="Menu"
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -287,44 +267,42 @@ export function Navbar({
               onProfileClick={() => setProfileOpen((o) => !o)}
               profileOpen={profileOpen}
               profileRef={profileRef}
-              children={
-                <AnimatePresence>
-                  {profileOpen && (
-                    <motion.div
-                      role="menu"
-                      className="absolute right-0 top-full mt-2 w-56 rounded-2xl border border-border/60 bg-card/90 backdrop-blur-[20px] shadow-md py-1 z-50"
-                      initial={{ opacity: 0, scale: 0.98 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.98 }}
-                      transition={{ duration: 0.18 }}
-                    >
-                      {allMenuItems.map((item) =>
-                        item.href ? (
-                          <Link
-                            key={item.label}
-                            href={item.href}
-                            className="flex items-center gap-2 px-4 py-2.5 text-sm font-label text-muted-foreground hover:text-foreground hover:bg-white/20 transition-colors first:rounded-t-2xl last:rounded-b-2xl"
-                            onClick={() => setProfileOpen(false)}
-                          >
-                            {item.label}
-                          </Link>
-                        ) : (
-                          <button
-                            key={item.label}
-                            type="button"
-                            className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-label text-muted-foreground hover:text-foreground hover:bg-white/20 transition-colors text-left last:rounded-b-2xl"
-                            onClick={item.action}
-                          >
-                            <LogOut className="h-4 w-4" />
-                            {item.label}
-                          </button>
-                        )
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              }
-            />
+            >
+              <AnimatePresence>
+                {profileOpen && (
+                  <motion.div
+                    className="absolute right-0 top-full mt-2 w-56 rounded-2xl border border-border/60 bg-card/90 backdrop-blur-[20px] shadow-md py-1 z-50"
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
+                    transition={{ duration: 0.18 }}
+                  >
+                    {allMenuItems.map((item) =>
+                      item.href ? (
+                        <Link
+                          key={item.label}
+                          href={item.href}
+                          className="flex items-center gap-2 px-4 py-2.5 text-sm font-label text-muted-foreground hover:text-foreground hover:bg-white/20 transition-colors"
+                          onClick={() => setProfileOpen(false)}
+                        >
+                          {item.label}
+                        </Link>
+                      ) : (
+                        <button
+                          key={item.label}
+                          type="button"
+                          className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-label text-muted-foreground hover:text-foreground hover:bg-white/20 transition-colors text-left"
+                          onClick={item.action}
+                        >
+                          <LogOut className="h-4 w-4" />
+                          {item.label}
+                        </button>
+                      )
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </PartnerNavIcons>
           </div>
         </>
       ) : (
@@ -338,7 +316,7 @@ export function Navbar({
                     "text-sm font-label transition-colors",
                     pathname === ADMIN_DASHBOARD.href
                       ? "text-foreground font-medium border-b-2 border-accent pb-0.5"
-                      : "text-muted-foreground hover:text-foreground hover:bg-white/10 rounded-md px-2 py-1 -mx-2 -my-1"
+                      : "text-muted-foreground hover:text-foreground"
                   )}
                 >
                   {ADMIN_DASHBOARD.label}
@@ -350,19 +328,10 @@ export function Navbar({
                     <div key={group.label} className="relative">
                       <button
                         type="button"
-                        aria-expanded={isOpen}
-                        aria-haspopup="true"
-                        onClick={() =>
-                          setAdminOpenGroup((g) => (g === group.label ? null : group.label))
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === "Escape") setAdminOpenGroup(null);
-                        }}
+                        onClick={() => setAdminOpenGroup((g) => (g === group.label ? null : group.label))}
                         className={cn(
-                          "flex items-center gap-0.5 text-sm font-label transition-colors rounded-md px-2 py-1 -mx-2 -my-1",
-                          isActive
-                            ? "text-foreground font-medium border-b-2 border-accent pb-0.5"
-                            : "text-muted-foreground hover:text-foreground hover:bg-white/10"
+                          "flex items-center gap-0.5 text-sm font-label transition-colors px-2 py-1",
+                          isActive ? "text-foreground font-medium border-b-2 border-accent pb-0.5" : "text-muted-foreground hover:text-foreground"
                         )}
                       >
                         {group.label} <ChevronDown className="h-4 w-4 opacity-70" />
@@ -370,33 +339,22 @@ export function Navbar({
                       <AnimatePresence>
                         {isOpen && (
                           <motion.div
-                            role="menu"
                             className="absolute left-0 top-full mt-1 w-48 rounded-2xl border border-border/60 bg-card/90 backdrop-blur-[20px] shadow-lg py-1 z-50"
                             initial={{ opacity: 0, y: 6 }}
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: 6 }}
                             transition={{ duration: 0.15 }}
                           >
-                            {group.items.map((item) => {
-                              const isItemActive =
-                                pathname?.split("?")[0] === item.href ||
-                                (item.href !== "/admin" && pathname?.startsWith(item.href + "/"));
-                              return (
-                                <Link
-                                  key={item.href}
-                                  href={item.href}
-                                  className={cn(
-                                    "block px-4 py-2.5 text-sm font-label transition-colors first:rounded-t-2xl last:rounded-b-2xl",
-                                    isItemActive
-                                      ? "text-foreground bg-accent/10"
-                                      : "text-muted-foreground hover:text-foreground hover:bg-white/20"
-                                  )}
-                                  onClick={() => setAdminOpenGroup(null)}
-                                >
-                                  {item.label}
-                                </Link>
-                              );
-                            })}
+                            {group.items.map((item) => (
+                              <Link
+                                key={item.href}
+                                href={item.href}
+                                className="block px-4 py-2.5 text-sm font-label transition-colors hover:text-foreground hover:bg-white/20"
+                                onClick={() => setAdminOpenGroup(null)}
+                              >
+                                {item.label}
+                              </Link>
+                            ))}
                           </motion.div>
                         )}
                       </AnimatePresence>
@@ -422,14 +380,10 @@ export function Navbar({
               <Link
                 href="/cart"
                 className="relative flex h-9 w-9 items-center justify-center rounded-full border border-border/60 bg-white/20 backdrop-blur-[20px] hover:bg-white/30 transition-colors shadow-sm"
-                aria-label={`Cart with ${cartCount} items`}
               >
                 <ShoppingCart className="h-4 w-4 text-foreground" />
                 {cartCount > 0 && (
-                  <Badge
-                    variant="default"
-                    className="absolute -right-1 -top-1 h-4 min-w-4 px-1 text-[10px] flex items-center justify-center rounded-full"
-                  >
+                  <Badge className="absolute -right-1 -top-1 h-4 min-w-4 px-1 text-[10px] flex items-center justify-center rounded-full">
                     {cartCount > 99 ? "99+" : cartCount}
                   </Badge>
                 )}
@@ -444,17 +398,15 @@ export function Navbar({
               <div className="relative">
                 <button
                   type="button"
-                  aria-label="Open profile menu"
-                  aria-expanded={profileOpen}
                   className="flex h-9 w-9 items-center justify-center rounded-full border border-border/60 bg-white/20 backdrop-blur-[20px] hover:bg-white/30 transition-colors shadow-sm"
                   onClick={() => setProfileOpen((o) => !o)}
+                  aria-label="Profile"
                 >
                   <User className="h-4 w-4 text-foreground" />
                 </button>
                 <AnimatePresence>
                   {profileOpen && (
                     <motion.div
-                      role="menu"
                       className="absolute right-0 top-full mt-2 w-56 rounded-2xl border border-border/60 bg-card/90 backdrop-blur-[20px] shadow-md py-1 z-50"
                       initial={{ opacity: 0, scale: 0.98 }}
                       animate={{ opacity: 1, scale: 1 }}
@@ -466,7 +418,7 @@ export function Navbar({
                           <Link
                             key={item.label}
                             href={item.href}
-                            className="flex items-center gap-2 px-4 py-2.5 text-sm font-label text-muted-foreground hover:text-foreground hover:bg-white/20 transition-colors first:rounded-t-2xl last:rounded-b-2xl"
+                            className="flex items-center gap-2 px-4 py-2.5 text-sm font-label text-muted-foreground hover:text-foreground hover:bg-white/20"
                             onClick={() => setProfileOpen(false)}
                           >
                             {item.label}
@@ -475,7 +427,7 @@ export function Navbar({
                           <button
                             key={item.label}
                             type="button"
-                            className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-label text-muted-foreground hover:text-foreground hover:bg-white/20 transition-colors text-left last:rounded-b-2xl"
+                            className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-label text-muted-foreground hover:text-foreground text-left"
                             onClick={item.action}
                           >
                             <LogOut className="h-4 w-4" />
@@ -496,155 +448,43 @@ export function Navbar({
 
   return (
     <header className="sticky top-0 z-50 w-full pt-3 pb-2 px-4 bg-transparent">
-      <div
-        className={cn(
-          "mx-auto w-full max-w-5xl rounded-full border shadow-md transition-shadow",
-          "backdrop-blur-[20px] bg-white/30 border border-border/60"
-        )}
-      >
+      <div className="mx-auto w-full max-w-5xl rounded-full border shadow-md backdrop-blur-[20px] bg-white/30 border border-border/60">
         {pillContent}
       </div>
 
-      {/* Mobile menu: slides in from RIGHT (public, user, partner) */}
-      {(effectiveMode === "public" || effectiveMode === "user" || effectiveMode === "partner") && (
-        <AnimatePresence>
-          {mobileOpen && (
-            <>
-              <motion.div
-                key="nav-overlay"
-                aria-hidden
-                className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm md:hidden"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                onClick={() => setMobileOpen(false)}
-              />
-              <motion.div
-                key="nav-drawer"
-                className="fixed top-0 right-0 z-50 h-full w-[min(85vw,320px)] rounded-l-2xl border-l border-border/60 bg-card/95 backdrop-blur-[20px] shadow-xl md:hidden"
-                initial={{ x: "100%" }}
-                animate={{ x: 0 }}
-                exit={{ x: "100%" }}
-                transition={{ type: "tween", duration: 0.25, ease: "easeOut" }}
-              >
-                <div className="flex flex-col gap-1 pt-20 pb-6 px-6">
-                  {effectiveMode === "partner" ? (
-                    <>
-                      <Link href="/partner/dashboard" className="text-sm font-label text-muted-foreground hover:text-foreground py-3 px-4 rounded-xl hover:bg-white/20 transition-colors" onClick={() => setMobileOpen(false)}>Partner Dashboard</Link>
-                      <span className="text-xs font-label text-muted-foreground/80 pt-2 px-4">Commerce</span>
-                      <Link href="/partner/orders" className="py-2 px-4 rounded-xl hover:bg-white/20 text-sm font-label" onClick={() => setMobileOpen(false)}>Orders</Link>
-                      <Link href="/partner/inventory" className="py-2 px-4 rounded-xl hover:bg-white/20 text-sm font-label" onClick={() => setMobileOpen(false)}>Inventory</Link>
-                      <Link href="/partner/inventory/add" className="py-2 px-4 rounded-xl hover:bg-white/20 text-sm font-label" onClick={() => setMobileOpen(false)}>Add Product</Link>
-                      <span className="text-xs font-label text-muted-foreground/80 pt-2 px-4">Operations</span>
-                      <Link href="/partner/assigned-users" className="py-2 px-4 rounded-xl hover:bg-white/20 text-sm font-label" onClick={() => setMobileOpen(false)}>Assigned Users</Link>
-                      {(role === "DERMATOLOGIST" || hasDermatologist) && <Link href="/partner/bookings" className="py-2 px-4 rounded-xl hover:bg-white/20 text-sm font-label" onClick={() => setMobileOpen(false)}>Consultations</Link>}
-                      <Link href="/partner/notifications" className="py-2 px-4 rounded-xl hover:bg-white/20 text-sm font-label" onClick={() => setMobileOpen(false)}>Notifications</Link>
-                      <Link href="/partner/analytics" className="text-sm font-label py-3 px-4 rounded-xl hover:bg-white/20" onClick={() => setMobileOpen(false)}>Analytics</Link>
-                      <Link href="/partner/payouts" className="text-sm font-label py-2 px-4 rounded-xl hover:bg-white/20" onClick={() => setMobileOpen(false)}>Payouts</Link>
-                      <span className="text-xs font-label text-muted-foreground/80 pt-2 px-4">More</span>
-                      <Link href="/partner/store-profile" className="py-2 px-4 rounded-xl hover:bg-white/20 text-sm font-label" onClick={() => setMobileOpen(false)}>Store Profile</Link>
-                      <Link href="/partner/support" className="py-2 px-4 rounded-xl hover:bg-white/20 text-sm font-label" onClick={() => setMobileOpen(false)}>Contact Support</Link>
-                    </>
-                  ) : (
-                    navLinks.map((link) => (
-                      <Link
-                        key={link.href}
-                        href={link.href}
-                        className="text-sm font-label text-muted-foreground hover:text-foreground py-3 px-4 rounded-xl hover:bg-white/20 transition-colors"
-                        onClick={() => setMobileOpen(false)}
-                      >
-                        {link.label}
-                      </Link>
-                    ))
-                  )}
-                  <div className="mt-4 pt-4 border-t border-border/40 flex flex-col gap-2">
-                    {effectiveMode === "user" && (
-                      <Link
-                        href="/cart"
-                        className="flex items-center gap-2 py-3 px-4 rounded-xl hover:bg-white/20 transition-colors text-sm font-label text-muted-foreground hover:text-foreground"
-                        onClick={() => setMobileOpen(false)}
-                      >
-                        <ShoppingCart className="h-4 w-4" />
-                        Cart {cartCount > 0 && `(${cartCount})`}
-                      </Link>
-                    )}
-                    {!isAuthenticated ? (
-                      <Button asChild className="w-full rounded-xl">
-                        <Link href="/signup" onClick={() => setMobileOpen(false)}>
-                          Sign up
-                        </Link>
-                      </Button>
-                    ) : (
-                      <Button variant="ghost" asChild className="w-full rounded-xl">
-                        <Link
-                          href={role ? getRedirectPathForRole(role) : "/"}
-                          onClick={() => setMobileOpen(false)}
-                        >
-                          Profile / Dashboard
-                        </Link>
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
-      )}
-
-      {/* Admin mobile menu: same grouped structure as desktop */}
-      {effectiveMode === "admin" && (
-        <AnimatePresence>
-          {adminMobileOpen && (
-            <>
-              <motion.div
-                aria-hidden
-                className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm md:hidden"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                onClick={() => setAdminMobileOpen(false)}
-              />
-              <motion.div
-                className="fixed top-0 right-0 z-50 h-full w-[min(85vw,320px)] rounded-l-2xl border-l border-border/60 bg-card/95 backdrop-blur-[20px] shadow-xl md:hidden overflow-y-auto"
-                initial={{ x: "100%" }}
-                animate={{ x: 0 }}
-                exit={{ x: "100%" }}
-                transition={{ type: "tween", duration: 0.25, ease: "easeOut" }}
-              >
-                <div className="flex flex-col gap-1 pt-20 pb-6 px-6">
+      <AnimatePresence>
+        {mobileOpen && (
+          <>
+            <motion.div
+              className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm md:hidden"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileOpen(false)}
+            />
+            <motion.div
+              className="fixed top-0 right-0 z-50 h-full w-[min(85vw,320px)] rounded-l-2xl border-l border-border/60 bg-card/95 backdrop-blur-[20px] shadow-xl md:hidden"
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "tween", duration: 0.25 }}
+            >
+              <div className="flex flex-col gap-1 pt-20 pb-6 px-6">
+                {navLinks.map((link) => (
                   <Link
-                    href={ADMIN_DASHBOARD.href}
-                    className="text-sm font-label text-muted-foreground hover:text-foreground py-3 px-4 rounded-xl hover:bg-white/20 transition-colors"
-                    onClick={() => setAdminMobileOpen(false)}
+                    key={link.href}
+                    href={link.href}
+                    className="text-sm font-label text-muted-foreground hover:text-foreground py-3 px-4 rounded-xl hover:bg-white/20"
+                    onClick={() => setMobileOpen(false)}
                   >
-                    {ADMIN_DASHBOARD.label}
+                    {link.label}
                   </Link>
-                  {ADMIN_NAV_GROUPS.map((group) => (
-                    <div key={group.label} className="pt-2">
-                      <span className="text-xs font-label text-muted-foreground/80 px-4 block pb-1">
-                        {group.label}
-                      </span>
-                      {group.items.map((item) => (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          className="block py-2 px-4 rounded-xl hover:bg-white/20 text-sm font-label text-muted-foreground hover:text-foreground transition-colors"
-                          onClick={() => setAdminMobileOpen(false)}
-                        >
-                          {item.label}
-                        </Link>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
-      )}
+                ))}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </header>
   );
 }

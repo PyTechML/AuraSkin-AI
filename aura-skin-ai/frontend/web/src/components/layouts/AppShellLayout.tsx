@@ -10,11 +10,8 @@ import { Navbar } from "./Navbar";
 import { Footer } from "./Footer";
 
 const AssistantRoot = dynamic(
-  () =>
-    import("@/components/assistant/AssistantRoot").then(
-      (m) => m.AssistantRoot
-    ),
-  { ssr: false, loading: () => null }
+  () => import("@/components/assistant/AssistantRoot").then((m) => m.AssistantRoot),
+  { ssr: false }
 );
 
 export function AppShellLayout({ children }: { children: React.ReactNode }) {

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import { useAuthStore } from "@/store/authStore";
 import { getPartnerProducts, getPartnerAnalytics } from "@/services/apiPartner";
 import type { PartnerProduct } from "@/types";

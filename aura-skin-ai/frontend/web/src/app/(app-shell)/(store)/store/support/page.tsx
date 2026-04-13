@@ -6,7 +6,7 @@ import {
   createSupportTicket,
   type CreateSupportTicketPayload,
 } from "@/services/apiPartner";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import { usePanelToast } from "@/components/panel/PanelToast";
 import type { SupportTicket } from "@/types";
 import {

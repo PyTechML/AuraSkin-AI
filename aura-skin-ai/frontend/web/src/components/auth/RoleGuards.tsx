@@ -3,13 +3,12 @@
 import { useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import { getRedirectPathForRole } from "@/store/authStore";
 import type { UserRole } from "@/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { PanelLayout } from "@/components/layouts/PanelLayout";
-import { AdminLayoutClient } from "@/components/admin/AdminLayoutClient";
+
 
 /** Paths under (user) that allow guest access without auth. */
 const USER_PUBLIC_PATH_PREFIXES = [
@@ -122,11 +121,7 @@ export function StoreGuard({ children }: GuardProps) {
   });
 
   if (loading) {
-    return (
-      <PanelLayout role="STORE_PARTNER">
-        <PanelSkeleton />
-      </PanelLayout>
-    );
+    return <PanelSkeleton />;
   }
 
   if (!isAuthenticated || role !== "STORE") {
@@ -207,11 +202,7 @@ export function AdminGuard({ children }: GuardProps) {
   }, [loading, isAuthenticated, role, router, pathname]);
 
   if (loading) {
-    return (
-      <AdminLayoutClient>
-        <PanelSkeleton />
-      </AdminLayoutClient>
-    );
+    return <PanelSkeleton />;
   }
 
   if (!isAuthenticated || role !== "ADMIN") {

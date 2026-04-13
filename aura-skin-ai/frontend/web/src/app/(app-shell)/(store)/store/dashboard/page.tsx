@@ -82,7 +82,7 @@ function normalizeDashboardStats(raw: Partial<PartnerDashboardStats> | null): Pa
     pendingApprovalCount: Number(raw.pendingApprovalCount) || 0,
   };
 }
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import {
   Card,
   CardContent,

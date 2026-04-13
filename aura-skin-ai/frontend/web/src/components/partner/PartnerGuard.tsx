@@ -10,7 +10,7 @@
  * @see PARTNER_ROLE.md
  */
 import { useEffect } from "react";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import { usePartnerStore } from "@/store/partnerStore";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

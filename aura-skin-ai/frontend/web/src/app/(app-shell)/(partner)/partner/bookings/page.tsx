@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getBookingsForPartner } from "@/services/apiPartner";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import type { ConsultationBooking } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

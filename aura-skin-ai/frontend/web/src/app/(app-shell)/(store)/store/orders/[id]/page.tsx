@@ -10,7 +10,7 @@ import {
   updateOrderTracking,
   addOrderNote,
 } from "@/services/apiPartner";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthContext";
 import type { Order } from "@/types";
 import {
   Card,
